@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from proxy import (app, breaker, cache, tick_tracker, client_activity, _flatten_vehicles,
-                   _calc_delay, limiter, _inflight,
+                   _calc_delay, _inflight,
                    _journey_cache, _stationboard_cache, _line_search_cache)
 
 
@@ -25,7 +25,6 @@ def reset_state():
     _line_search_cache.clear()
     _inflight.clear()
     orig_tick = tick_tracker.last_tick_ts
-    limiter.enabled = False
     yield
     breaker.failures = 0
     breaker.last_failure_time = 0.0
@@ -37,7 +36,6 @@ def reset_state():
     _line_search_cache.clear()
     _inflight.clear()
     tick_tracker.last_tick_ts = orig_tick
-    limiter.enabled = True
 
 
 @pytest.fixture
@@ -350,16 +348,3 @@ class TestSecurityHeaders:
         assert "frame-ancestors 'none'" in csp
 
 
-class TestRateLimitHandler:
-    def test_rate_limit_response_format(self):
-        """Verify rate-limit handler returns 429 JSON."""
-        import asyncio
-        from proxy import rate_limit_handler
-
-        mock_request = MagicMock()
-        mock_request.url.path = "/api/test"
-        mock_exc = MagicMock()
-        mock_exc.detail = "rate limited"
-
-        resp = asyncio.get_event_loop().run_until_complete(rate_limit_handler(mock_request, mock_exc))
-        assert resp.status_code == 429

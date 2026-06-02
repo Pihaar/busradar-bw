@@ -21,9 +21,6 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -149,8 +146,6 @@ client_activity = ClientActivity()
 tick_tracker = TickTracker()
 _inflight: dict[tuple, asyncio.Future] = {}
 
-limiter = Limiter(key_func=get_remote_address)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -220,16 +215,6 @@ async def schedule_daily_rebuild_wrapper(app: FastAPI):
 
 
 app = FastAPI(title="Busradar BW", lifespan=lifespan)
-app.state.limiter = limiter
-
-
-@app.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    log.warning("[ratelimit] exceeded ip=%s path=%s", get_remote_address(request), request.url.path)
-    return JSONResponse(
-        status_code=429,
-        content={"error": "rate_limited", "detail": "Too many requests"},
-    )
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -385,7 +370,6 @@ def _inject_tick_hints(result: dict) -> dict:
 
 
 @app.get("/api/vehicles")
-@limiter.limit("30/minute")
 async def get_vehicles(
     request: Request,
     swLat: float = Query(default=49.0, ge=45.0, le=56.0),
@@ -538,7 +522,6 @@ async def _discover_platforms(request: Request, lid: str) -> list[dict]:
 
 
 @app.get("/api/stops")
-@limiter.limit("60/minute")
 async def get_stops(
     request: Request,
     lat: float = Query(default=49.2944, ge=47.0, le=55.0),
@@ -561,7 +544,6 @@ async def get_stops(
 
 
 @app.get("/api/search")
-@limiter.limit("30/minute")
 async def search_stops(
     request: Request,
     q: str = Query(min_length=2, max_length=100),
@@ -610,7 +592,6 @@ _JOURNEY_CACHE_TTL = 300
 
 
 @app.post("/api/journey")
-@limiter.limit("20/minute")
 async def get_journey(request: Request, body: JourneyRequest):
     now = time.time()
     cached = _journey_cache.get(body.jid)
@@ -655,7 +636,6 @@ _STATIONBOARD_CACHE_TTL = 10
 
 
 @app.post("/api/stationboard")
-@limiter.limit("240/minute")
 async def get_stationboard(request: Request, body: StationBoardRequest):
     now = time.time()
     cache_key = (body.lid, body.type.value, body.dur)
@@ -685,7 +665,6 @@ async def get_stationboard(request: Request, body: StationBoardRequest):
 
 
 @app.get("/api/health")
-@limiter.limit("60/minute")
 async def health(request: Request):
     ts = tick_tracker.last_tick_ts
     mono_now = time.monotonic()
@@ -707,7 +686,6 @@ _LINE_SEARCH_CACHE_TTL = 30
 
 
 @app.get("/api/line_search")
-@limiter.limit("30/minute")
 async def line_search(
     request: Request,
     q: str = Query(min_length=1, max_length=10),
