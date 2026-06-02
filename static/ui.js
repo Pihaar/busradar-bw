@@ -212,11 +212,12 @@ export var ui = {
   initBottomSheet: function() {
     var handle = this.panel.querySelector('.detail-handle');
     var header = this.panel.querySelector('.detail-header');
-    var startY = 0, startX = 0, startHeight = 0, isDragging = false;
+    var startY = 0, startX = 0, startHeight = 0, isDown = false, isDragging = false;
 
     function onDown(e) {
       if (!e.isPrimary) return;
       if (e.target.closest('button, a')) return;
+      isDown = true;
       startY = e.clientY;
       startX = e.clientX;
       startHeight = ui.panel.offsetHeight;
@@ -224,7 +225,7 @@ export var ui = {
       if (state._cancelMapClick) state._cancelMapClick();
     }
     function onMove(e) {
-      if (!e.isPrimary) return;
+      if (!e.isPrimary || !isDown) return;
       var dy = e.clientY - startY;
       var absDy = Math.abs(dy);
       var absDx = Math.abs(e.clientX - startX);
@@ -248,7 +249,8 @@ export var ui = {
       ui.panel.style.height = newHeight + 'px';
     }
     function onUp(e) {
-      if (!e.isPrimary || !isDragging) return;
+      if (!e.isPrimary || !isDragging) { isDown = false; return; }
+      isDown = false;
       isDragging = false;
       ui.panel.style.transition = '';
       var currentHeight = ui.panel.offsetHeight;
@@ -265,6 +267,7 @@ export var ui = {
     }
     function onCancel(e) {
       if (!e.isPrimary) return;
+      isDown = false;
       isDragging = false;
       ui.panel.style.transition = '';
     }

@@ -391,7 +391,10 @@ async def get_vehicles(
     else:
         cached = await cache.get(cache_key)
         if cached:
-            return cached
+            from datetime import datetime
+            out = dict(cached)
+            out["serverTime"] = datetime.now().strftime("%H%M%S")
+            return out
 
     # Singleflight: first request fetches, others await same Future
     fut = _inflight.get(cache_key)

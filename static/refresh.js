@@ -16,6 +16,12 @@ export function scheduleRefresh(delay) {
   state.refreshTimeout = setTimeout(refresh, delay !== undefined ? delay : state.currentInterval);
 }
 
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible' && state.map) {
+    scheduleRefresh(300);
+  }
+});
+
 setInterval(function() {
   if (state._currentStopL && state.selectedJid) {
     ui.updateStopProgress(state._currentStopL);
@@ -73,8 +79,14 @@ export function refresh() {
         var ss = data.serverTime.length >= 6 ? parseInt(data.serverTime.slice(4, 6), 10) : 0;
         if (isNaN(ss)) ss = 0;
         if (!isNaN(sh) && !isNaN(sm)) {
-          state.serverTimeMin = sh * 60 + sm + ss / 60;
-          state.serverTimeStamp = Date.now();
+          var newMin = sh * 60 + sm + ss / 60;
+          var oldDisplayMin = state.serverTimeMin != null
+            ? state.serverTimeMin + (Date.now() - state.serverTimeStamp) / 60000
+            : -1;
+          if (newMin >= oldDisplayMin - 0.05 || oldDisplayMin < 0) {
+            state.serverTimeMin = newMin;
+            state.serverTimeStamp = Date.now();
+          }
         }
       }
       if (typeof data.nextFreshDataIn === 'number' && isFinite(data.nextFreshDataIn) && data.nextFreshDataIn >= 0) {
