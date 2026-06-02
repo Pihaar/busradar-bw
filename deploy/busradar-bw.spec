@@ -10,11 +10,10 @@ Source0:        busradar-bw-%{version}.tar.gz
 Source99:       busradar-bw-rpmlintrc
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
-Requires:       python3 >= 3.9
-Requires:       python3-fastapi
-Requires:       python3-uvicorn
-Requires:       python3-httpx
-Requires:       python3-slowapi
+Requires:       (python314 or python313 or python311 or python3 >= 3.9)
+Requires:       (python314-fastapi or python313-fastapi or python311-fastapi or python3-fastapi)
+Requires:       (python314-uvicorn or python313-uvicorn or python311-uvicorn or python3-uvicorn)
+Requires:       (python314-httpx or python313-httpx or python311-httpx or python3-httpx)
 %systemd_requires
 
 %description
