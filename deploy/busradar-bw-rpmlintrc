@@ -1,0 +1,2 @@
+addFilter("filelist-forbidden-opt")
+addFilter("non-standard-dir-in-usr /opt/busradar")

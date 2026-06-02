@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "3.1.4",
+    "happy-dom": "20.9.0",
+    "vitest": "3.1.4"
+  }
+}

@@ -1,0 +1,53 @@
+[Unit]
+Description=Busradar BW — Live-Bustracker
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+User=busradar
+Group=busradar
+WorkingDirectory=/opt/busradar
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/busradar
+Environment=BUSRADAR_STATE_DIR=/var/lib/busradar
+ExecStart=/usr/bin/uvicorn proxy:app --uds /run/busradar/uvicorn.sock --workers 1 --proxy-headers --forwarded-allow-ips=*
+RuntimeDirectory=busradar
+RuntimeDirectoryMode=0750
+SyslogIdentifier=busradar
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+ProtectSystem=strict
+ReadWritePaths=/var/lib/busradar
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0077
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
