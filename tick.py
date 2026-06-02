@@ -158,7 +158,9 @@ class TickTracker:
 
 def inject_tick_hints(result: dict, tracker: TickTracker) -> dict:
     """Shallow copy + dynamische Tick-Felder. Original bleibt unverändert."""
+    from datetime import datetime
     out = dict(result)
+    out["serverTime"] = datetime.now().strftime("%H%M%S")
     secs = tracker.seconds_until_next_tick()
     if secs is not None:
         out["nextFreshDataIn"] = round(secs + TICK_BUFFER, 2)
