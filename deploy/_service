@@ -1,0 +1,13 @@
+<services>
+  <service name="tar_scm" mode="trylocal">
+    <param name="url">https://github.com/Pihaar/busradar-bw.git</param>
+    <param name="scm">git</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="revision">main</param>
+    <param name="filename">busradar-bw</param>
+  </service>
+  <service name="recompress" mode="trylocal">
+    <param name="compression">gz</param>
+    <param name="file">*.tar</param>
+  </service>
+</services>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e1a" id="meta-theme-color">
+  <meta name="description" content="Live-Bustracker für Baden-Württemberg — Echtzeit-Positionen und Verspätungen">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <title>Busradar BW</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <script>try{var s=JSON.parse(localStorage.getItem('busradar_settings_v1'));if(s&&s.theme==='light'){document.documentElement.setAttribute('data-theme','light');document.addEventListener('DOMContentLoaded',function(){var m=document.getElementById('meta-theme-color');if(m)m.content='#f5f6fa';});}if(s&&s.lang==='en'){document.documentElement.lang='en';}}catch(e){}</script>
+</head>
+<body>
+  <a href="#control-panel" class="skip-link" data-i18n="skip_link">Zum Steuerfeld springen</a>
+
+  <main id="map" role="application" data-i18n-aria="aria_map" aria-label="Live-Buskarte Baden-Württemberg"></main>
+
+  <aside id="control-panel" role="complementary" data-i18n-aria="aria_controls" aria-label="Kartensteuerung">
+    <div class="panel-header">
+      <h1 class="panel-title">Busradar <span class="panel-title-accent">BW</span></h1>
+      <button id="settings-btn" class="panel-icon-btn" data-i18n-aria="settings_label" aria-label="Einstellungen" aria-expanded="false" aria-controls="settings-panel">⚙</button>
+    </div>
+    <div class="status-bar">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span class="status-text" id="status-text" data-i18n="connecting">Verbinde…</span>
+    </div>
+    <div class="search-container">
+      <input type="search" id="search-input" class="search-input"
+             data-i18n-placeholder="search_placeholder"
+             placeholder="Haltestelle oder Linie…"
+             aria-label="Suche nach Haltestelle oder Linie"
+             autocomplete="off" spellcheck="false">
+      <div id="search-results" class="search-results" hidden></div>
+    </div>
+    <div id="settings-panel" class="settings-panel" hidden>
+      <div class="settings-hint" id="settings-hint" hidden></div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_refresh">Aktualisierung</span>
+        <div class="settings-options" id="setting-refresh" role="radiogroup" aria-label="Refresh-Intervall">
+          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="10000">10s</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="20000">20s</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="30000">30s</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_posmode">Positionsmodus</span>
+        <div class="settings-options" id="setting-posmode" role="radiogroup" aria-label="Positionsberechnung">
+          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="CALC" data-i18n="setting_interpolated">Interpoliert</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="REPORT_ONLY" data-i18n="setting_gps_only">Nur GPS</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_animation">Bus-Animation</span>
+        <div class="settings-options" id="setting-interpolation">
+          <button class="settings-opt settings-opt--active" role="switch" aria-checked="true" data-value="on" data-i18n="setting_on">An</button>
+          <button class="settings-opt" role="switch" aria-checked="false" data-value="off" data-i18n="setting_off">Aus</button>
+        </div>
+        <div class="settings-hint settings-hint--inline" id="hint-animation-disabled" data-i18n="hint_animation_gps_only" hidden>Nicht verfügbar bei „Nur GPS"</div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_theme">Darstellung</span>
+        <div class="settings-options" id="setting-theme" role="radiogroup" aria-label="Farbschema">
+          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="dark" data-i18n="setting_dark">Dunkel</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="light" data-i18n="setting_light">Hell</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_location">Eigener Standort</span>
+        <div class="settings-options" id="setting-location">
+          <button class="settings-opt" role="switch" aria-checked="false" data-value="on" data-i18n="setting_on">An</button>
+          <button class="settings-opt settings-opt--active" role="switch" aria-checked="true" data-value="off" data-i18n="setting_off">Aus</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_language">Sprache</span>
+        <div class="settings-options" id="setting-language" role="radiogroup" aria-label="Sprache">
+          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="de">Deutsch</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="en">English</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <section id="detail-panel" class="detail-panel" role="region"
+           data-i18n-aria="aria_details" aria-label="Fahrtdetails" aria-expanded="false" inert>
+    <div class="detail-handle" role="separator" data-i18n-aria="aria_panel_drag" aria-label="Panel ziehen zum Vergrößern">
+      <span class="detail-handle-bar" aria-hidden="true"></span>
+    </div>
+    <div class="detail-header">
+      <button class="detail-back" data-i18n-aria="back_label" aria-label="Zurück" id="detail-back">‹</button>
+      <div class="detail-line-badge" id="detail-line"></div>
+      <div class="detail-direction" id="detail-direction"></div>
+      <div class="detail-delay-badge" id="detail-delay"></div>
+      <button class="panel-icon-btn detail-share-btn" id="detail-share" data-i18n-aria="share_label" aria-label="Teilen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
+      </button>
+    </div>
+    <nav class="detail-tabs" role="tablist" data-i18n-aria="aria_tabs" aria-label="Ansichtswahl">
+      <button role="tab" class="detail-tab detail-tab--active" id="tab-stops"
+              aria-selected="true" aria-controls="tabpanel-stops" data-i18n="tab_stops">Halte</button>
+      <button role="tab" class="detail-tab" id="tab-departures"
+              aria-selected="false" aria-controls="tabpanel-departures" data-i18n="tab_departures">Abfahrten</button>
+      <button role="tab" class="detail-tab" id="tab-arrivals"
+              aria-selected="false" aria-controls="tabpanel-arrivals" data-i18n="tab_arrivals">Ankünfte</button>
+    </nav>
+    <div class="line-filter" id="line-filter" role="group" data-i18n-aria="aria_filter" aria-label="Linienfilter" hidden></div>
+    <div class="journey-actions" id="journey-actions" hidden>
+      <button class="action-btn" id="btn-follow" data-i18n-aria="btn_follow" aria-label="Bus folgen" aria-pressed="false">
+        <span aria-hidden="true">◎</span> <span data-i18n="btn_follow">Bus folgen</span>
+      </button>
+      <button class="action-btn" id="btn-fitroute" data-i18n-aria="btn_fitroute" aria-label="Gesamte Route anzeigen">
+        <span aria-hidden="true">↔</span> <span data-i18n="btn_fitroute">Route zeigen</span>
+      </button>
+    </div>
+    <div class="detail-content" id="detail-content">
+      <div role="tabpanel" id="tabpanel-stops" aria-labelledby="tab-stops">
+        <ol class="stop-list" id="stop-list">
+          <div class="stop-list-progress" id="stop-progress"></div>
+        </ol>
+      </div>
+      <div role="tabpanel" id="tabpanel-departures" aria-labelledby="tab-departures" hidden>
+        <ol class="departure-list" id="departure-list"></ol>
+      </div>
+      <div role="tabpanel" id="tabpanel-arrivals" aria-labelledby="tab-arrivals" hidden>
+        <ol class="departure-list" id="arrival-list"></ol>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-dialog-title">
+    <div class="about-content">
+      <h2 class="about-title" id="about-dialog-title" data-i18n="about_title">Busradar BW</h2>
+      <p data-i18n="about_intro">Live-Bustracker für Baden-Württemberg als Ersatz für die eingestellte App "DB Busradar Baden-Württemberg".</p>
+      <h3 data-i18n="about_data_heading">Datenquelle</h3>
+      <p data-i18n="about_data_text">Echtzeit-Positionen via HAFAS API.</p>
+      <p data-i18n="about_data_publisher">Herausgeber: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).</p>
+      <p data-i18n="about_data_map">Kartendaten: © OpenStreetMap-Mitwirkende, © CARTO.</p>
+      <h3 data-i18n="about_legal_heading">Rechtliches</h3>
+      <p data-i18n="about_legal_text">Privates, nicht-kommerzielles Projekt. Keine Gewähr für Vollständigkeit oder Korrektheit der angezeigten Daten.</p>
+      <button class="about-close" data-i18n-aria="close_label" aria-label="Schließen">✕</button>
+    </div>
+  </dialog>
+
+  <div aria-live="polite" aria-atomic="true" class="sr-only" id="sr-announcer"></div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="i18n.js"></script>
+  <link rel="modulepreload" href="config.js">
+  <link rel="modulepreload" href="state.js">
+  <link rel="modulepreload" href="api.js">
+  <link rel="modulepreload" href="map.js">
+  <link rel="modulepreload" href="ui.js">
+  <link rel="modulepreload" href="refresh.js">
+  <script type="module" src="init.js"></script>
+</body>
+</html>

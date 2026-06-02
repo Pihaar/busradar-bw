@@ -1,0 +1,27 @@
+node_modules/
+__pycache__/
+*.pyc
+.coverage
+coverage/
+.pytest_cache/
+.ruff_cache/
+.playwright-mcp/
+*.png.bak
+stops_cache.json
+.tick_state
+tick_log.jsonl
+/tmp/
+*.log
+nohup.out
+
+# Screenshots & test artifacts
+*.png
+!static/icons/*.png
+!static/favicon.svg
+
+# Dev tools
+package-lock.json
+busradar_api.py
+androguard.log
+Unbenannt.png
+validate.sh

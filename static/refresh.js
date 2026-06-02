@@ -1,0 +1,322 @@
+import { CONFIG } from './config.js';
+import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin, BACKOFF_BASE } from './state.js';
+import { api } from './api.js';
+import { markers, stopsLayer } from './map.js';
+import { ui } from './ui.js';
+import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce } from './status.js';
+
+// Re-export for init.js and other consumers
+export { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce };
+
+// === REFRESH LOOP ===
+export function scheduleRefresh(delay) {
+  if (state.refreshTimeout) {
+    clearTimeout(state.refreshTimeout);
+  }
+  state.refreshTimeout = setTimeout(refresh, delay !== undefined ? delay : state.currentInterval);
+}
+
+setInterval(function() {
+  if (state._currentStopL && state.selectedJid) {
+    ui.updateStopProgress(state._currentStopL);
+  }
+  if (state.serverTimeStamp && state._lastBusCount !== undefined && !(state._errorUntil && Date.now() < state._errorUntil)) {
+    var text = document.getElementById('status-text');
+    var timeStr = getServerTimeStr();
+    var c = state._lastBusCount;
+    text.textContent = (c === 1 ? t('bus_count_one', {time: timeStr}) : t('buses_count', {count: c, time: timeStr}));
+  }
+}, 1000);
+
+export function refresh() {
+  if (state.isLoading) {
+    scheduleRefresh();
+    return;
+  }
+  state.isLoading = true;
+  var capturedInteractionSeq = state._userInteractionSeq;
+
+  if (settings.current.showLocation && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function(pos) {
+      if (!settings.current.showLocation) return;
+      var ll = [pos.coords.latitude, pos.coords.longitude];
+      if (state._userLocationMarker) {
+        state._userLocationMarker.setLatLng(ll);
+      } else {
+        state._userLocationMarker = L.circleMarker(ll, {
+          radius: 8, fillOpacity: 0.9, weight: 3, color: '#fff', fillColor: '#4285f4',
+          interactive: false, className: 'user-location-marker',
+        }).addTo(state.map);
+      }
+    }, function() {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 });
+  }
+
+  var zoom = state.map.getZoom();
+  state.currentInterval = zoom < CONFIG.zoomThresholdSlowRefresh
+    ? settings.current.refreshInterval * 3
+    : settings.current.refreshInterval;
+
+  var bounds = state.map.getBounds();
+  var sw = bounds.getSouthWest();
+  var ne = bounds.getNorthEast();
+
+  api.getVehicles(sw.lat, sw.lng, ne.lat, ne.lng)
+    .then(function(data) {
+      if (state.consecutiveErrors > 0) {
+        clearPersistentError();
+      }
+      state.currentInterval = settings.current.refreshInterval;
+      var vehicles = data.vehicles || [];
+      if (data.serverTime) {
+        var sh = parseInt(data.serverTime.slice(0, 2), 10);
+        var sm = parseInt(data.serverTime.slice(2, 4), 10);
+        var ss = data.serverTime.length >= 6 ? parseInt(data.serverTime.slice(4, 6), 10) : 0;
+        if (isNaN(ss)) ss = 0;
+        if (!isNaN(sh) && !isNaN(sm)) {
+          state.serverTimeMin = sh * 60 + sm + ss / 60;
+          state.serverTimeStamp = Date.now();
+        }
+      }
+      if (typeof data.nextFreshDataIn === 'number' && isFinite(data.nextFreshDataIn) && data.nextFreshDataIn >= 0) {
+        state._nextFreshDataIn = data.nextFreshDataIn;
+      } else {
+        state._nextFreshDataIn = null;
+      }
+      markers.updateAll(vehicles);
+      stopsLayer.update(vehicles);
+      updateStatus(vehicles.length, data.dataAge);
+
+      if (state.followBus && state.selectedJid) {
+        var followEntry = state.vehicles.get(state.selectedJid);
+        if (!followEntry) {
+          if (!state._notStartedJid) ui._disableFollow();
+        } else if (!state._followPanning && !state._navigating) {
+          var target = L.latLng(followEntry.data.lat, followEntry.data.lon);
+          var current = state.map.getCenter();
+          var followDist = current.distanceTo(target);
+          if (followDist > 5) {
+            state._followPanning = true;
+            if (followDist > 3000) {
+              state.map.setView(target, state.map.getZoom(), { animate: false });
+              state._followPanning = false;
+            } else {
+              var panDur = Math.min(state.currentInterval / 1000, 2);
+              state.map.panTo(target, { duration: panDur });
+              state.map.once('moveend', function() { state._followPanning = false; });
+              clearTimeout(state._followPanTimeout);
+              state._followPanTimeout = setTimeout(function() { state._followPanning = false; }, (panDur * 1000) + 500);
+            }
+          }
+        }
+      }
+
+      if (state._pendingRestore && state._userInteractionSeq === capturedInteractionSeq) {
+        var pr = state._pendingRestore;
+        state._pendingRestore = null;
+        try {
+          if (pr.jid) {
+            ui.focusJourneyById(pr.jid, {}, true);
+            if (pr.follow === '1') {
+              state.followBus = true;
+              ui._updateFollowButton();
+              ui._updateFollowUrl();
+            }
+          } else if (pr.stop) {
+            var stopEntry = null;
+            state.allStops.forEach(function(s) {
+              if (s.data.extId === pr.stop) stopEntry = s.data;
+            });
+            // SEC-100: extId MUST be digits-only before LID concat — do not loosen this regex
+            if (!stopEntry && /^\d+$/.test(pr.stop)) {
+              stopEntry = {name: '', lid: 'A=1@L=' + pr.stop + '@', lat: 0, lon: 0, extId: pr.stop, platform: ''};
+            }
+            if (stopEntry) {
+              ui.showStationBoard(stopEntry, true);
+              if (pr.tab === 'arr') ui.switchTab('arrivals');
+            }
+          }
+        } finally {
+          state._restoreInProgress = false;
+        }
+      } else {
+        state._restoreInProgress = false;
+      }
+
+      try {
+        if (state.selectedJid && state._notStartedJid && state.vehicles.get(state.selectedJid)) {
+          var transVehicle = state.vehicles.get(state.selectedJid);
+          state._notStartedJid = null;
+          state._notStartedSince = 0;
+          state._notStartedLastPoll = 0;
+          ui.detailLine.textContent = transVehicle.data.lineFull || transVehicle.data.line;
+          ui.detailDir.textContent = transVehicle.data.direction;
+          document.getElementById('journey-actions').hidden = false;
+          if (state.selectedJourneyData) {
+            ui.renderJourneyStops(state.selectedJourneyData, transVehicle.data);
+            state._currentStopL = (state.selectedJourneyData.journey || {}).stopL || [];
+          }
+          announce(t('journey_started_announce', {line: transVehicle.data.line}));
+        }
+
+        if (state.selectedJid && state.selectedJourneyData) {
+          var selectedVehicle = state.vehicles.get(state.selectedJid);
+          if (selectedVehicle) {
+            var cls = getDelayClass(selectedVehicle.data.delay);
+            ui.detailDelay.textContent = getDelayText(selectedVehicle.data.delay);
+            ui.detailDelay.className = 'detail-delay-badge detail-delay-badge--' + cls;
+
+            var seq2 = ++state._journeyReqSeq;
+            var capturedJid = state.selectedJid;
+            api.getJourney(capturedJid).then(function(journeyData) {
+              if (state._journeyReqSeq !== seq2) return;
+              if (state.selectedJid !== capturedJid) return;
+              state.selectedJourneyData = journeyData;
+              state._currentStopL = (journeyData.journey || {}).stopL || [];
+              var jPos = (journeyData.journey || {}).pos || {};
+              var jLat = jPos.y ? jPos.y / 1e6 : null;
+              var jLon = jPos.x ? jPos.x / 1e6 : null;
+              if (!jLat || !jLon) {
+                var jStopL = (journeyData.journey || {}).stopL || [];
+                var jLastStop = jStopL.length > 0 ? jStopL[jStopL.length - 1] : null;
+                var jLastTime = jLastStop ? (jLastStop.aTimeR || jLastStop.aTimeS || jLastStop.dTimeR || jLastStop.dTimeS || '') : '';
+                var jLastMin = jLastTime ? parseHafasTimeToMin(jLastTime) : 0;
+                if (jLastMin === null) jLastMin = 0;
+                var elMs2 = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+                var nowM2 = (state.serverTimeMin || 0) + elMs2 / 60000;
+                if (nowM2 > 1080 && jLastMin < 360) jLastMin += 1440;
+                if (nowM2 < 360 && jLastMin > 1080) jLastMin -= 1440;
+
+                if (jLastTime && (jLastMin + 5) <= nowM2) {
+                  ui.showJourneyEnded();
+                } else if (!state.vehicles.get(capturedJid)) {
+                  if (state._notStartedJid === capturedJid) return;
+                  ui.showJourneyEnded();
+                } else {
+                  ui.updateJourneyStopDelays(journeyData);
+                }
+                return;
+              }
+              var sv = state.vehicles.get(state.selectedJid);
+              if (sv) {
+                sv.data.lat = jLat;
+                sv.data.lon = jLon;
+                sv.missedCycles = 0;
+                ui.updateJourneyStopDelays(journeyData);
+                ui.drawRoute(journeyData, sv.data);
+              }
+            }).catch(function() {});
+          } else if (state._notStartedJid === state.selectedJid) {
+            var now = Date.now();
+            if (now - state._notStartedSince > 30 * 60 * 1000) {
+              state._notStartedJid = null;
+              state._notStartedSince = 0;
+              state._notStartedLastPoll = 0;
+              var expLi = document.createElement('li');
+              expLi.className = 'empty-state';
+              expLi.textContent = t('journey_poll_expired');
+              ui.stopList.replaceChildren(expLi);
+            } else if (now - state._notStartedLastPoll >= 30000) {
+              state._notStartedLastPoll = now;
+              var seq3 = ++state._journeyReqSeq;
+              var pollJid = state._notStartedJid;
+              api.getJourney(pollJid).then(function(data) {
+                if (state._journeyReqSeq !== seq3) return;
+                if (state.selectedJid !== pollJid || state._notStartedJid !== pollJid) return;
+                var j = data.journey || {};
+                if (j.isCncl) {
+                  ui._showJourneyCancelled();
+                  return;
+                }
+                var pos = j.pos || {};
+                var pLat = pos.y ? pos.y / 1e6 : null;
+                var pLon = pos.x ? pos.x / 1e6 : null;
+                if (pLat && pLon) {
+                  ui._transitionToRunning(data);
+                }
+              }).catch(function() {});
+            }
+          } else {
+            state._journeyGoneCycles = (state._journeyGoneCycles || 0) + 1;
+            if (state._journeyGoneCycles >= 2) {
+              state._journeyGoneCycles = 0;
+              var goneSeq = ++state._journeyReqSeq;
+              var goneJid = state.selectedJid;
+              api.getJourney(goneJid).then(function(data) {
+                if (state._journeyReqSeq !== goneSeq) return;
+                if (state.selectedJid !== goneJid) return;
+                var gJ = data.journey || {};
+                var gPos = gJ.pos || {};
+                var gLat = gPos.y ? gPos.y / 1e6 : null;
+                var gLon = gPos.x ? gPos.x / 1e6 : null;
+                if (gLat && gLon) {
+                  state.selectedJourneyData = data;
+                  state._currentStopL = gJ.stopL || [];
+                  ui.updateJourneyStopDelays(data);
+                  ui.drawRoute(data, {jid: goneJid, lat: gLat, lon: gLon});
+                  return;
+                }
+                var gStopL = gJ.stopL || [];
+                var gLastStop = gStopL.length > 0 ? gStopL[gStopL.length - 1] : null;
+                var gLastTime = gLastStop ? (gLastStop.aTimeR || gLastStop.aTimeS || gLastStop.dTimeR || gLastStop.dTimeS || '') : '';
+                var gLastMin = gLastTime ? parseHafasTimeToMin(gLastTime) : 0;
+                if (gLastMin === null) gLastMin = 0;
+                var gElMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+                var gNowM = (state.serverTimeMin || 0) + gElMs / 60000;
+                if (gNowM > 1080 && gLastMin < 360) gLastMin += 1440;
+                if (gNowM < 360 && gLastMin > 1080) gLastMin -= 1440;
+                if (gLastTime && (gLastMin + 5) <= gNowM) {
+                  ui.showJourneyEnded();
+                } else {
+                  state._notStartedJid = goneJid;
+                  if (!state._notStartedSince) state._notStartedSince = Date.now();
+                  state._notStartedLastPoll = Date.now();
+                }
+              }).catch(function() {});
+            }
+          }
+        }
+
+        if (state.selectedStop) {
+          ui.refreshStationBoard(state.selectedStop);
+        }
+      } catch (e) {
+        console.warn('Panel update error:', e);
+      }
+
+      if (vehicles.length === 0) {
+        announce(t('no_buses'));
+      }
+    })
+    .catch(function(err) {
+      state._nextFreshDataIn = null;
+      if (err.name === 'AbortError') return;
+      state.consecutiveErrors++;
+      if (state.consecutiveErrors >= 3) {
+        state.currentInterval = Math.min(
+          BACKOFF_BASE * Math.pow(2, state.consecutiveErrors - 2),
+          CONFIG.maxBackoff
+        );
+      }
+      if (state.consecutiveErrors === 1) {
+        showPersistentError(t('connection_error'));
+      } else {
+        showPersistentError(t('offline_hint', {n: state.consecutiveErrors}));
+      }
+    })
+    .finally(function() {
+      state.isLoading = false;
+      var wasImmediate = state._needsImmediateRefresh;
+      state._needsImmediateRefresh = false;
+      if (wasImmediate) { scheduleRefresh(0); return; }
+      if (state.consecutiveErrors >= 3) { scheduleRefresh(); return; }
+      var userMax = state.currentInterval;
+      var hint = state._nextFreshDataIn;
+      if (hint != null && isFinite(hint) && hint >= 0) {
+        var hintMs = Math.max(hint * 1000, 2000);
+        var jitter = Math.floor(Math.random() * 500);
+        scheduleRefresh(Math.min(hintMs + jitter, userMax));
+      } else {
+        scheduleRefresh(userMax);
+      }
+    });
+}
