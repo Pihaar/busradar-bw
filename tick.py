@@ -93,10 +93,15 @@ class TickTracker:
         ts = self.last_tick_ts
         if ts is None or (_mono() - ts) > TICK_MAX_AGE:
             return max(0.0, fallback_ttl - age)
-        secs_until = self.seconds_until_next_tick()
-        if secs_until is None:
-            return max(0.0, fallback_ttl - age)
-        return max(0.0, secs_until + TICK_BUFFER)
+        now = _mono()
+        cache_set_mono = now - age
+        if ts > cache_set_mono:
+            return 0.0
+        elapsed_at_set = cache_set_mono - ts
+        cycles = int(elapsed_at_set / TICK_PERIOD) + 1
+        first_tick_after_cache = ts + cycles * TICK_PERIOD
+        remaining = (first_tick_after_cache + TICK_BUFFER) - now
+        return max(0.0, remaining)
 
     def data_age(self) -> float | None:
         """Seconds since last detected tick (for client hint)."""

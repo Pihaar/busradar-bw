@@ -222,6 +222,7 @@ export var ui = {
       startX = e.clientX;
       startHeight = ui.panel.offsetHeight;
       isDragging = false;
+      e.currentTarget.setPointerCapture(e.pointerId);
       if (state._cancelMapClick) state._cancelMapClick();
     }
     function onMove(e) {
@@ -239,7 +240,6 @@ export var ui = {
           if (dy < 0) return;
         }
         isDragging = true;
-        e.currentTarget.setPointerCapture(e.pointerId);
         ui.panel.classList.remove('detail-panel--collapsed', 'detail-panel--half', 'detail-panel--open');
         ui.panel.style.height = startHeight + 'px';
         ui.panel.style.transition = 'none';
