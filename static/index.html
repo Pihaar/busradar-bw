@@ -40,6 +40,14 @@
     <div id="settings-panel" class="settings-panel" hidden>
       <div class="settings-hint" id="settings-hint" hidden></div>
       <div class="settings-group">
+        <span class="settings-label" data-i18n="setting_posmode">Positionsmodus</span>
+        <div class="settings-options" id="setting-posmode" role="radiogroup" aria-label="Positionsberechnung">
+          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="CALC" data-i18n="setting_interpolated">Interpoliert</button>
+          <button class="settings-opt" role="radio" aria-checked="false" data-value="REPORT_ONLY" data-i18n="setting_gps_only">Nur GPS</button>
+        </div>
+      </div>
+      <div class="settings-hint settings-hint--inline" id="hint-animation-disabled" data-i18n="hint_animation_gps_only" hidden>Nicht verfügbar bei „Nur GPS"</div>
+      <div class="settings-group">
         <span class="settings-label" data-i18n="setting_refresh">Aktualisierung</span>
         <div class="settings-options" id="setting-refresh" role="radiogroup" aria-label="Refresh-Intervall">
           <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="10000">10s</button>
@@ -48,19 +56,11 @@
         </div>
       </div>
       <div class="settings-group">
-        <span class="settings-label" data-i18n="setting_posmode">Positionsmodus</span>
-        <div class="settings-options" id="setting-posmode" role="radiogroup" aria-label="Positionsberechnung">
-          <button class="settings-opt settings-opt--active" role="radio" aria-checked="true" data-value="CALC" data-i18n="setting_interpolated">Interpoliert</button>
-          <button class="settings-opt" role="radio" aria-checked="false" data-value="REPORT_ONLY" data-i18n="setting_gps_only">Nur GPS</button>
-        </div>
-      </div>
-      <div class="settings-group">
         <span class="settings-label" data-i18n="setting_animation">Bus-Animation</span>
         <div class="settings-options" id="setting-interpolation">
           <button class="settings-opt settings-opt--active" role="switch" aria-checked="true" data-value="on" data-i18n="setting_on">An</button>
           <button class="settings-opt" role="switch" aria-checked="false" data-value="off" data-i18n="setting_off">Aus</button>
         </div>
-        <div class="settings-hint settings-hint--inline" id="hint-animation-disabled" data-i18n="hint_animation_gps_only" hidden>Nicht verfügbar bei „Nur GPS"</div>
       </div>
       <div class="settings-group">
         <span class="settings-label" data-i18n="setting_theme">Darstellung</span>
