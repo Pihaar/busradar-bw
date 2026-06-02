@@ -98,7 +98,7 @@ class _Cache:
                 return None
             age = time.monotonic() - self._mono_ts if self._mono_ts else 0.0
             remaining = tracker.cache_expiry_seconds(age, fallback_ttl=self._ttl)
-            if remaining + self._jitter > 0:
+            if remaining > self._jitter:
                 return self._data
             return None
 
