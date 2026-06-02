@@ -574,33 +574,26 @@ html, body {
   border-top: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   height: 0;
-  transition: height var(--transition-slow), visibility 0s var(--transition-slow);
+  transition: height var(--transition-slow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5);
   padding-bottom: var(--safe-bottom);
   overscroll-behavior: contain;
+}
+.detail-panel[inert] {
   visibility: hidden;
   pointer-events: none;
 }
 .detail-panel--collapsed {
   height: calc(72px + var(--safe-bottom));
-  visibility: visible;
-  pointer-events: auto;
-  transition: height var(--transition-slow), visibility 0s;
 }
 .detail-panel--half {
   height: 45vh;
-  visibility: visible;
-  pointer-events: auto;
-  transition: height var(--transition-slow), visibility 0s;
 }
 .detail-panel--open {
   height: 85vh;
-  visibility: visible;
-  pointer-events: auto;
-  transition: height var(--transition-slow), visibility 0s;
 }
 
 /* === RESPONSIVE: DESKTOP === */
@@ -1219,18 +1212,19 @@ html, body {
     border-top: none;
     border-left: 1px solid var(--border-subtle);
     transform: translateX(100%);
-    transition: transform var(--transition-slow), visibility 0s var(--transition-slow);
+    transition: transform var(--transition-slow);
     box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5);
     padding-bottom: 0;
+  }
+  .detail-panel[inert] {
+    visibility: hidden;
+    pointer-events: none;
   }
   .detail-panel--collapsed,
   .detail-panel--half,
   .detail-panel--open {
     transform: translateX(0);
     height: 100% !important;
-    visibility: visible;
-    pointer-events: auto;
-    transition: transform var(--transition-slow), visibility 0s;
   }
   .detail-handle {
     display: none;
