@@ -14,28 +14,89 @@ export var mapModule = {
       attributionControl: true,
     });
 
-    state.darkTileLayer = L.tileLayer(CONFIG.tileUrl, {
-      attribution: CONFIG.tileAttribution,
-      maxZoom: 19,
-      subdomains: 'abcd',
-    });
-    state.lightTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: CONFIG.tileAttribution,
-      maxZoom: 19,
-      subdomains: 'abcd',
-    });
+    var cartoSubdomains = 'abcd';
 
-    var activeTiles = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
-    activeTiles.on('tileerror', function() {
-      if (!state.map.fallbackAdded) {
-        state.map.fallbackAdded = true;
-        L.tileLayer(CONFIG.fallbackTileUrl, {
-          attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-          maxZoom: 19,
-        }).addTo(state.map);
+    var RetryTileLayer = L.TileLayer.extend({
+      createTile: function(coords, done) {
+        var tile = document.createElement('img');
+        tile.alt = '';
+        tile.setAttribute('role', 'presentation');
+        if (this.options.crossOrigin || this.options.crossOrigin === '') {
+          tile.crossOrigin = this.options.crossOrigin === true ? '' : this.options.crossOrigin;
+        }
+        tile.referrerPolicy = 'no-referrer';
+
+        var self = this;
+        var subs = (this.options.subdomains || 'abcd').split ? (this.options.subdomains || 'abcd').split('') : this.options.subdomains;
+        var baseUrl = this.getTileUrl(coords);
+        var tried = 0;
+
+        function attempt() {
+          var url = baseUrl.replace(/\/\/[abcd]\./, '//' + subs[tried] + '.');
+          tile.onload = function() { tile.onload = tile.onerror = null; done(null, tile); };
+          tile.onerror = function() {
+            tried++;
+            if (tried < subs.length) {
+              attempt();
+            } else {
+              tile.onload = tile.onerror = null;
+              done('failed', tile);
+            }
+          };
+          tile.src = url;
+        }
+        attempt();
+        return tile;
       }
     });
-    activeTiles.addTo(state.map);
+
+    function createTileLayers(subs) {
+      var opts = { attribution: CONFIG.tileAttribution, maxZoom: 19, maxNativeZoom: 18, subdomains: subs };
+      if (state.darkTileLayer && state.map.hasLayer(state.darkTileLayer)) state.map.removeLayer(state.darkTileLayer);
+      if (state.lightTileLayer && state.map.hasLayer(state.lightTileLayer)) state.map.removeLayer(state.lightTileLayer);
+      state.darkTileLayer = new RetryTileLayer(CONFIG.tileUrl, opts);
+      state.lightTileLayer = new RetryTileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', opts);
+      state.darkTileLayer.on('tileerror', onTileError);
+      state.darkTileLayer.on('tileload', onTileLoad);
+      state.lightTileLayer.on('tileerror', onTileError);
+      state.lightTileLayer.on('tileload', onTileLoad);
+      var active = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+      active.addTo(state.map);
+    }
+
+    state._osmFallback = L.tileLayer(CONFIG.fallbackTileUrl, {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 19,
+      className: 'osm-fallback-tiles',
+    });
+
+    var brokenZooms = {};
+
+    function onTileError() {
+      var z = state.map.getZoom();
+      brokenZooms[z] = true;
+      if (!state.map.hasLayer(state._osmFallback)) {
+        var current = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+        if (state.map.hasLayer(current)) state.map.removeLayer(current);
+        state._osmFallback.addTo(state.map);
+      }
+    }
+    function onTileLoad() {}
+
+    state.map.on('zoomend', function() {
+      var z = state.map.getZoom();
+      if (!brokenZooms[z] && state.map.hasLayer(state._osmFallback)) {
+        state.map.removeLayer(state._osmFallback);
+        var current = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+        if (!state.map.hasLayer(current)) current.addTo(state.map);
+      } else if (brokenZooms[z] && !state.map.hasLayer(state._osmFallback)) {
+        var cur = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+        if (state.map.hasLayer(cur)) state.map.removeLayer(cur);
+        state._osmFallback.addTo(state.map);
+      }
+    });
+
+    createTileLayers('abcd');
 
     L.control.zoom({ position: 'bottomleft' }).addTo(state.map);
 

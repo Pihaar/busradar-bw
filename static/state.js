@@ -325,9 +325,11 @@ export var settings = {
     var newLayer = this.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
     var oldLayer = this.current.theme === 'light' ? state.darkTileLayer : state.lightTileLayer;
     if (state.map.hasLayer(newLayer)) return;
+    if (state.map.hasLayer(state._osmFallback)) {
+      state.map.removeLayer(state._osmFallback);
+    }
+    if (state.map.hasLayer(oldLayer)) state.map.removeLayer(oldLayer);
     newLayer.addTo(state.map);
-    var timeout = setTimeout(function() { if (state.map.hasLayer(oldLayer)) state.map.removeLayer(oldLayer); }, 5000);
-    newLayer.once('load', function() { clearTimeout(timeout); if (state.map.hasLayer(oldLayer)) state.map.removeLayer(oldLayer); });
   },
 
   _updateGroup: function(groupId, value) {

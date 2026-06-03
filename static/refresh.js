@@ -18,7 +18,15 @@ export function scheduleRefresh(delay) {
 
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible' && state.map) {
-    scheduleRefresh(300);
+    state.isLoading = false;
+    state._forceRefresh = true;
+    state.vehicles.forEach(function(entry) {
+      if (entry._animFrame) {
+        cancelAnimationFrame(entry._animFrame);
+        entry._animFrame = null;
+      }
+    });
+    scheduleRefresh(0);
   }
 });
 
@@ -65,8 +73,10 @@ export function refresh() {
   var bounds = state.map.getBounds();
   var sw = bounds.getSouthWest();
   var ne = bounds.getNorthEast();
+  var forceRefresh = state._forceRefresh;
+  state._forceRefresh = false;
 
-  api.getVehicles(sw.lat, sw.lng, ne.lat, ne.lng)
+  api.getVehicles(sw.lat, sw.lng, ne.lat, ne.lng, forceRefresh)
     .then(function(data) {
       if (state.consecutiveErrors > 0) {
         clearPersistentError();
@@ -98,10 +108,52 @@ export function refresh() {
       stopsLayer.update(vehicles);
       updateStatus(vehicles.length, data.dataAge);
 
+      var _followHandledMissed = false;
       if (state.followBus && state.selectedJid) {
         var followEntry = state.vehicles.get(state.selectedJid);
         if (!followEntry) {
           if (!state._notStartedJid) ui._disableFollow();
+        } else if (followEntry.missedCycles > 0) {
+          _followHandledMissed = true;
+          var followSeq = ++state._journeyReqSeq;
+          var followJid = state.selectedJid;
+          api.getJourney(followJid).then(function(jData) {
+            if (state._journeyReqSeq !== followSeq || state.selectedJid !== followJid) return;
+            var jp = (jData.journey || {}).pos || {};
+            var fLat = jp.y ? jp.y / 1e6 : null;
+            var fLon = jp.x ? jp.x / 1e6 : null;
+            if (fLat && fLon) {
+              followEntry.data.lat = fLat;
+              followEntry.data.lon = fLon;
+              followEntry.marker.setLatLng([fLat, fLon]);
+              followEntry.missedCycles = 0;
+              state.selectedJourneyData = jData;
+              state._currentStopL = (jData.journey || {}).stopL || [];
+              if (!state._followPanning) {
+                state._followPanning = true;
+                state.map.setView([fLat, fLon], state.map.getZoom(), { animate: false });
+                state._followPanning = false;
+              }
+            } else {
+              var lk = followEntry.data;
+              api.getVehicles(lk.lat - 0.05, lk.lon - 0.05, lk.lat + 0.05, lk.lon + 0.05).then(function(d2) {
+                if (state.selectedJid !== followJid) return;
+                var found = (d2.vehicles || []).find(function(v) { return v.jid === followJid; });
+                if (found) {
+                  followEntry.data.lat = found.lat;
+                  followEntry.data.lon = found.lon;
+                  followEntry.data.delay = found.delay;
+                  followEntry.marker.setLatLng([found.lat, found.lon]);
+                  followEntry.missedCycles = 0;
+                  if (!state._followPanning) {
+                    state._followPanning = true;
+                    state.map.setView([found.lat, found.lon], state.map.getZoom(), { animate: false });
+                    state._followPanning = false;
+                  }
+                }
+              }).catch(function() {});
+            }
+          }).catch(function() {});
         } else if (!state._followPanning && !state._navigating) {
           var target = L.latLng(followEntry.data.lat, followEntry.data.lon);
           var current = state.map.getCenter();
@@ -170,7 +222,7 @@ export function refresh() {
           announce(t('journey_started_announce', {line: transVehicle.data.line}));
         }
 
-        if (state.selectedJid && state.selectedJourneyData) {
+        if (state.selectedJid && state.selectedJourneyData && !_followHandledMissed) {
           var selectedVehicle = state.vehicles.get(state.selectedJid);
           if (selectedVehicle) {
             var cls = getDelayClass(selectedVehicle.data.delay);
@@ -188,6 +240,26 @@ export function refresh() {
               var jLat = jPos.y ? jPos.y / 1e6 : null;
               var jLon = jPos.x ? jPos.x / 1e6 : null;
               if (!jLat || !jLon) {
+                var sv0 = state.vehicles.get(capturedJid);
+                if (sv0 && sv0.missedCycles > 0) {
+                  var lk = sv0.data;
+                  api.getVehicles(lk.lat - 0.05, lk.lon - 0.05, lk.lat + 0.05, lk.lon + 0.05).then(function(d2) {
+                    if (state.selectedJid !== capturedJid) return;
+                    var found = (d2.vehicles || []).find(function(v) { return v.jid === capturedJid; });
+                    if (found) {
+                      sv0.data.lat = found.lat;
+                      sv0.data.lon = found.lon;
+                      sv0.data.delay = found.delay;
+                      sv0.marker.setLatLng([found.lat, found.lon]);
+                      if (state.followBus && !state._followPanning) {
+                        state._followPanning = true;
+                        state.map.setView([found.lat, found.lon], state.map.getZoom(), { animate: false });
+                        state._followPanning = false;
+                        scheduleRefresh(500);
+                      }
+                    }
+                  }).catch(function() {});
+                }
                 var jStopL = (journeyData.journey || {}).stopL || [];
                 var jLastStop = jStopL.length > 0 ? jStopL[jStopL.length - 1] : null;
                 var jLastTime = jLastStop ? (jLastStop.aTimeR || jLastStop.aTimeS || jLastStop.dTimeR || jLastStop.dTimeS || '') : '';
@@ -210,9 +282,12 @@ export function refresh() {
               }
               var sv = state.vehicles.get(state.selectedJid);
               if (sv) {
-                sv.data.lat = jLat;
-                sv.data.lon = jLon;
-                sv.missedCycles = 0;
+                if (sv.missedCycles > 0) {
+                  sv.data.lat = jLat;
+                  sv.data.lon = jLon;
+                  sv.marker.setLatLng([jLat, jLon]);
+                  sv.missedCycles = 0;
+                }
                 ui.updateJourneyStopDelays(journeyData);
                 ui.drawRoute(journeyData, sv.data);
               }

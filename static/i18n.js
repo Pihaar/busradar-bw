@@ -283,6 +283,9 @@
   de.about_data_publisher = 'Herausgeber: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';
   en.about_data_publisher = 'Publisher: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';
 
+  de.about_data_coverage = 'Nur Busse von DB Regio Bus (BRN, Südwestbus). Andere Betreiber wie rnv, SSB oder KVV sind nicht enthalten.';
+  en.about_data_coverage = 'Only buses operated by DB Regio Bus (BRN, Südwestbus). Other operators such as rnv, SSB, or KVV are not included.';
+
   de.about_data_map = 'Kartendaten: © OpenStreetMap-Mitwirkende, © CARTO.';
   en.about_data_map = 'Map data: © OpenStreetMap contributors, © CARTO.';
 

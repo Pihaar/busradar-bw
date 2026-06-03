@@ -207,6 +207,7 @@ async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dic
 
 async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: str,
                            build_envelope, scan_seconds: int, min_changed: int) -> bool:
+    tracker._last_positions = {}
     for _ in range(scan_seconds):
         if breaker.is_open:
             return False

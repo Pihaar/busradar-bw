@@ -7,7 +7,7 @@ export var api = {
   _stationDepAbort: null,
   _stationArrAbort: null,
 
-  getVehicles: function(swLat, swLon, neLat, neLon) {
+  getVehicles: function(swLat, swLon, neLat, neLon, forceRefresh) {
     var params = new URLSearchParams({
       swLat: swLat.toFixed(5),
       swLon: swLon.toFixed(5),
@@ -15,6 +15,7 @@ export var api = {
       neLon: neLon.toFixed(5),
       posMode: settings.current.posMode,
     });
+    if (forceRefresh) params.set('_t', Date.now());
     return window.fetch(CONFIG.apiBase + '/vehicles?' + params.toString())
       .then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
