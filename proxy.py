@@ -377,24 +377,27 @@ async def get_vehicles(
     neLat: float = Query(default=49.6, ge=45.0, le=56.0),
     neLon: float = Query(default=9.0, ge=4.0, le=17.0),
     posMode: str = Query(default="CALC", pattern="^(CALC|REPORT_ONLY)$"),
+    _t: int = Query(default=None),
 ):
     if swLat > neLat or swLon > neLon:
         return JSONResponse(status_code=400, content={"error": "invalid_request", "detail": "Inverted bounds"})
 
     cache_key = (round(swLat, 2), round(swLon, 2), round(neLat, 2), round(neLon, 2), posMode)
     client_activity.touch()
+    skip_cache = _t is not None
 
-    if _TICK_ENABLED:
-        cached = await cache.get_tick_aware(cache_key, tick_tracker)
-        if cached:
-            return _inject_tick_hints(cached)
-    else:
-        cached = await cache.get(cache_key)
-        if cached:
-            from datetime import datetime
-            out = dict(cached)
-            out["serverTime"] = datetime.now().strftime("%H%M%S")
-            return out
+    if not skip_cache:
+        if _TICK_ENABLED:
+            cached = await cache.get_tick_aware(cache_key, tick_tracker)
+            if cached:
+                return _inject_tick_hints(cached)
+        else:
+            cached = await cache.get(cache_key)
+            if cached:
+                from datetime import datetime
+                out = dict(cached)
+                out["serverTime"] = datetime.now().strftime("%H%M%S")
+                return out
 
     # Singleflight: first request fetches, others await same Future
     fut = _inflight.get(cache_key)
@@ -591,7 +594,7 @@ class JourneyRequest(BaseModel):
 
 
 _journey_cache: dict = {}
-_JOURNEY_CACHE_TTL = 300
+_JOURNEY_CACHE_TTL = 30
 
 
 @app.post("/api/journey")

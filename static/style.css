@@ -138,6 +138,12 @@ html, body {
 .leaflet-tile-pane {
   filter: brightness(1.4);
 }
+.osm-fallback-tiles {
+  filter: invert(1) hue-rotate(180deg) brightness(0.8) contrast(0.9);
+}
+[data-theme="light"] .osm-fallback-tiles {
+  filter: none;
+}
 
 .leaflet-control-zoom {
   border: none !important;
@@ -306,7 +312,12 @@ html, body {
 
 .panel-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.panel-header-left {
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-title {
@@ -318,6 +329,12 @@ html, body {
 }
 .panel-title-accent {
   color: var(--color-ontime);
+}
+.panel-subtitle {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .status-bar {
