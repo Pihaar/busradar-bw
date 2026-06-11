@@ -3,7 +3,7 @@ import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin, B
 import { api } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { ui } from './ui.js';
-import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce } from './status.js';
+import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce, formatStatusText } from './status.js';
 
 // Re-export for init.js and other consumers
 export { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce };
@@ -36,9 +36,7 @@ setInterval(function() {
   }
   if (state.serverTimeStamp && state._lastBusCount !== undefined && !(state._errorUntil && Date.now() < state._errorUntil)) {
     var text = document.getElementById('status-text');
-    var timeStr = getServerTimeStr();
-    var c = state._lastBusCount;
-    text.textContent = (c === 1 ? t('bus_count_one', {time: timeStr}) : t('buses_count', {count: c, time: timeStr}));
+    text.textContent = formatStatusText(state._lastBusCount, state._lastConnectedClients, getServerTimeStr());
   }
 }, 1000);
 
@@ -104,9 +102,16 @@ export function refresh() {
       } else {
         state._nextFreshDataIn = null;
       }
+      // Connected-User-Counter: nur tracken, Anzeige passiert in updateStatus
+      // Erfolgreiche Response (auch Stale-Pfad ohne `connectedClients`) → Streak resetten
+      state._connectedClientsErrorStreak = 0;
+      if (typeof data.connectedClients === 'string') {
+        state._lastConnectedClients = data.connectedClients;
+      }
+      // Bei field absent (z.B. Stale-Pfad) bleibt vorheriger Wert; erst nach 2 Errors auf null
       markers.updateAll(vehicles);
       stopsLayer.update(vehicles);
-      updateStatus(vehicles.length, data.dataAge);
+      updateStatus(vehicles.length, data.dataAge, state._lastConnectedClients);
 
       var _followHandledMissed = false;
       if (state.followBus && state.selectedJid) {
@@ -378,6 +383,10 @@ export function refresh() {
       state._nextFreshDataIn = null;
       if (err.name === 'AbortError') return;
       state.consecutiveErrors++;
+      state._connectedClientsErrorStreak++;
+      if (state._connectedClientsErrorStreak >= 2) {
+        state._lastConnectedClients = null;
+      }
       if (state.consecutiveErrors >= 3) {
         state.currentInterval = Math.min(
           BACKOFF_BASE * Math.pow(2, state.consecutiveErrors - 2),

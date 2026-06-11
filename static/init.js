@@ -7,6 +7,29 @@ import { scheduleRefresh, showError, announce, refresh } from './refresh.js';
 
 var SETTINGS_KEY = 'busradar_settings_v1';
 
+// === CLIENT ID ===
+// Synchron beim Module-Load — muss vor jedem Fetch gesetzt sein.
+// Tab-lokal, kein localStorage, kein Cookie. Header X-Client-Id wird in api.js gesendet.
+function _generateClientId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    try { return window.crypto.randomUUID(); } catch (e) { /* fallthrough */ }
+  }
+  if (window.crypto && window.crypto.getRandomValues) {
+    try {
+      var b = new Uint8Array(16);
+      window.crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;  // version 4
+      b[8] = (b[8] & 0x3f) | 0x80;  // variant 10
+      var hex = Array.prototype.map.call(b, function(x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+      return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20, 32);
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+state._clientId = _generateClientId();
+
 // === SETTINGS UI BINDING ===
 settings._bindUI = function() {
   var self = this;

@@ -378,6 +378,103 @@ export var ui = {
     });
   },
 
+  // Build the stop time display inside `timesEl`. Handles three cases:
+  //   start stop (only departure), end stop (only arrival), intermediate.
+  // For intermediate stops with realtime dwell >= 1 min the arrival and
+  // departure are stacked on two lines (each with its own planned/real and
+  // delay badge); otherwise a single time row is shown.
+  _populateStopTimes: function(timesEl, stop) {
+    timesEl.replaceChildren();
+
+    var hasArr = !!(stop.aTimeS || stop.aTimeR);
+    var hasDep = !!(stop.dTimeS || stop.dTimeR);
+    var aDelay = calcDelay(stop.aTimeS, stop.aTimeR);
+    var dDelay = calcDelay(stop.dTimeS, stop.dTimeR);
+
+    // Detect realtime dwell (>= 1 min between real arrival and real departure).
+    var dwell = null;
+    if (hasArr && hasDep && stop.aTimeR && stop.dTimeR) {
+      var aR = parseHafasTimeToMin(stop.aTimeR);
+      var dR = parseHafasTimeToMin(stop.dTimeR);
+      if (aR !== null && dR !== null) {
+        var diff = dR - aR;
+        if (diff < -720) diff += 1440;
+        else if (diff > 720) diff -= 1440;
+        if (diff >= 1) dwell = diff;
+      }
+    }
+
+    if (hasArr && hasDep && dwell !== null) {
+      // Two-line layout: arrival above, departure below, both with their own delay.
+      timesEl.classList.add('stop-times--split');
+      var arrRow = ui._buildStopTimeRow(stop.aTimeS, stop.aTimeR, aDelay, t('stop_arrival_label'));
+      arrRow.classList.add('stop-time-row--arrival');
+      timesEl.appendChild(arrRow);
+      var depRow = ui._buildStopTimeRow(stop.dTimeS, stop.dTimeR, dDelay, t('stop_departure_label'));
+      depRow.classList.add('stop-time-row--departure');
+      depRow.setAttribute('aria-label', t('stop_dwell_aria', {n: dwell}));
+      timesEl.appendChild(depRow);
+    } else {
+      // Single row: prefer departure side for intermediates and starts; fall
+      // back to arrival side for end stops or when only arrival is set.
+      timesEl.classList.remove('stop-times--split');
+      var timeS, timeR, rowDelay;
+      if (hasDep) {
+        timeS = stop.dTimeS;
+        timeR = stop.dTimeR;
+        rowDelay = dDelay !== null ? dDelay : aDelay;
+      } else {
+        timeS = stop.aTimeS;
+        timeR = stop.aTimeR;
+        rowDelay = aDelay;
+      }
+      if (timeS || timeR) {
+        var row = ui._buildStopTimeRow(timeS, timeR, rowDelay, null);
+        row.classList.add('stop-time-row--single');
+        timesEl.appendChild(row);
+      }
+    }
+  },
+
+  // Build one time-row element: planned/real times plus an optional delay badge.
+  // `label` (when given) is rendered as a small prefix for split rows.
+  _buildStopTimeRow: function(timeS, timeR, delay, label) {
+    var row = document.createElement('span');
+    row.className = 'stop-time-row';
+
+    if (label) {
+      var lbl = document.createElement('span');
+      lbl.className = 'stop-time-label';
+      lbl.textContent = label;
+      row.appendChild(lbl);
+    }
+
+    if (timeR && timeS && timeR !== timeS) {
+      var planned = document.createElement('span');
+      planned.className = 'stop-time-planned';
+      planned.textContent = formatTime(timeS);
+      row.appendChild(planned);
+      var real = document.createElement('span');
+      real.className = 'stop-time-real';
+      real.textContent = formatTime(timeR);
+      row.appendChild(real);
+    } else if (timeS || timeR) {
+      var only = document.createElement('span');
+      only.className = 'stop-time-only';
+      only.textContent = formatTime(timeR || timeS);
+      row.appendChild(only);
+    }
+
+    if (delay !== null && delay !== undefined && delay !== 0) {
+      var badge = document.createElement('span');
+      badge.className = 'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
+      badge.textContent = getDelayText(delay);
+      row.appendChild(badge);
+    }
+
+    return row;
+  },
+
   renderJourneyStops: function(data, vehicle) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
@@ -423,11 +520,6 @@ export var ui = {
       var locIdx = stop.locX != null ? stop.locX : -1;
       var loc = (locIdx >= 0 && locIdx < locL.length) ? locL[locIdx] : {};
 
-      var dDelay = calcDelay(stop.dTimeS, stop.dTimeR);
-      var aDelay = calcDelay(stop.aTimeS, stop.aTimeR);
-      var delay = dDelay !== null ? dDelay : aDelay;
-      var delayCls = getDelayClass(delay);
-
       var li = document.createElement('li');
       li.className = 'stop-item';
 
@@ -456,25 +548,7 @@ export var ui = {
 
       var timesEl = document.createElement('div');
       timesEl.className = 'stop-times';
-
-      var timeStr = stop.dTimeS || stop.aTimeS;
-      var timeReal = stop.dTimeR || stop.aTimeR;
-
-      if (timeReal && timeStr && timeReal !== timeStr) {
-        var planned = document.createElement('span');
-        planned.className = 'stop-time-planned';
-        planned.textContent = formatTime(timeStr);
-        timesEl.appendChild(planned);
-        var real = document.createElement('span');
-        real.className = 'stop-time-real';
-        real.textContent = formatTime(timeReal);
-        timesEl.appendChild(real);
-      } else if (timeStr) {
-        var only = document.createElement('span');
-        only.className = 'stop-time-only';
-        only.textContent = formatTime(timeStr);
-        timesEl.appendChild(only);
-      }
+      ui._populateStopTimes(timesEl, stop);
 
       var badgeTime = stop.dTimeS || stop.dTimeR || stop.aTimeS || stop.aTimeR || '';
       var dayOffset = getDayOffset(badgeTime);
@@ -500,13 +574,6 @@ export var ui = {
 
       info.appendChild(nameEl);
       info.appendChild(timesEl);
-
-      if (delay !== null && delay !== 0) {
-        var delayEl = document.createElement('span');
-        delayEl.className = 'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
-        delayEl.textContent = getDelayText(delay);
-        info.appendChild(delayEl);
-      }
 
       var stopLocX = stop.locX != null ? stop.locX : -1;
       if (!shownMsgLocX[stopLocX]) {
@@ -670,43 +737,18 @@ export var ui = {
 
       var timesEl = item.querySelector('.stop-times');
       if (timesEl) {
-        timesEl.replaceChildren();
-        var timeStr = stop.dTimeS || stop.aTimeS;
-        var timeReal = stop.dTimeR || stop.aTimeR;
-
-        if (timeReal && timeStr && timeReal !== timeStr) {
-          var planned = document.createElement('span');
-          planned.className = 'stop-time-planned';
-          planned.textContent = formatTime(timeStr);
-          timesEl.appendChild(planned);
-          var real = document.createElement('span');
-          real.className = 'stop-time-real';
-          real.textContent = formatTime(timeReal);
-          timesEl.appendChild(real);
-        } else if (timeStr) {
-          var only = document.createElement('span');
-          only.className = 'stop-time-only';
-          only.textContent = formatTime(timeReal || timeStr);
-          timesEl.appendChild(only);
-        }
+        // Preserve any day-offset badge that was appended after the time rows
+        // (it isn't time-dependent and would otherwise be lost on rebuild).
+        var dayBadge = timesEl.querySelector('.departure-day-badge');
+        ui._populateStopTimes(timesEl, stop);
+        if (dayBadge) timesEl.appendChild(dayBadge);
       }
 
-      var existingDelay = item.querySelector('.stop-delay');
-      var dDelay = calcDelay(stop.dTimeS, stop.dTimeR);
-      var aDelay = calcDelay(stop.aTimeS, stop.aTimeR);
-      var delay = dDelay !== null ? dDelay : aDelay;
-
-      if (delay !== null && delay !== 0) {
-        if (!existingDelay) {
-          existingDelay = document.createElement('span');
-          existingDelay.className = 'stop-delay';
-          item.querySelector('.stop-info').appendChild(existingDelay);
-        }
-        existingDelay.className = 'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
-        existingDelay.textContent = getDelayText(delay);
-      } else if (existingDelay) {
-        existingDelay.remove();
-      }
+      // Delay badges are now rendered inside each time row by
+      // `_populateStopTimes`. Remove any leftover stop-delay element that
+      // sits as a direct child of stop-info from a previous render.
+      var legacyDelay = item.querySelector('.stop-info > .stop-delay');
+      if (legacyDelay) legacyDelay.remove();
     }
   },
 

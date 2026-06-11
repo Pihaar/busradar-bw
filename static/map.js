@@ -202,7 +202,8 @@ export var mapModule = {
 
         var dist = center.distanceTo(lastRefreshCenter);
         var zoom = state.map.getZoom();
-        if (dist > 2000 || zoom < lastRefreshZoom) {
+        var viewportDiameter = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
+        if (dist > viewportDiameter * 0.10 || zoom < lastRefreshZoom) {
           lastRefreshCenter = center;
           lastRefreshZoom = zoom;
           refresh.refresh();

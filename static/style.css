@@ -850,11 +850,31 @@ html, body {
 
 .stop-times {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
+}
+
+.stop-times--split {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.stop-time-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stop-time-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 3.5em;
 }
 
 .stop-time-planned {
@@ -873,7 +893,6 @@ html, body {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 3px;
-  margin-top: 4px;
   display: inline-block;
 }
 .stop-delay--ontime { background: rgba(0, 245, 212, 0.1); color: var(--color-ontime); }
