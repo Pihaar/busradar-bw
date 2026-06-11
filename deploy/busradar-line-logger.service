@@ -1,0 +1,34 @@
+[Unit]
+Description=Busradar BW — Line Delay Logger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=busradar
+Group=busradar
+WorkingDirectory=/opt/busradar
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=LINE_LOGGER_LINES=725
+Environment=LINE_LOGGER_DIR=/var/lib/busradar/line-logs
+ExecStart=/usr/bin/python3.11 /opt/busradar/line_logger.py
+SyslogIdentifier=busradar-line-logger
+Restart=on-failure
+RestartSec=30
+
+# Hardening
+ProtectSystem=strict
+ReadWritePaths=/var/lib/busradar
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0027
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target
