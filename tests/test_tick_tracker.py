@@ -23,6 +23,13 @@ from tick import (
     ACTIVE_CLIENT_WINDOW,
     CALIB_MAX_FAILURES,
     _TICK_ENABLED,
+    ConnectedClients,
+    is_valid_client_id,
+    normalize_ip,
+    CLIENT_TIMEOUT,
+    CLIENTS_PER_IP_CAP,
+    CONNECTED_CLIENTS_CAP,
+    CAP_REJECT_LOG_RATE,
 )
 from proxy import (
     tick_tracker,
@@ -667,3 +674,443 @@ class TestSingleflight:
         from proxy import _inflight
         await client.get("/api/vehicles?swLat=49.30&swLon=8.60&neLat=49.40&neLon=8.70")
         assert len(_inflight) == 0
+
+
+# ============================================================================
+# ConnectedClients — presence counter with sliding window, per-IP cap, bucketing
+# ============================================================================
+
+VALID_CID_1 = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+VALID_CID_2 = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+VALID_CID_3 = "11111111-2222-4333-8444-555555555555"
+
+
+def _gen_cid(i: int) -> str:
+    """Deterministischer Generator für gültige UUIDv4-strings (lowercase)."""
+    h = f"{i:032x}"
+    # Version 4 nibble + variant 8/9/a/b
+    return f"{h[0:8]}-{h[8:12]}-4{h[13:16]}-8{h[17:20]}-{h[20:32]}"
+
+
+class TestIsValidClientId:
+    def test_valid_uuid_v4_lowercase(self):
+        assert is_valid_client_id(VALID_CID_1) is True
+
+    def test_uppercase_rejected(self):
+        assert is_valid_client_id(VALID_CID_1.upper()) is False
+
+    def test_empty_rejected(self):
+        assert is_valid_client_id("") is False
+
+    def test_none_rejected(self):
+        assert is_valid_client_id(None) is False
+
+    def test_whitespace_only_rejected(self):
+        assert is_valid_client_id("   ") is False
+        assert is_valid_client_id("\t\n") is False
+
+    def test_too_short_rejected(self):
+        assert is_valid_client_id("aaaa") is False
+
+    def test_too_long_rejected(self):
+        assert is_valid_client_id("a" * 1000) is False
+
+    def test_dashes_only_rejected(self):
+        assert is_valid_client_id("-" * 36) is False
+
+    def test_wrong_version_rejected(self):
+        # v3 statt v4
+        assert is_valid_client_id("aaaaaaaa-aaaa-3aaa-aaaa-aaaaaaaaaaaa") is False
+
+    def test_wrong_variant_rejected(self):
+        # Variant nibble 0 statt 8/9/a/b
+        assert is_valid_client_id("aaaaaaaa-aaaa-4aaa-0aaa-aaaaaaaaaaaa") is False
+
+    def test_non_hex_rejected(self):
+        assert is_valid_client_id("zzzzzzzz-aaaa-4aaa-aaaa-aaaaaaaaaaaa") is False
+
+    def test_no_dashes_rejected(self):
+        assert is_valid_client_id("a" * 36) is False
+
+    def test_length_36_required(self):
+        # 35 chars: zu kurz, fällt durch len-Check
+        assert is_valid_client_id("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa") is False
+
+
+class TestNormalizeIp:
+    def test_ipv4_unchanged(self):
+        assert normalize_ip("192.168.1.1") == "192.168.1.1"
+
+    def test_ipv4_localhost(self):
+        assert normalize_ip("127.0.0.1") == "127.0.0.1"
+
+    def test_ipv6_truncated_to_64(self):
+        assert normalize_ip("2001:db8::1") == "2001:db8::"
+
+    def test_ipv6_full_address(self):
+        assert normalize_ip("2001:db8:1234:5678:9abc:def0:1234:5678") == "2001:db8:1234:5678::"
+
+    def test_empty_returns_empty(self):
+        assert normalize_ip("") == ""
+
+    def test_none_returns_empty(self):
+        assert normalize_ip(None) == ""
+
+    def test_malformed_returns_empty(self):
+        assert normalize_ip("not-an-ip") == ""
+        assert normalize_ip("999.999.999.999") == ""
+
+
+class TestConnectedClientsBasic:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def _check_invariants(self):
+        """Invarianten: cid in clients ↔ cid in cid_to_ip; per_ip Sets nicht leer; per_ip cids ⊆ clients."""
+        for cid in self.cc._clients:
+            assert cid in self.cc._cid_to_ip, f"cid {cid} fehlt im reverse index"
+        for cid in self.cc._cid_to_ip:
+            assert cid in self.cc._clients, f"cid {cid} im reverse index aber nicht in clients"
+        for ip, cids in self.cc._per_ip.items():
+            assert cids, f"per_ip[{ip}] ist leer"
+            for cid in cids:
+                assert cid in self.cc._clients, f"per_ip cid {cid} nicht in clients"
+
+    def test_initial_empty(self):
+        assert self.cc.count() == 0
+        assert self.cc.display_count() == "0"
+
+    def test_touch_increments(self):
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        assert self.cc.count() == 1
+        self._check_invariants()
+
+    def test_touch_idempotent(self):
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        assert self.cc.count() == 1
+        self._check_invariants()
+
+    def test_touch_different_ids(self):
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        self.cc.touch(VALID_CID_2, "127.0.0.1")
+        assert self.cc.count() == 2
+        self._check_invariants()
+
+    def test_returns_true_on_accept(self):
+        assert self.cc.touch(VALID_CID_1, "127.0.0.1") is True
+
+    def test_empty_ip_skips_per_ip_cap(self):
+        # Unix socket / no client → empty IP, kein per-IP-Cap
+        for i in range(CLIENTS_PER_IP_CAP + 5):
+            assert self.cc.touch(_gen_cid(i), "") is True
+        assert self.cc.count() == CLIENTS_PER_IP_CAP + 5
+        self._check_invariants()
+
+
+class TestConnectedClientsGc:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def test_gc_evicts_expired(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        assert self.cc.count() == 1
+
+        # Clock jumps past CLIENT_TIMEOUT
+        fake_now[0] += CLIENT_TIMEOUT + 1
+        # _gc läuft via touch; einer neuer Touch löst Sweep aus
+        self.cc.touch(VALID_CID_2, "127.0.0.1")
+        assert self.cc.count() == 1  # Nur der neue, alter ist weg
+        assert VALID_CID_1 not in self.cc._clients
+        assert VALID_CID_1 not in self.cc._cid_to_ip
+
+    def test_gc_during_touch_not_count(self, monkeypatch):
+        """GC läuft IM touch(), nicht in count()."""
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+
+        for i in range(50):
+            self.cc.touch(_gen_cid(i), f"10.0.0.{i % 5}")
+        assert self.cc.count() == 50
+
+        fake_now[0] += CLIENT_TIMEOUT + 10
+        # count() ALLEINE räumt nicht auf
+        assert self.cc.count() == 50
+        # Erst touch() triggert GC
+        self.cc.touch(_gen_cid(100), "10.0.0.99")
+        assert self.cc.count() == 1
+
+    def test_gc_cleans_per_ip_index(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+
+        self.cc.touch(VALID_CID_1, "1.2.3.4")
+        assert "1.2.3.4" in self.cc._per_ip
+
+        fake_now[0] += CLIENT_TIMEOUT + 1
+        self.cc.touch(VALID_CID_2, "5.6.7.8")
+        assert "1.2.3.4" not in self.cc._per_ip
+        assert "5.6.7.8" in self.cc._per_ip
+
+    def test_per_ip_slot_reclaimed_after_expiry(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+
+        ip = "10.0.0.1"
+        # Fill IP zu Cap
+        for i in range(CLIENTS_PER_IP_CAP):
+            assert self.cc.touch(_gen_cid(i), ip) is True
+
+        # Cap+1 wird abgelehnt
+        assert self.cc.touch(_gen_cid(CLIENTS_PER_IP_CAP), ip) is False
+
+        # Clock vor: alle expirieren
+        fake_now[0] += CLIENT_TIMEOUT + 1
+        # Neuer Touch räumt auf, slot frei
+        assert self.cc.touch(_gen_cid(999), ip) is True
+        assert len(self.cc._per_ip[ip]) == 1
+
+
+class TestConnectedClientsPerIpCap:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def test_per_ip_cap_rejects_after_limit(self):
+        ip = "10.0.0.1"
+        for i in range(CLIENTS_PER_IP_CAP):
+            assert self.cc.touch(_gen_cid(i), ip) is True
+        # +1 wird abgelehnt
+        assert self.cc.touch(_gen_cid(CLIENTS_PER_IP_CAP), ip) is False
+        assert self.cc.count() == CLIENTS_PER_IP_CAP
+
+    def test_caps_orthogonal_per_ip(self):
+        """Cap_A voll, Cap_B noch frei."""
+        ip_a, ip_b = "10.0.0.1", "10.0.0.2"
+        for i in range(CLIENTS_PER_IP_CAP):
+            self.cc.touch(_gen_cid(i), ip_a)
+        # IP_B startet frisch
+        assert self.cc.touch(_gen_cid(99999), ip_b) is True
+        # IP_A immer noch dicht
+        assert self.cc.touch(_gen_cid(99998), ip_a) is False
+
+    def test_ipv6_64_bucketing_shared_cap(self):
+        """Zwei IPs aus gleichem /64 teilen sich den Cap."""
+        # 2001:db8::1 und 2001:db8::2 sind im selben /64 → "2001:db8::"
+        for i in range(CLIENTS_PER_IP_CAP // 2):
+            assert self.cc.touch(_gen_cid(i), "2001:db8::1") is True
+        for i in range(CLIENTS_PER_IP_CAP // 2):
+            assert self.cc.touch(_gen_cid(1000 + i), "2001:db8::2") is True
+        # Cap ist erreicht
+        assert self.cc.touch(_gen_cid(99999), "2001:db8::3") is False
+
+
+class TestConnectedClientsGlobalCap:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def test_global_cap_rejects(self):
+        # Nutze viele verschiedene IPs damit Per-IP-Cap nicht greift
+        for i in range(CONNECTED_CLIENTS_CAP):
+            ip = f"10.{(i >> 16) & 0xff}.{(i >> 8) & 0xff}.{i & 0xff}"
+            assert self.cc.touch(_gen_cid(i), ip) is True
+        assert self.cc.count() == CONNECTED_CLIENTS_CAP
+        # +1 wird abgelehnt
+        assert self.cc.touch(_gen_cid(CONNECTED_CLIENTS_CAP), "192.0.2.1") is False
+
+
+class TestConnectedClientsBucket:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    @pytest.mark.parametrize("n,expected", [
+        (0, "0"),
+        (1, "1"),
+        (2, "2"),
+        (5, "5"),
+        (20, "20"),
+        (100, "100"),
+        (101, "100+"),
+        (1000, "100+"),
+    ])
+    def test_display_count(self, n, expected):
+        for i in range(n):
+            self.cc.touch(_gen_cid(i), f"10.0.{i // 256}.{i % 256}")
+        assert self.cc.display_count() == expected
+
+    def test_display_at_global_cap(self):
+        """Bei vollem CONNECTED_CLIENTS_CAP zeigt UI '100+'."""
+        for i in range(CONNECTED_CLIENTS_CAP):
+            ip = f"10.{(i >> 16) & 0xff}.{(i >> 8) & 0xff}.{i & 0xff}"
+            self.cc.touch(_gen_cid(i), ip)
+        assert self.cc.count() == CONNECTED_CLIENTS_CAP
+        assert self.cc.display_count() == "100+"
+
+    def test_display_idempotent(self):
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        d1 = self.cc.display_count()
+        d2 = self.cc.display_count()
+        assert d1 == d2 == "1"
+
+    def test_display_threshold_boundary(self):
+        """Genau 100 zeigt '100', 101 zeigt '100+'."""
+        for i in range(100):
+            ip = f"10.0.{i // 256}.{i % 256}"
+            self.cc.touch(_gen_cid(i), ip)
+        assert self.cc.display_count() == "100"
+        # Eine weitere von neuer IP (Per-IP-Cap nicht treffen)
+        self.cc.touch(_gen_cid(99999), "10.99.99.99")
+        assert self.cc.display_count() == "100+"
+
+    def test_bucket_idempotent(self):
+        self.cc.touch(VALID_CID_1, "127.0.0.1")
+        d1 = self.cc.display_count()
+        d2 = self.cc.display_count()
+        assert d1 == d2 == "1"
+
+
+class TestConnectedClientsReverseIndex:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def _check_invariants(self):
+        for cid in self.cc._clients:
+            assert cid in self.cc._cid_to_ip
+        for cid in self.cc._cid_to_ip:
+            assert cid in self.cc._clients
+        for ip, cids in self.cc._per_ip.items():
+            assert cids
+            for cid in cids:
+                assert cid in self.cc._clients
+
+    def test_invariants_after_touch(self):
+        self.cc.touch(VALID_CID_1, "1.2.3.4")
+        self._check_invariants()
+
+    def test_invariants_after_eviction(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+        self.cc.touch(VALID_CID_1, "1.2.3.4")
+        self.cc.touch(VALID_CID_2, "1.2.3.4")
+        fake_now[0] += CLIENT_TIMEOUT + 1
+        self.cc.touch(VALID_CID_3, "5.6.7.8")
+        self._check_invariants()
+        assert self.cc.count() == 1
+
+    def test_per_ip_set_emptied_when_last_cid_expires(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+        self.cc.touch(VALID_CID_1, "1.2.3.4")
+        fake_now[0] += CLIENT_TIMEOUT + 1
+        self.cc.touch(VALID_CID_2, "5.6.7.8")
+        # IP 1.2.3.4 hat keinen Client mehr → Eintrag weg
+        assert "1.2.3.4" not in self.cc._per_ip
+
+
+class TestConnectedClientsRejectLogging:
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def test_rate_limited_log(self, monkeypatch, caplog):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+        ip = "10.0.0.1"
+
+        for i in range(CLIENTS_PER_IP_CAP):
+            self.cc.touch(_gen_cid(i), ip)
+
+        import logging as _log
+        with caplog.at_level(_log.WARNING, logger="busradar"):
+            # Erster Reject loggt
+            self.cc.touch(_gen_cid(99998), ip)
+            # Zweiter Reject im selben Zeitfenster loggt NICHT
+            self.cc.touch(_gen_cid(99997), ip)
+
+        warnings = [r for r in caplog.records if "cap-reject" in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_log_after_rate_limit_window(self, monkeypatch, caplog):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+        ip = "10.0.0.1"
+
+        for i in range(CLIENTS_PER_IP_CAP):
+            self.cc.touch(_gen_cid(i), ip)
+
+        import logging as _log
+        with caplog.at_level(_log.WARNING, logger="busradar"):
+            self.cc.touch(_gen_cid(99998), ip)
+            fake_now[0] += CAP_REJECT_LOG_RATE + 1
+            self.cc.touch(_gen_cid(99997), ip)
+
+        warnings = [r for r in caplog.records if "cap-reject" in r.getMessage()]
+        assert len(warnings) == 2
+
+    def test_log_does_not_contain_raw_cid(self, monkeypatch, caplog):
+        """DPP-254: raw cid darf nicht im Log auftauchen."""
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+        ip = "10.0.0.1"
+        for i in range(CLIENTS_PER_IP_CAP):
+            self.cc.touch(_gen_cid(i), ip)
+
+        import logging as _log
+        with caplog.at_level(_log.WARNING, logger="busradar"):
+            self.cc.touch(VALID_CID_1, ip)
+
+        for record in caplog.records:
+            assert VALID_CID_1 not in record.getMessage()
+            assert ip not in record.getMessage()  # Auch kein raw IP
+
+
+class TestConnectedClientsTouchOrder:
+    """LRU-Order via move_to_end für GC-Reihenfolge."""
+
+    def setup_method(self):
+        self.cc = ConnectedClients()
+
+    def test_re_touch_moves_to_end(self, monkeypatch):
+        fake_now = [1000.0]
+        monkeypatch.setattr("tick._mono", lambda: fake_now[0])
+
+        self.cc.touch(VALID_CID_1, "1.1.1.1")
+        fake_now[0] += 10
+        self.cc.touch(VALID_CID_2, "2.2.2.2")
+        fake_now[0] += 10
+        self.cc.touch(VALID_CID_1, "1.1.1.1")  # CID_1 wird "frisch"
+
+        # CID_2 ist jetzt der älteste
+        oldest = next(iter(self.cc._clients))
+        assert oldest == VALID_CID_2
+
+
+class TestInjectTickHintsBucket:
+    def test_inject_with_count(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, "5")
+        assert out["connectedClients"] == "5"
+        assert out["x"] == 1
+
+    def test_inject_with_count_capped(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, "100+")
+        assert out["connectedClients"] == "100+"
+
+    def test_inject_without_bucket_default(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker)
+        assert "connectedClients" not in out
+
+    def test_inject_with_none_bucket(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, None)
+        assert "connectedClients" not in out
+
+    def test_inject_does_not_mutate_original(self):
+        tracker = TickTracker()
+        orig = {"x": 1}
+        inject_tick_hints(orig, tracker, "1")
+        assert "connectedClients" not in orig
+        assert "serverTime" not in orig

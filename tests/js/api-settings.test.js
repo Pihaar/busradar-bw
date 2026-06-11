@@ -857,3 +857,49 @@ describe('state._nextFreshDataIn (tick hint)', () => {
     state._nextFreshDataIn = null;
   });
 });
+
+
+// === Connected Clients header ===
+
+describe('api.getVehicles X-Client-Id header', () => {
+  var originalFetch;
+  beforeEach(() => {
+    if (!settings.current) settings.init();
+    originalFetch = window.fetch;
+    window.fetch = vi.fn();
+  });
+  afterEach(() => {
+    window.fetch = originalFetch;
+    state._clientId = null;
+  });
+
+  it('adds X-Client-Id header when state._clientId is set', async () => {
+    state._clientId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+
+    await api.getVehicles(49.0, 8.0, 49.5, 9.0);
+    var opts = window.fetch.mock.calls[0][1];
+    expect(opts).toBeDefined();
+    expect(opts.headers).toEqual({ 'X-Client-Id': 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa' });
+  });
+
+  it('omits header when state._clientId is null', async () => {
+    state._clientId = null;
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+
+    await api.getVehicles(49.0, 8.0, 49.5, 9.0);
+    var opts = window.fetch.mock.calls[0][1];
+    expect(opts).toBeUndefined();
+  });
+
+  it('still sends header with forceRefresh', async () => {
+    state._clientId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+
+    await api.getVehicles(49.0, 8.0, 49.5, 9.0, true);
+    var url = window.fetch.mock.calls[0][0];
+    var opts = window.fetch.mock.calls[0][1];
+    expect(url).toContain('_t=');
+    expect(opts.headers).toEqual({ 'X-Client-Id': 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb' });
+  });
+});

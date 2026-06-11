@@ -21,7 +21,22 @@ export function getServerTimeStr() {
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
-export function updateStatus(count, dataAge) {
+export function formatStatusText(count, users, timeStr) {
+  var usersStr = null;
+  if (typeof users === 'string' && users && users !== '0') {
+    usersStr = (users === '1') ? t('users_one') : t('users_many', {n: users});
+  }
+  if (count === 1) {
+    return usersStr
+      ? t('bus_count_one_with_users', {users: usersStr, time: timeStr})
+      : t('bus_count_one', {time: timeStr});
+  }
+  return usersStr
+    ? t('buses_count_with_users', {count: count, users: usersStr, time: timeStr})
+    : t('buses_count', {count: count, time: timeStr});
+}
+
+export function updateStatus(count, dataAge, users) {
   if (state._errorUntil && Date.now() < state._errorUntil) { state._lastBusCount = count; return; }
   var dot = document.querySelector('.status-dot');
   var text = document.getElementById('status-text');
@@ -31,8 +46,7 @@ export function updateStatus(count, dataAge) {
     setTimeout(function() { dot.classList.remove('status-dot--flash'); }, 600);
   }
   state._lastBusCount = count;
-  var timeStr = getServerTimeStr();
-  text.textContent = (count === 1 ? t('bus_count_one', {time: timeStr}) : t('buses_count', {count: count, time: timeStr}));
+  text.textContent = formatStatusText(count, users, getServerTimeStr());
   state.lastUpdate = Date.now();
 }
 

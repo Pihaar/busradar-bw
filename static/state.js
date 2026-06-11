@@ -36,6 +36,9 @@ export var state = {
   // increment on user gesture; async handlers compare captured-vs-current to detect interruption
   _userInteractionSeq: 0,
   _nextFreshDataIn: null,
+  _clientId: null,
+  _connectedClientsErrorStreak: 0,
+  _lastConnectedClients: undefined,
 };
 
 // === I18N ===

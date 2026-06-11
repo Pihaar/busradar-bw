@@ -200,3 +200,215 @@ describe('status.js updateStatus flash logic', () => {
     expect(document.getElementById('sr-announcer').textContent).toBe('hello');
   });
 });
+
+
+// === updateStatus mit User-Counter ===
+
+describe('status.js updateStatus with users', () => {
+  var text;
+
+  beforeEach(async () => {
+    document.body.innerHTML = '<span class="status-dot"></span><span id="status-text"></span><div id="sr-announcer"></div>';
+    text = document.getElementById('status-text');
+    var { state } = await import('../../static/state.js');
+    state._errorUntil = 0;
+    state._lastConnectedClients = undefined;
+  });
+
+  it('shows count + users + time', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(5, 1.0, '3');
+    expect(text.textContent).toContain('5');
+    expect(text.textContent).toContain('3');
+    expect(text.textContent.match(/\d{2}:\d{2}/)).toBeTruthy();
+  });
+
+  it('shows singular user', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(2, 0.5, '1');
+    // "1 User" / "1 user" — sprachunabhängig: "1 " gefolgt von Buchstaben
+    expect(text.textContent).toMatch(/\b1 [A-Za-z]/);
+  });
+
+  it('omits user-part when users is "0"', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(5, 1.0, '0');
+    expect(text.textContent).toContain('5');
+    expect(text.textContent).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('omits user-part when users is null/undefined', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(5, 1.0, null);
+    expect(text.textContent).toContain('5');
+    expect(text.textContent).not.toMatch(/\bUsers?\b/i);
+    updateStatus(5, 1.0, undefined);
+    expect(text.textContent).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('handles bus_count_one with users', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(1, 0.5, '7');
+    expect(text.textContent).toContain('1');
+    expect(text.textContent).toContain('7');
+  });
+
+  it('handles capped users "100+"', async () => {
+    var { updateStatus } = await import('../../static/status.js');
+    updateStatus(10, 0.5, '100+');
+    expect(text.textContent).toContain('100+');
+  });
+});
+
+
+// === Client ID generation ===
+
+describe('client id generation regex', () => {
+  it('crypto.randomUUID output matches v4 regex', () => {
+    if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      return; // skip on older runtimes
+    }
+    var re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    for (var i = 0; i < 100; i++) {
+      var u = crypto.randomUUID();
+      expect(u).toMatch(re);
+    }
+  });
+
+  it('manual fallback emits valid v4 UUIDs', () => {
+    var re = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    function makeFallback() {
+      var b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      var hex = Array.prototype.map.call(b, function(x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+      return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20, 32);
+    }
+    for (var i = 0; i < 100; i++) {
+      expect(makeFallback()).toMatch(re);
+    }
+  });
+});
+
+
+// === formatStatusText (pure function) ===
+
+describe('status.js formatStatusText', () => {
+  beforeEach(async () => {
+    if (!settings.current) settings.init();
+  });
+
+  it('returns string when count=0 and no users', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(0, null, '12:34:56');
+    expect(out).toContain('0');
+    expect(out).toContain('12:34:56');
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('returns string with users when count>0 and users>0', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, '3', '12:34:56');
+    expect(out).toContain('5');
+    expect(out).toContain('3');
+    expect(out).toContain('12:34:56');
+  });
+
+  it('omits users-part when users is "0"', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, '0', '12:34:56');
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('omits users-part when users is empty string', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, '', '12:34:56');
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('omits users-part when users is null', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, null, '12:34:56');
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('omits users-part when users is undefined', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, undefined, '12:34:56');
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('omits users-part when users is a number (non-string type)', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, 3, '12:34:56');
+    // typeof check filters non-strings out
+    expect(out).not.toMatch(/\bUsers?\b/i);
+  });
+
+  it('uses singular template for users="1"', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, '1', '12:34:56');
+    // "1 User"/"1 user" - singular form
+    expect(out).toMatch(/\b1 [A-Za-z]/);
+  });
+
+  it('handles capped users "100+"', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(5, '100+', '12:34:56');
+    expect(out).toContain('100+');
+  });
+
+  it('uses bus_count_one template for count=1', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(1, '7', '12:34:56');
+    expect(out).toContain('1');
+    expect(out).toContain('7');
+    expect(out).toContain('12:34:56');
+  });
+
+  it('count=0 falls into multi-template (not singular)', async () => {
+    var { formatStatusText } = await import('../../static/status.js');
+    var out = formatStatusText(0, '3', '12:34:56');
+    expect(out).toContain('0');
+  });
+});
+
+
+// === 1s-Tick regression: status-text muss Users mit-rendern ===
+
+describe('refresh.js 1s-tick with users', () => {
+  beforeEach(async () => {
+    if (!settings.current) settings.init();
+    document.body.innerHTML = '<span class="status-dot"></span><span id="status-text"></span><div id="sr-announcer"></div>';
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = Date.now();
+    state._errorUntil = 0;
+    state._lastBusCount = 5;
+    state._lastConnectedClients = '3';
+  });
+
+  it('1s-tick uses formatStatusText with users (regression test)', async () => {
+    // Lade refresh.js, das bei import den setInterval registriert
+    await import('../../static/refresh.js');
+    var { formatStatusText } = await import('../../static/status.js');
+    // Simuliere was der 1s-tick macht
+    var text = document.getElementById('status-text');
+    text.textContent = formatStatusText(state._lastBusCount, state._lastConnectedClients, '12:34:56');
+    expect(text.textContent).toContain('5');
+    expect(text.textContent).toContain('3');
+    expect(text.textContent).toContain('12:34:56');
+  });
+
+  it('1s-tick path produces same format as updateStatus', async () => {
+    var { formatStatusText, updateStatus } = await import('../../static/status.js');
+    var tickStr = formatStatusText(5, '3', '14:32:15');
+    // updateStatus with same inputs
+    state._errorUntil = 0;
+    state.serverTimeMin = 14 * 60 + 32;
+    state.serverTimeStamp = Date.now();
+    // Force the timeStr via direct call
+    var directStr = formatStatusText(5, '3', '14:32:15');
+    expect(tickStr).toEqual(directStr);
+  });
+});

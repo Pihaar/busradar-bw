@@ -12,10 +12,14 @@ Uses time.monotonic() internally for NTP-jump immunity.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
 import json
 import logging
 import os
+import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 import httpx
@@ -38,11 +42,42 @@ CALIB_BACKOFF_SECONDS = 1800.0
 TICK_POSITIONS_CAP = 1000
 TICK_STATE_FILE = Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / ".tick_state"
 
+# Connected-Clients counter
+CLIENT_TIMEOUT = 120.0           # 4 × TICK_PERIOD; toleriert hidden-tab throttling
+CLIENT_ID_LEN = 36               # UUID v4 canonical length
+CONNECTED_CLIENTS_CAP = 10_000   # global OOM-Schutz
+CLIENTS_PER_IP_CAP = 100         # toleriert Schul-/CGN-NAT
+CAP_REJECT_LOG_RATE = 60.0       # Rate-Limit für Reject-Warning-Logs
+
+_UUID_V4_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
 _TICK_ENABLED = os.environ.get("BUSRADAR_TICK_CALIBRATOR", "on").lower().strip() != "off"
 
 
 # --- Monotonic clock helper ---
 _mono = time.monotonic
+
+
+# --- Helpers ---
+
+def is_valid_client_id(cid: str | None) -> bool:
+    """Length-Check vor Regex (Defense-in-Depth, vermeidet pathologische Inputs)."""
+    return bool(cid) and len(cid) == CLIENT_ID_LEN and bool(_UUID_V4_RE.match(cid))
+
+
+def normalize_ip(host: str | None) -> str:
+    """IPv6 auf /64 maskieren (Anti-Rotation), IPv4 unverändert. Empty/malformed → ""."""
+    if not host:
+        return ""
+    try:
+        addr = ipaddress.ip_address(host)
+        if isinstance(addr, ipaddress.IPv6Address):
+            return str(ipaddress.ip_network(f"{host}/64", strict=False).network_address)
+        return host
+    except ValueError:
+        return ""
 
 
 # --- Classes ---
@@ -56,6 +91,90 @@ class ClientActivity:
 
     def is_active(self) -> bool:
         return _mono() - self.last_ts < ACTIVE_CLIENT_WINDOW
+
+
+class ConnectedClients:
+    """Sliding-Window Presence-Counter, single-event-loop only.
+
+    Invariante:
+      - Für jede cid in self._clients: existiert genau ein Eintrag in self._cid_to_ip
+      - Für jede ip in self._per_ip: alle cids im Set sind in self._clients
+      - Set-Werte in self._per_ip sind nie leer
+
+    Niemals `await` in einer Methode — sonst Race möglich.
+    Reverse-Index sorgt für O(1)-Eviction statt O(IPs × evicted).
+    """
+
+    def __init__(self):
+        self._clients: OrderedDict[str, float] = OrderedDict()  # cid → last_seen_mono
+        self._cid_to_ip: dict[str, str] = {}                    # cid → ip (reverse index)
+        self._per_ip: dict[str, set[str]] = {}                  # ip → set of cids
+        self._last_cap_reject_log: float = 0.0
+
+    def touch(self, client_id: str, source_ip: str) -> bool:
+        """Akzeptiert oder rejectet einen Touch. Returns True bei Accept.
+
+        GC läuft VOR Cap-Checks (verhindert Deadlock bei voller Map mit toten Einträgen).
+        """
+        now = _mono()
+        self._gc(now)
+
+        ip = normalize_ip(source_ip)
+
+        if client_id in self._clients:
+            self._clients.move_to_end(client_id)
+            self._clients[client_id] = now
+            return True
+
+        if ip:
+            ip_set = self._per_ip.get(ip)
+            if ip_set is not None and len(ip_set) >= CLIENTS_PER_IP_CAP:
+                self._maybe_log_reject(now, "per_ip", ip)
+                return False
+
+        if len(self._clients) >= CONNECTED_CLIENTS_CAP:
+            self._maybe_log_reject(now, "global", ip)
+            return False
+
+        self._clients[client_id] = now
+        self._cid_to_ip[client_id] = ip
+        if ip:
+            self._per_ip.setdefault(ip, set()).add(client_id)
+        return True
+
+    def _gc(self, now: float) -> None:
+        """In-place Eviction expired Clients via Reverse-Index."""
+        cutoff = now - CLIENT_TIMEOUT
+        while self._clients:
+            oldest_cid = next(iter(self._clients))
+            if self._clients[oldest_cid] >= cutoff:
+                break
+            del self._clients[oldest_cid]
+            ip = self._cid_to_ip.pop(oldest_cid, "")
+            if ip and ip in self._per_ip:
+                self._per_ip[ip].discard(oldest_cid)
+                if not self._per_ip[ip]:
+                    del self._per_ip[ip]
+
+    def _maybe_log_reject(self, now: float, reason: str, ip: str) -> None:
+        if now - self._last_cap_reject_log < CAP_REJECT_LOG_RATE:
+            return
+        self._last_cap_reject_log = now
+        ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:8] if ip else "noip"
+        log.warning("[ConnectedClients] cap-reject reason=%s ip_hash=%s n=%d",
+                    reason, ip_hash, len(self._clients))
+
+    def count(self) -> int:
+        """Aktuelle Anzahl. Pure read — keine Mutation, kein GC (touch() macht das)."""
+        return len(self._clients)
+
+    def display_count(self) -> str:
+        """Display-String für UI. Über 100 wird '100+' geliefert (UI-Schutz vor extrem
+        großen Zahlen). Sonst exakte Zahl als String."""
+        n = self.count()
+        if n > 100:
+            return "100+"
+        return str(n)
 
 
 class TickTracker:
@@ -133,10 +252,17 @@ class TickTracker:
 
     def _persist_tick(self, ts: float):
         # Stores wall-to-mono offset for cross-restart reconstruction.
+        # Also stores wall_ts directly so external consumers (logger) can compute
+        # tick alignment without monotonic-clock awareness.
         # After reboot monotonic resets; load_persisted() rejects stale via age check.
         try:
             tmp = TICK_STATE_FILE.with_suffix('.tmp')
-            tmp.write_text(json.dumps({"mono_offset": time.time() - ts}))
+            now_wall = time.time()
+            tmp.write_text(json.dumps({
+                "mono_offset": now_wall - ts,
+                "wall_ts": now_wall,
+                "period": TICK_PERIOD,
+            }))
             tmp.rename(TICK_STATE_FILE)
         except Exception:
             log.debug("[tick_calibrator] failed to persist tick state")
@@ -161,8 +287,12 @@ class TickTracker:
             pass
 
 
-def inject_tick_hints(result: dict, tracker: TickTracker) -> dict:
-    """Shallow copy + dynamische Tick-Felder. Original bleibt unverändert."""
+def inject_tick_hints(result: dict, tracker: TickTracker, clients_count: str | None = None) -> dict:
+    """Shallow copy + dynamische Tick-Felder. Original bleibt unverändert.
+
+    `clients_count` (optional) wird als `connectedClients` ins Response gehoben.
+    Auf Error-/Stale-Pfaden weglassen, damit der Counter nicht in Reconnaissance-Surface leakt.
+    """
     from datetime import datetime
     out = dict(result)
     out["serverTime"] = datetime.now().strftime("%H%M%S")
@@ -173,6 +303,8 @@ def inject_tick_hints(result: dict, tracker: TickTracker) -> dict:
         out["nextFreshDataIn"] = None
     age = tracker.data_age()
     out["dataAge"] = round(age, 2) if age is not None else None
+    if clients_count is not None:
+        out["connectedClients"] = clients_count
     return out
 
 

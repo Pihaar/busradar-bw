@@ -25,8 +25,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from tick import (
-    TickTracker, ClientActivity, inject_tick_hints, tick_calibrator,
-    _TICK_ENABLED, TICK_MAX_AGE,
+    TickTracker, ClientActivity, ConnectedClients, inject_tick_hints, tick_calibrator,
+    is_valid_client_id, _TICK_ENABLED, TICK_MAX_AGE,
 )
 
 HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
@@ -143,12 +143,22 @@ cache = _Cache(ttl=CACHE_TTL)
 stops_cache = _Cache(daily_reset_hour=3)
 breaker = _CircuitBreaker()
 client_activity = ClientActivity()
+connected_clients = ConnectedClients()
 tick_tracker = TickTracker()
 _inflight: dict[tuple, asyncio.Future] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Single-Worker-Annahme für ConnectedClients-Counter: jeder Worker hat eigene Map.
+    # Bei N Workern würde der Counter durch N geteilt erscheinen.
+    try:
+        wc = int(os.environ.get("WEB_CONCURRENCY", "1"))
+        if wc > 1:
+            log.warning("WEB_CONCURRENCY=%d > 1 — connected-clients counter is per-worker only", wc)
+    except (ValueError, TypeError):
+        pass
+
     app.state.client = httpx.AsyncClient(
         timeout=UPSTREAM_TIMEOUT,
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
@@ -366,7 +376,13 @@ def _flatten_vehicles(res: dict) -> list[dict]:
 
 
 def _inject_tick_hints(result: dict) -> dict:
-    return inject_tick_hints(result, tick_tracker)
+    return inject_tick_hints(result, tick_tracker, connected_clients.display_count())
+
+
+def _inject_tick_hints_no_count(result: dict) -> dict:
+    """Für Error-/Stale-Pfade: Counter wird unterdrückt, damit der Bucket nicht
+    in Reconnaissance-Surface bei HAFAS-Down leakt. Frontend-Guard handelt das ab."""
+    return inject_tick_hints(result, tick_tracker, None)
 
 
 @app.get("/api/vehicles")
@@ -384,6 +400,12 @@ async def get_vehicles(
 
     cache_key = (round(swLat, 2), round(swLon, 2), round(neLat, 2), round(neLon, 2), posMode)
     client_activity.touch()
+    cid = request.headers.get("X-Client-Id")
+    if is_valid_client_id(cid):
+        # uvicorn rekonstruiert request.client.host aus XFF (--proxy-headers --forwarded-allow-ips=*),
+        # daher direkt nutzen — kein eigenes XFF-Parsing nötig.
+        ip = request.client.host if request.client else ""
+        connected_clients.touch(cid, ip)
     skip_cache = _t is not None
 
     if not skip_cache:
@@ -431,7 +453,7 @@ async def get_vehicles(
         if "error" in res:
             stale = cache.stale_data
             if stale:
-                response = _inject_tick_hints(stale) if _TICK_ENABLED else stale
+                response = _inject_tick_hints_no_count(stale) if _TICK_ENABLED else stale
                 if not fut.done():
                     fut.set_result(response)
                 return response

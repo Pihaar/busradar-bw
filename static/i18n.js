@@ -12,11 +12,19 @@
   de.connecting = 'Verbinde…';
   en.connecting = 'Connecting…';
 
+  // === STATUS-BAR — Bus-Count, optional User-Count, Server-Time ===
   de.buses_count = '{count} Busse · {time}';
   en.buses_count = '{count} buses · {time}';
-
+  de.buses_count_with_users = '{count} Busse · {users} · {time}';
+  en.buses_count_with_users = '{count} buses · {users} · {time}';
   de.bus_count_one = '1 Bus · {time}';
   en.bus_count_one = '1 bus · {time}';
+  de.bus_count_one_with_users = '1 Bus · {users} · {time}';
+  en.bus_count_one_with_users = '1 bus · {users} · {time}';
+  de.users_one = '1 Nutzer';
+  en.users_one = '1 user';
+  de.users_many = '{n} Nutzer';
+  en.users_many = '{n} users';
 
   de.connection_error = 'Verbindungsfehler';
   en.connection_error = 'Connection error';
@@ -26,6 +34,15 @@
 
   de.no_realtime = 'Keine Echtzeit';
   en.no_realtime = 'No real-time data';
+
+  de.stop_arrival_label = 'Ankunft';
+  en.stop_arrival_label = 'Arrival';
+
+  de.stop_departure_label = 'Abfahrt';
+  en.stop_departure_label = 'Departure';
+
+  de.stop_dwell_aria = 'Standzeit {n} Minuten';
+  en.stop_dwell_aria = 'Dwell time {n} minutes';
 
   // === SEARCH ===
   de.search_placeholder = 'Haltestelle oder Linie…';
