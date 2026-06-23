@@ -23,6 +23,7 @@ nohup.out
 package-lock.json
 busradar_api.py
 androguard.log
+androguard.db*
 Unbenannt.png
 validate.sh
 tick_logger.py

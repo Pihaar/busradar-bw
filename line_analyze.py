@@ -145,6 +145,7 @@ def analyze_direction(records: list[dict], seq_key: tuple, label: str) -> dict:
         "end_delay": stats(end_delays),
         "end_punctual_count": sum(1 for v in end_delays if v <= 0),
         "end_within_1min_count": sum(1 for v in end_delays if v <= 1),
+        "end_within_4min_count": sum(1 for v in end_delays if v <= 4),
         "duration_planned": stats(durations_planned),
         "duration_actual": stats(durations_actual),
     }
@@ -161,11 +162,13 @@ def print_report(line: str, days: int, results: list[dict]) -> None:
         print(f"  Start delay  (n={sd['n']}): mean={sd.get('mean','-')} median={sd.get('median','-')} min={sd.get('min','-')} max={sd.get('max','-')}")
         ed_punctual = res.get("end_punctual_count")
         ed_within_1 = res.get("end_within_1min_count")
+        ed_within_4 = res.get("end_within_4min_count")
         ed_punctual_str = ""
-        if ed_punctual is not None and ed_within_1 is not None and ed["n"] > 0:
+        if ed_punctual is not None and ed_within_1 is not None and ed_within_4 is not None and ed["n"] > 0:
             pct0 = round(100 * ed_punctual / ed["n"], 1)
             pct1 = round(100 * ed_within_1 / ed["n"], 1)
-            ed_punctual_str = f"  (≤0 min: {ed_punctual}/{ed['n']} = {pct0}%, ≤1 min: {ed_within_1}/{ed['n']} = {pct1}%)"
+            pct4 = round(100 * ed_within_4 / ed["n"], 1)
+            ed_punctual_str = f"  (≤0 min: {ed_punctual}/{ed['n']} = {pct0}%, ≤1 min: {ed_within_1}/{ed['n']} = {pct1}%, ≤4 min: {ed_within_4}/{ed['n']} = {pct4}%)"
         print(f"  End delay    (n={ed['n']}): mean={ed.get('mean','-')} median={ed.get('median','-')} min={ed.get('min','-')} max={ed.get('max','-')}{ed_punctual_str}")
         dp = res["duration_planned"]
         da = res["duration_actual"]

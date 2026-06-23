@@ -1,0 +1,172 @@
+X11 forwarding request failed on channel 0
+
+=== Line 725 — last 16 days ===
+
+Direction: Ortsbus Sandhausen  [16 Halte] (St. Ilgen Bahnhof West → Sandhausen Büchertstraße → Sandhausen Neues Rathaus → Sandhausen Altes Rathaus → ... → St. Ilgen Bahnhof West)
+  Journeys analyzed: 221
+  Start delay  (n=221): mean=1.01 median=1 min=0 max=7
+  End delay    (n=221): mean=4.18 median=4 min=0 max=12  (≤0 min: 7/221 = 3.2%, ≤1 min: 28/221 = 12.7%, ≤4 min: 123/221 = 55.7%)
+  Duration planned median: 16 min
+  Duration actual median:  19 min  (Δ +3 min)
+
+  Stop                                      med dep  mean dep   min   max    n
+  St. Ilgen Bahnhof West                        1.0      1.02     0     7  216
+  Sandhausen Büchertstraße                        1      1.04     0     7  221
+  Sandhausen Neues Rathaus                        1       1.4     0     8  221
+  Sandhausen Altes Rathaus                        2      2.34     1     9  221
+  Sandhausen Kisselgasse                          3      2.79     1     9  221
+  Sandhausen Lebenshilfe                          3      3.44     0    12  221
+  Sandhausen Stranggasse                          4      4.12     1    12  221
+  Sandhausen Waldkindergarten                     3      3.46     1    11  221
+  Sandhausen Herrmann-Löns-Weg/Friedhof           3      3.11     0    11  221
+  Sandhausen Waldstraße                           3       3.2    -1    10  221
+  Sandhausen Lattweg                              3       3.5     0    11  221
+  Sandhausen Schillerstraße                       4      3.62     0    11  221
+  Sandhausen Herchheimer Straße                   5      4.94     1    12  221
+  Sandhausen Neues Rathaus                        4      3.75    -1    11  221
+  Sandhausen Büchertstraße                        4      4.27     0    12  221
+
+  Verspätungs-Aufbau zwischen Halten (median Δ min, Fahrzeit):
+    St. Ilgen Bahnhof West      → Sandhausen Büchertstraße    ·0.0 (mean -0.3, min -1, max +2, n=216)
+    Sandhausen Büchertstraße    → Sandhausen Neues Rathaus    ·  0 (mean -0.2, min -1, max +4, n=221)
+    Sandhausen Neues Rathaus    → Sandhausen Altes Rathaus    ·  0 (mean +0.2, min +0, max +1, n=221)
+    Sandhausen Altes Rathaus    → Sandhausen Kisselgasse      ·  0 (mean +0.2, min -1, max +2, n=221)
+    Sandhausen Kisselgasse      → Sandhausen Lebenshilfe      ·  0 (mean +0.1, min -1, max +1, n=221)
+    Sandhausen Lebenshilfe      → Sandhausen Stranggasse      ·  0 (mean +0.4, min -1, max +2, n=221)
+    Sandhausen Stranggasse      → Sandhausen Waldkindergart   ↓  1 (mean -0.8, min -1, max +0, n=221)
+    Sandhausen Waldkindergart   → Sandhausen Herrmann-Löns-   ↓  1 (mean -0.8, min -2, max +1, n=221)
+    Sandhausen Herrmann-Löns-   → Sandhausen Waldstraße       ·  0 (mean -0.4, min -1, max +1, n=221)
+    Sandhausen Waldstraße       → Sandhausen Lattweg          ·  0 (mean -0.2, min -1, max +2, n=221)
+    Sandhausen Lattweg          → Sandhausen Schillerstraße   ·  0 (mean -0.4, min -1, max +1, n=221)
+    Sandhausen Schillerstraße   → Sandhausen Herchheimer St   ↑  1 (mean +1.3, min -1, max +3, n=221)
+    Sandhausen Herchheimer St   → Sandhausen Neues Rathaus    ↓  2 (mean -1.5, min -2, max +0, n=221)
+    Sandhausen Neues Rathaus    → Sandhausen Büchertstraße    ·  0 (mean +0.0, min -1, max +2, n=221)
+    Sandhausen Büchertstraße    → St. Ilgen Bahnhof West      ·  0 (mean -0.1, min -1, max +1, n=221)
+
+  Standzeit-Aufbau pro Halt (median Δ min, dep_delay − arr_delay):
+    Sandhausen Büchertstraße              ·0.0 (mean +0.4, min +0, max +2, n=216)
+    Sandhausen Neues Rathaus              ↑  1 (mean +0.5, min +0, max +4, n=221)
+    Sandhausen Altes Rathaus              ↑  1 (mean +0.8, min +0, max +4, n=221)
+    Sandhausen Kisselgasse                ·  0 (mean +0.2, min +0, max +1, n=221)
+    Sandhausen Lebenshilfe                ·  0 (mean +0.5, min +0, max +10, n=221)
+    Sandhausen Stranggasse                ·  0 (mean +0.2, min +0, max +1, n=221)
+    Sandhausen Waldkindergarten           ·  0 (mean +0.2, min +0, max +2, n=221)
+    Sandhausen Herrmann-Löns-Weg/Friedh   ·  0 (mean +0.5, min +0, max +2, n=221)
+    Sandhausen Waldstraße                 ·  0 (mean +0.5, min +0, max +2, n=221)
+    Sandhausen Lattweg                    ·  0 (mean +0.5, min +0, max +2, n=221)
+    Sandhausen Schillerstraße             ·  0 (mean +0.5, min +0, max +2, n=221)
+    Sandhausen Herchheimer Straße         ·  0 (mean +0.0, min +0, max +0, n=221)
+    Sandhausen Neues Rathaus              ·  0 (mean +0.3, min +0, max +3, n=221)
+    Sandhausen Büchertstraße              ·  0 (mean +0.5, min +0, max +2, n=221)
+
+Direction: Ortsbus Sandhausen  [16 Halte] (St. Ilgen Bahnhof West → Sandhausen Büchertstraße → Sandhausen Neues Rathaus → Sandhausen Herchheimer Straße → ... → St. Ilgen Bahnhof West)
+  Journeys analyzed: 184
+  Start delay  (n=184): mean=1.08 median=1.0 min=0 max=7
+  End delay    (n=184): mean=4.35 median=4.0 min=0 max=10  (≤0 min: 1/184 = 0.5%, ≤1 min: 8/184 = 4.3%, ≤4 min: 112/184 = 60.9%)
+  Duration planned median: 16.0 min
+  Duration actual median:  19.0 min  (Δ +3.0 min)
+
+  Stop                                      med dep  mean dep   min   max    n
+  St. Ilgen Bahnhof West                          1      1.07     0     7  175
+  Sandhausen Büchertstraße                        1      1.23     0     6  181
+  Sandhausen Neues Rathaus                      1.0      1.57     0     7  182
+  Sandhausen Herchheimer Straße                   3      3.28     1     9  183
+  Sandhausen Schillerstraße                     2.0      1.99    -1    10  184
+  Sandhausen Lattweg                            2.0       1.9     0     9  184
+  Sandhausen Waldstraße                         2.0       2.2     0     9  184
+  Sandhausen Herrmann-Löns-Weg/Friedhof         2.0      2.12     0     9  184
+  Sandhausen Waldkindergarten                   1.0      1.96    -1    11  184
+  Sandhausen Stranggasse                        1.0      1.56    -1    10  184
+  Sandhausen Lebenshilfe                        2.0      2.09    -1    10  184
+  Sandhausen Kisselgasse                        2.0      2.69     0     9  184
+  Sandhausen Altes Rathaus                      3.0      3.27     0    11  184
+  Sandhausen Neues Rathaus                      3.5       3.9     0    11  184
+  Sandhausen Büchertstraße                      4.0      4.38     1    10  184
+
+  Verspätungs-Aufbau zwischen Halten (median Δ min, Fahrzeit):
+    St. Ilgen Bahnhof West      → Sandhausen Büchertstraße    ·  0 (mean -0.2, min -1, max +2, n=175)
+    Sandhausen Büchertstraße    → Sandhausen Neues Rathaus    ·  0 (mean -0.3, min -1, max +2, n=181)
+    Sandhausen Neues Rathaus    → Sandhausen Herchheimer St   ↑2.0 (mean +1.7, min +0, max +4, n=182)
+    Sandhausen Herchheimer St   → Sandhausen Schillerstraße   ↓  2 (mean -1.9, min -2, max +0, n=183)
+    Sandhausen Schillerstraße   → Sandhausen Lattweg          ↓1.0 (mean -0.5, min -1, max +1, n=184)
+    Sandhausen Lattweg          → Sandhausen Waldstraße       ·0.0 (mean -0.2, min -1, max +1, n=184)
+    Sandhausen Waldstraße       → Sandhausen Herrmann-Löns-   ·0.0 (mean -0.4, min -1, max +1, n=184)
+    Sandhausen Herrmann-Löns-   → Sandhausen Waldkindergart   ↓1.0 (mean -0.7, min -2, max +1, n=184)
+    Sandhausen Waldkindergart   → Sandhausen Stranggasse      ↓1.0 (mean -0.7, min -1, max +0, n=184)
+    Sandhausen Stranggasse      → Sandhausen Lebenshilfe      ·0.0 (mean +0.1, min -1, max +2, n=184)
+    Sandhausen Lebenshilfe      → Sandhausen Kisselgasse      ·0.0 (mean +0.3, min -1, max +2, n=184)
+    Sandhausen Kisselgasse      → Sandhausen Altes Rathaus    ·0.0 (mean -0.1, min -1, max +1, n=184)
+    Sandhausen Altes Rathaus    → Sandhausen Neues Rathaus    ·0.0 (mean +0.2, min +0, max +1, n=184)
+    Sandhausen Neues Rathaus    → Sandhausen Büchertstraße    ·0.0 (mean +0.0, min -1, max +1, n=184)
+    Sandhausen Büchertstraße    → St. Ilgen Bahnhof West      ·0.0 (mean -0.0, min -1, max +1, n=184)
+
+  Standzeit-Aufbau pro Halt (median Δ min, dep_delay − arr_delay):
+    Sandhausen Büchertstraße              ·  0 (mean +0.4, min +0, max +2, n=175)
+    Sandhausen Neues Rathaus              ↑1.0 (mean +0.6, min +0, max +2, n=182)
+    Sandhausen Herchheimer Straße         ·  0 (mean +0.0, min +0, max +0, n=183)
+    Sandhausen Schillerstraße             ·0.0 (mean +0.6, min +0, max +6, n=184)
+    Sandhausen Lattweg                    ·0.0 (mean +0.4, min +0, max +2, n=184)
+    Sandhausen Waldstraße                 ·0.0 (mean +0.5, min +0, max +2, n=184)
+    Sandhausen Herrmann-Löns-Weg/Friedh   ·0.0 (mean +0.3, min +0, max +2, n=184)
+    Sandhausen Waldkindergarten           ↑1.0 (mean +0.5, min +0, max +3, n=184)
+    Sandhausen Stranggasse                ·0.0 (mean +0.3, min +0, max +2, n=184)
+    Sandhausen Lebenshilfe                ·0.0 (mean +0.4, min +0, max +6, n=184)
+    Sandhausen Kisselgasse                ·0.0 (mean +0.3, min +0, max +1, n=184)
+    Sandhausen Altes Rathaus              ↑1.0 (mean +0.7, min +0, max +3, n=184)
+    Sandhausen Neues Rathaus              ·0.0 (mean +0.5, min +0, max +3, n=184)
+    Sandhausen Büchertstraße              ·0.0 (mean +0.5, min +0, max +2, n=184)
+
+Direction: Ortsbus Sandhausen  [15 Halte] (St. Ilgen Bahnhof West → Sandhausen Büchertstraße → Sandhausen Neues Rathaus → Sandhausen Herchheimer Straße → ... → St. Ilgen Bahnhof West)
+  Journeys analyzed: 24
+  Start delay  (n=24): mean=0.79 median=1.0 min=0 max=3
+  End delay    (n=24): mean=4.58 median=4.0 min=2 max=8  (≤0 min: 0/24 = 0.0%, ≤1 min: 0/24 = 0.0%, ≤4 min: 13/24 = 54.2%)
+  Duration planned median: 15.0 min
+  Duration actual median:  18.0 min  (Δ +3.0 min)
+
+  Stop                                      med dep  mean dep   min   max    n
+  St. Ilgen Bahnhof West                        1.0      0.79     0     3   24
+  Sandhausen Büchertstraße                      1.0      0.83     0     4   24
+  Sandhausen Neues Rathaus                      1.0         1     0     4   24
+  Sandhausen Herchheimer Straße                 2.0      2.42     1     5   24
+  Sandhausen Schillerstraße                     1.0      1.58     0     5   24
+  Sandhausen Lattweg                            1.0      1.62     0     5   24
+  Sandhausen Waldstraße                         1.0      1.58     0     4   24
+  Sandhausen Waldkindergarten                   2.0      2.29     0     5   24
+  Sandhausen Stranggasse                        1.5      1.79     0     5   24
+  Sandhausen Lebenshilfe                        2.0      2.42     0     5   24
+  Sandhausen Kisselgasse                        3.0      2.92     0     7   24
+  Sandhausen Altes Rathaus                      3.0      3.54     1     7   24
+  Sandhausen Neues Rathaus                      4.0      4.12     1     8   24
+  Sandhausen Büchertstraße                      4.0      4.58     2     8   24
+
+  Verspätungs-Aufbau zwischen Halten (median Δ min, Fahrzeit):
+    St. Ilgen Bahnhof West      → Sandhausen Büchertstraße    ·0.0 (mean -0.3, min -1, max +2, n=24)
+    Sandhausen Büchertstraße    → Sandhausen Neues Rathaus    ·0.0 (mean -0.2, min -1, max +1, n=24)
+    Sandhausen Neues Rathaus    → Sandhausen Herchheimer St   ↑1.0 (mean +1.4, min +1, max +2, n=24)
+    Sandhausen Herchheimer St   → Sandhausen Schillerstraße   ↓2.0 (mean -1.9, min -2, max -1, n=24)
+    Sandhausen Schillerstraße   → Sandhausen Lattweg          ↓1.0 (mean -0.5, min -1, max +0, n=24)
+    Sandhausen Lattweg          → Sandhausen Waldstraße       ·0.0 (mean -0.2, min -1, max +1, n=24)
+    Sandhausen Waldstraße       → Sandhausen Waldkindergart   ·0.0 (mean -0.2, min -2, max +1, n=24)
+    Sandhausen Waldkindergart   → Sandhausen Stranggasse      ↓1.0 (mean -0.8, min -1, max +0, n=24)
+    Sandhausen Stranggasse      → Sandhausen Lebenshilfe      ·0.0 (mean +0.3, min -1, max +1, n=24)
+    Sandhausen Lebenshilfe      → Sandhausen Kisselgasse      ·0.0 (mean +0.4, min -1, max +2, n=24)
+    Sandhausen Kisselgasse      → Sandhausen Altes Rathaus    ·0.0 (mean +0.0, min -1, max +1, n=24)
+    Sandhausen Altes Rathaus    → Sandhausen Neues Rathaus    ·0.0 (mean +0.1, min +0, max +1, n=24)
+    Sandhausen Neues Rathaus    → Sandhausen Büchertstraße    ·0.0 (mean +0.0, min -1, max +1, n=24)
+    Sandhausen Büchertstraße    → St. Ilgen Bahnhof West      ·0.0 (mean +0.0, min +0, max +0, n=24)
+
+  Standzeit-Aufbau pro Halt (median Δ min, dep_delay − arr_delay):
+    Sandhausen Büchertstraße              ·0.0 (mean +0.3, min +0, max +1, n=24)
+    Sandhausen Neues Rathaus              ·0.0 (mean +0.4, min +0, max +1, n=24)
+    Sandhausen Herchheimer Straße         ·0.0 (mean +0.0, min +0, max +0, n=24)
+    Sandhausen Schillerstraße             ↑1.0 (mean +1.1, min +0, max +4, n=24)
+    Sandhausen Lattweg                    ↑0.5 (mean +0.6, min +0, max +2, n=24)
+    Sandhausen Waldstraße                 ·0.0 (mean +0.1, min +0, max +1, n=24)
+    Sandhausen Waldkindergarten           ↑1.0 (mean +0.9, min +0, max +2, n=24)
+    Sandhausen Stranggasse                ·0.0 (mean +0.3, min +0, max +2, n=24)
+    Sandhausen Lebenshilfe                ·0.0 (mean +0.3, min +0, max +1, n=24)
+    Sandhausen Kisselgasse                ·0.0 (mean +0.1, min +0, max +1, n=24)
+    Sandhausen Altes Rathaus              ↑1.0 (mean +0.6, min +0, max +1, n=24)
+    Sandhausen Neues Rathaus              ·0.0 (mean +0.5, min +0, max +2, n=24)
+    Sandhausen Büchertstraße              ·0.0 (mean +0.4, min +0, max +1, n=24)
+
