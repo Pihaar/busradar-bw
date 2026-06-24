@@ -25,7 +25,7 @@ auf einer OpenStreetMap-Karte. HAFAS-API Backend-Proxy mit FastAPI.
 
 %install
 install -d %{buildroot}/opt/busradar
-install -m 644 proxy.py tick.py stops_builder.py %{buildroot}/opt/busradar/
+install -m 644 proxy.py tick.py fanout.py stops_builder.py %{buildroot}/opt/busradar/
 cp -a static %{buildroot}/opt/busradar/
 printf '%%s\n' '%{version}-%{release}' > %{buildroot}/opt/busradar/VERSION
 install -D -m 644 deploy/busradar.service %{buildroot}%{_unitdir}/busradar.service
@@ -52,6 +52,7 @@ install -D -m 644 deploy/busradar-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/busr
 %dir /opt/busradar
 /opt/busradar/proxy.py
 /opt/busradar/tick.py
+/opt/busradar/fanout.py
 /opt/busradar/stops_builder.py
 /opt/busradar/static
 /opt/busradar/VERSION
