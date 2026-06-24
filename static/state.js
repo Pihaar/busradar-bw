@@ -39,6 +39,8 @@ export var state = {
   _clientId: null,
   _connectedClientsErrorStreak: 0,
   _lastConnectedClients: undefined,
+  _appVersion: null,
+  _appVersionFetch: null,
 };
 
 // === I18N ===
