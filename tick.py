@@ -287,11 +287,17 @@ class TickTracker:
             pass
 
 
-def inject_tick_hints(result: dict, tracker: TickTracker, clients_count: str | None = None) -> dict:
-    """Shallow copy + dynamische Tick-Felder. Original bleibt unverändert.
+def inject_tick_hints(result: dict, tracker: TickTracker, clients_count: str | None = None,
+                      app_version: str | None = None) -> dict:
+    """Shallow copy + dynamic tick fields. The original dict is left untouched.
 
-    `clients_count` (optional) wird als `connectedClients` ins Response gehoben.
-    Auf Error-/Stale-Pfaden weglassen, damit der Counter nicht in Reconnaissance-Surface leakt.
+    `clients_count` (optional) is surfaced as `connectedClients` in the response.
+    Suppressed on error/stale paths to keep the counter out of the reconnaissance
+    surface.
+
+    `app_version` (optional) is surfaced as `appVersion` so the client can detect
+    a deploy and prompt for a reload. Suppressed on error/stale paths for the
+    same reason.
     """
     from datetime import datetime
     out = dict(result)
@@ -305,6 +311,8 @@ def inject_tick_hints(result: dict, tracker: TickTracker, clients_count: str | N
     out["dataAge"] = round(age, 2) if age is not None else None
     if clients_count is not None:
         out["connectedClients"] = clients_count
+    if app_version is not None:
+        out["appVersion"] = app_version
     return out
 
 

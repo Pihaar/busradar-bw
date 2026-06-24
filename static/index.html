@@ -162,6 +162,12 @@
 
   <div aria-live="polite" aria-atomic="true" class="sr-only" id="sr-announcer"></div>
 
+  <div id="version-banner" class="version-banner" role="status" aria-live="polite" hidden>
+    <span class="version-banner__text" data-i18n="version_banner_text">Eine neue Version ist verfügbar.</span>
+    <button type="button" class="version-banner__reload" data-i18n="version_banner_reload">Jetzt neu laden</button>
+    <button type="button" class="version-banner__dismiss" data-i18n-aria="version_banner_dismiss" aria-label="Schließen">✕</button>
+  </div>
+
   <script src="vendor/leaflet.js"></script>
   <script src="i18n.js"></script>
   <link rel="modulepreload" href="config.js">

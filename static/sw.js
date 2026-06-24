@@ -1,4 +1,7 @@
-var CACHE = 'busradar-v1';
+// CACHE suffix is substituted by proxy.py from _VERSION when this file is
+// served; the name changes on every deploy so the old cache is evicted in the
+// activate event below.
+var CACHE = 'busradar-__APP_VERSION__';
 var PRECACHE_URLS = [
   '/',
   '/index.html',
@@ -34,7 +37,7 @@ self.addEventListener('install', function(event) {
   event.waitUntil(
     caches.open(CACHE).then(function(cache) {
       return cache.addAll(PRECACHE_URLS);
-    })
+    }).then(function() { return self.skipWaiting(); })
   );
 });
 
@@ -42,10 +45,10 @@ self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys().then(function(keys) {
       return Promise.all(
-        keys.filter(function(k) { return k !== CACHE; })
+        keys.filter(function(k) { return k !== CACHE && k.indexOf('busradar-') === 0; })
             .map(function(k) { return caches.delete(k); })
       );
-    })
+    }).then(function() { return self.clients.claim(); })
   );
 });
 

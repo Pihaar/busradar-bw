@@ -1114,3 +1114,27 @@ class TestInjectTickHintsBucket:
         inject_tick_hints(orig, tracker, "1")
         assert "connectedClients" not in orig
         assert "serverTime" not in orig
+
+
+class TestInjectTickHintsVersion:
+    def test_inject_with_version(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, None, "v1.2.3")
+        assert out["appVersion"] == "v1.2.3"
+        assert "connectedClients" not in out
+
+    def test_inject_without_version_omits_field(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, "1")
+        assert "appVersion" not in out
+
+    def test_inject_with_none_version_omits_field(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, "1", None)
+        assert "appVersion" not in out
+
+    def test_inject_version_and_count_both_present(self):
+        tracker = TickTracker()
+        out = inject_tick_hints({"x": 1}, tracker, "3", "v1.0.5-13.1")
+        assert out["connectedClients"] == "3"
+        assert out["appVersion"] == "v1.0.5-13.1"

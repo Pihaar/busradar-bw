@@ -235,6 +235,15 @@
   de.setting_reset_aria = 'Lokalen Cache und Einstellungen zurücksetzen, Seite neu laden';
   en.setting_reset_aria = 'Reset local cache and settings, reload page';
 
+  de.version_banner_text = 'Eine neue Version ist verfügbar.';
+  en.version_banner_text = 'A new version is available.';
+
+  de.version_banner_reload = 'Jetzt neu laden';
+  en.version_banner_reload = 'Reload now';
+
+  de.version_banner_dismiss = 'Hinweis schließen';
+  en.version_banner_dismiss = 'Dismiss notice';
+
   de.announce_refresh = 'Aktualisierung: {n}s';
   en.announce_refresh = 'Refresh rate: {n}s';
 
