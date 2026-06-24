@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { state, settings, SETTINGS_KEY, BACKOFF_BASE, getDelayClass, getDelayText, decodePolyline, applyI18n, t, extractHafasMessages, formatTime } from '../../static/state.js';
 import { api, urlState } from '../../static/api.js';
 
-describe('api.getVehicles', () => {
+describe.skip('api.getVehicles — removed in iter 2a (SSE migration)', () => {
   var originalFetch;
   beforeEach(() => {
     if (!settings.current) settings.init();
@@ -861,7 +861,7 @@ describe('state._nextFreshDataIn (tick hint)', () => {
 
 // === Connected Clients header ===
 
-describe('api.getVehicles X-Client-Id header', () => {
+describe.skip('api.getVehicles X-Client-Id header — removed in iter 2a (SSE migration)', () => {
   var originalFetch;
   beforeEach(() => {
     if (!settings.current) settings.init();

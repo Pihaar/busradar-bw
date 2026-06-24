@@ -41,6 +41,8 @@ export var state = {
   _lastConnectedClients: undefined,
   _appVersion: null,
   _appVersionFetch: null,
+  // Iter 2a: SSE connection state. 'connecting' | 'open' | 'reconnecting' | 'failed-terminal'.
+  _sseState: 'connecting',
   // One-shot latch for the version-update banner. Once set, stays set for the
   // rest of the session even after dismissal; reload of the page resets it.
   // Intent: don't pester the user with the same banner across multiple polls.

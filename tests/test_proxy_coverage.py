@@ -152,6 +152,7 @@ class TestFlattenVehicles:
 
 
 class TestHafasCallMocked:
+    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
     @pytest.mark.asyncio
     async def test_vehicles_success_with_mock(self, client):
         async def mock_hafas(request, method, req):
@@ -167,6 +168,7 @@ class TestHafasCallMocked:
         assert "dataAge" in data
         assert "serverTime" in data
 
+    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
     @pytest.mark.asyncio
     async def test_vehicles_upstream_error(self, client):
         async def mock_hafas(request, method, req):
@@ -176,6 +178,7 @@ class TestHafasCallMocked:
             resp = await client.get("/api/vehicles?swLat=49.3&swLon=8.6&neLat=49.4&neLon=8.7")
         assert resp.status_code == 502
 
+    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
     @pytest.mark.asyncio
     async def test_vehicles_stale_fallback_on_error(self, client):
         # First: populate cache
@@ -312,6 +315,7 @@ class TestGetStops:
 
 
 class TestCircuitBreaker:
+    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
     @pytest.mark.asyncio
     async def test_breaker_open_returns_502_or_stale(self, client):
         breaker.failures = 5
@@ -324,6 +328,7 @@ class TestCircuitBreaker:
             resp = await client.get("/api/vehicles?swLat=49.3&swLon=8.6&neLat=49.4&neLon=8.7")
         assert resp.status_code == 502
 
+    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
     @pytest.mark.asyncio
     async def test_breaker_records_failure(self, client):
         async def mock_hafas(request, method, req):
@@ -364,6 +369,7 @@ def fresh_connected_clients(monkeypatch):
     return fresh
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_with_valid_client_id_increments(fresh_connected_clients):
     """Gültiger X-Client-Id Header → connectedClients im Response."""
@@ -384,6 +390,7 @@ async def test_vehicles_with_valid_client_id_increments(fresh_connected_clients)
     assert fresh_connected_clients.count() == 1
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_without_client_id_no_increment(fresh_connected_clients):
     """Kein Header → kein Increment (curl-Fall)."""
@@ -410,6 +417,7 @@ async def test_vehicles_without_client_id_no_increment(fresh_connected_clients):
     "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa",    # zu kurz
     "",                                        # leer
 ])
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 async def test_vehicles_with_invalid_client_id_no_increment(fresh_connected_clients, invalid_cid):
     """Ungültige X-Client-Id wird ignoriert."""
     import proxy
@@ -427,6 +435,7 @@ async def test_vehicles_with_invalid_client_id_no_increment(fresh_connected_clie
     assert fresh_connected_clients.count() == 0
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_force_refresh_still_sends_header(fresh_connected_clients):
     """Cache-Buster `_t` umgeht Cache, der Header-Pfad muss trotzdem zählen."""
@@ -445,6 +454,7 @@ async def test_vehicles_force_refresh_still_sends_header(fresh_connected_clients
     assert resp.json().get("connectedClients") == "1"
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_cache_hit_returns_fresh_bucket(fresh_connected_clients):
     """Cache-Hit-Antwort enthält den AKTUELLEN Bucket, nicht den ge-cachten Wert."""
@@ -471,6 +481,7 @@ async def test_vehicles_cache_hit_returns_fresh_bucket(fresh_connected_clients):
             assert resp2.json().get("connectedClients") == "2"  # frischer Counter!
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_stale_on_error_no_count(fresh_connected_clients):
     """Stale-on-Error-Pfad darf connectedClients NICHT mitsenden."""
@@ -508,6 +519,7 @@ async def test_vehicles_stale_on_error_no_count(fresh_connected_clients):
             assert "connectedClients" not in data, "Stale-Pfad darf kein bucket leaken"
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 @pytest.mark.asyncio
 async def test_vehicles_per_ip_cap_logs_warning(fresh_connected_clients, caplog):
     """101 verschiedene UUIDs von einer IP → der 101. wird abgelehnt (Cap=100)."""

@@ -238,6 +238,15 @@
   de.version_banner_text = 'Eine neue Version ist verfügbar.';
   en.version_banner_text = 'A new version is available.';
 
+  de.connection_lost_terminal = 'Verbindung zum Server verloren.';
+  en.connection_lost_terminal = 'Connection to server lost.';
+
+  de.connection_stale = 'Daten sind nicht aktuell — Server-Probleme.';
+  en.connection_stale = 'Data is stale — upstream problems.';
+
+  de.terminal_reload = 'Neu laden';
+  en.terminal_reload = 'Reload';
+
   de.version_banner_reload = 'Jetzt neu laden';
   en.version_banner_reload = 'Reload now';
 

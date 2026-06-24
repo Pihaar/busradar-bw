@@ -122,6 +122,23 @@ export var ui = {
     }
   },
 
+  showTerminalBanner: function() {
+    var banner = document.getElementById('terminal-banner');
+    if (!banner || !banner.hidden) return;
+    banner.hidden = false;
+    var reloadBtn = banner.querySelector('.version-banner__reload');
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', function() {
+        location.reload();
+      }, { once: true });
+    }
+  },
+
+  updateSseState: function(s) {
+    var el = document.getElementById('sse-state-indicator');
+    if (el) el.setAttribute('data-state', s);
+  },
+
   initJourneyActions: function() {
     document.getElementById('btn-follow').addEventListener('click', function() {
       state.followBus = !state.followBus;
