@@ -177,6 +177,59 @@ class TestReadVersion:
         assert _read_version() == "v2.3.4-dirty"
 
 
+class TestServiceWorker:
+    @pytest.mark.asyncio
+    async def test_sw_served_with_substituted_version(self, client):
+        from proxy import _VERSION
+        resp = await client.get("/sw.js")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/javascript")
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+        assert resp.headers["service-worker-allowed"] == "/"
+        body = resp.text
+        assert "__APP_VERSION__" not in body
+        assert "busradar-" + _VERSION in body
+
+    @pytest.mark.asyncio
+    async def test_sw_skipwaiting_and_claim_present(self, client):
+        resp = await client.get("/sw.js")
+        body = resp.text
+        assert "self.skipWaiting()" in body
+        assert "self.clients.claim()" in body
+
+    def test_render_sw_replaces_placeholder(self):
+        from proxy import _render_sw
+        tpl = "var CACHE = 'busradar-__APP_VERSION__';\n"
+        out = _render_sw(tpl, "v1.0.5")
+        assert "var CACHE = 'busradar-v1.0.5'" in out
+        assert "__APP_VERSION__" not in out
+
+    def test_render_sw_unknown_falls_back(self):
+        from proxy import _render_sw
+        tpl = "x = '__APP_VERSION__';"
+        out = _render_sw(tpl, "unknown")
+        assert "busradar-unknown" not in tpl
+        assert "x = 'unknown';" == out
+
+    def test_render_sw_refuses_placeholder_as_version(self):
+        from proxy import _render_sw
+        tpl = "x = '__APP_VERSION__';"
+        out = _render_sw(tpl, "__APP_VERSION__")
+        assert out == ""
+
+    def test_render_sw_empty_template_returns_empty(self):
+        from proxy import _render_sw
+        assert _render_sw("", "v1.0") == ""
+
+    @pytest.mark.asyncio
+    async def test_sw_503_when_template_unavailable(self, client, monkeypatch):
+        import proxy
+        monkeypatch.setattr(proxy, "_SW_RENDERED", "")
+        resp = await client.get("/sw.js")
+        assert resp.status_code == 503
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+
+
 class TestInputValidation:
     @pytest.mark.asyncio
     async def test_vehicles_inverted_bounds(self, client):

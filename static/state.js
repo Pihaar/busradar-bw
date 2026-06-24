@@ -41,6 +41,10 @@ export var state = {
   _lastConnectedClients: undefined,
   _appVersion: null,
   _appVersionFetch: null,
+  // One-shot latch for the version-update banner. Once set, stays set for the
+  // rest of the session even after dismissal; reload of the page resets it.
+  // Intent: don't pester the user with the same banner across multiple polls.
+  _versionUpdateBannerShown: false,
 };
 
 // === I18N ===

@@ -109,6 +109,14 @@ export function refresh() {
         state._lastConnectedClients = data.connectedClients;
       }
       // Bei field absent (z.B. Stale-Pfad) bleibt vorheriger Wert; erst nach 2 Errors auf null
+      if (typeof data.appVersion === 'string' && /^[A-Za-z0-9._+\-]{1,64}$/.test(data.appVersion)) {
+        if (!state._appVersion) {
+          state._appVersion = data.appVersion;
+        } else if (data.appVersion !== state._appVersion && !state._versionUpdateBannerShown) {
+          state._versionUpdateBannerShown = true;
+          ui.showVersionUpdateBanner();
+        }
+      }
       markers.updateAll(vehicles);
       stopsLayer.update(vehicles);
       updateStatus(vehicles.length, data.dataAge, state._lastConnectedClients);

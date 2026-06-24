@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -433,13 +433,13 @@ def _flatten_vehicles(res: dict) -> list[dict]:
 
 
 def _inject_tick_hints(result: dict) -> dict:
-    return inject_tick_hints(result, tick_tracker, connected_clients.display_count())
+    return inject_tick_hints(result, tick_tracker, connected_clients.display_count(), _VERSION)
 
 
 def _inject_tick_hints_no_count(result: dict) -> dict:
-    """Für Error-/Stale-Pfade: Counter wird unterdrückt, damit der Bucket nicht
-    in Reconnaissance-Surface bei HAFAS-Down leakt. Frontend-Guard handelt das ab."""
-    return inject_tick_hints(result, tick_tracker, None)
+    """Used on stale/error paths to suppress the counter so the bucket isn't
+    leaked as a recon surface during HAFAS outages; the frontend guards this."""
+    return inject_tick_hints(result, tick_tracker, None, _VERSION)
 
 
 @app.get("/api/vehicles")
@@ -810,6 +810,58 @@ async def line_search(
             seen_jids.add(v["jid"])
 
     return {"vehicles": matches, "count": len(matches)}
+
+
+_SW_PATH = Path(__file__).resolve().parent / "static" / "sw.js"
+try:
+    _SW_TEMPLATE = _SW_PATH.read_text(encoding="utf-8")
+except OSError as e:
+    log.error("[startup] failed to read %s: %s", _SW_PATH, e)
+    _SW_TEMPLATE = ""
+
+_SW_PLACEHOLDER = "__APP_VERSION__"
+
+
+def _render_sw(template: str, version: str) -> str:
+    """Substitute the version placeholder in the SW source. Falls back to a
+    stable name when version is "unknown" so that a misconfigured deploy still
+    yields a parseable JS file (cache simply won't rotate)."""
+    if not template:
+        return ""
+    if version == _SW_PLACEHOLDER:
+        # Defensive: a VERSION file that literally contains the placeholder
+        # would no-op the substitution and serve invalid JS.
+        log.error("[startup] _VERSION equals the SW placeholder; refusing to render")
+        return ""
+    return template.replace(_SW_PLACEHOLDER, version or "unknown")
+
+
+_SW_RENDERED = _render_sw(_SW_TEMPLATE, _VERSION)
+if _SW_TEMPLATE and not _SW_RENDERED:
+    log.warning("[startup] SW template loaded but render produced empty body")
+elif _VERSION == "unknown":
+    log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
+
+
+@app.get("/sw.js")
+async def serve_sw():
+    """Hand-served so we can substitute the cache-version into the SW source.
+    StaticFiles can't template, and we need a fresh CACHE name per release."""
+    if not _SW_RENDERED:
+        return Response(
+            "// service worker unavailable\n",
+            media_type="application/javascript",
+            status_code=503,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+    return Response(
+        _SW_RENDERED,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Service-Worker-Allowed": "/",
+        },
+    )
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

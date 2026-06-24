@@ -104,6 +104,24 @@ export var ui = {
     }
   },
 
+  showVersionUpdateBanner: function() {
+    var banner = document.getElementById('version-banner');
+    if (!banner || !banner.hidden) return;
+    banner.hidden = false;
+    var reloadBtn = banner.querySelector('.version-banner__reload');
+    var dismissBtn = banner.querySelector('.version-banner__dismiss');
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', function() {
+        location.reload();
+      }, { once: true });
+    }
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', function() {
+        banner.hidden = true;
+      }, { once: true });
+    }
+  },
+
   initJourneyActions: function() {
     document.getElementById('btn-follow').addEventListener('click', function() {
       state.followBus = !state.followBus;
