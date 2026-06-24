@@ -972,6 +972,11 @@ async def sse_stream(request: Request):
             },
             headers={"Retry-After": str(retry_after)},
         )
+    # Tick calibrator runs at IDLE_CALIB_INTERVAL=30min when no client activity
+    # is recorded. After the iter-2a /api/vehicles → 410 cutover, that touch is
+    # gone — calibrator stalls and the SSE loop never wakes. Touch on every new
+    # subscribe so the calibrator stays in ACTIVE_CALIB_INTERVAL (5min) mode.
+    client_activity.touch()
 
     async def event_generator():
         try:
@@ -1005,6 +1010,8 @@ async def sse_stream(request: Request):
                             timeout=keepalive,
                         )
                     local_seq = fanout.tick_seq
+                    # Keep calibrator in ACTIVE_CALIB_INTERVAL (5min) mode.
+                    client_activity.touch()
                 except asyncio.TimeoutError:
                     yield _format_keepalive()
                     continue
@@ -1160,6 +1167,13 @@ async def stream_viewport(request: Request):
 
     sub.viewport = (payload.swLat, payload.swLon, payload.neLat, payload.neLon)
     sub.pos_mode = payload.posMode
+    # Plan: "sofortiger Pull bei Viewport-Change". The SSE loop is waiting on
+    # the tick condition; fire it now so the subscriber fetches its new
+    # viewport without waiting for the next 30s HAFAS tick (or, worse,
+    # the 5/30-minute calibrator beat). The singleflight `_inflight` keeps
+    # this from amplifying — other subscribers wake too but their fetches
+    # collapse onto the same upstream call if they share a quantized bbox.
+    await fanout.fire_tick()
     return JSONResponse(content={"ok": True})
 
 
