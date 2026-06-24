@@ -160,6 +160,45 @@ settings._bindUI = function() {
     });
   });
 
+  var resetBtn = document.getElementById('setting-reset');
+  if (resetBtn) {
+    var resetting = false;
+    resetBtn.addEventListener('click', function() {
+      if (resetting) return;
+      if (!window.confirm(t('setting_reset_confirm'))) return;
+      resetting = true;
+      resetBtn.disabled = true;
+      resetBtn.setAttribute('aria-busy', 'true');
+      try { localStorage.clear(); } catch (e) {}
+      try { sessionStorage.clear(); } catch (e) {}
+      function safeClearCaches() {
+        try {
+          if (typeof caches === 'undefined' || !caches.keys) return Promise.resolve();
+          return caches.keys().then(function(keys) {
+            return Promise.all(keys.map(function(k) {
+              return caches.delete(k).catch(function() {});
+            }));
+          }).catch(function() {});
+        } catch (e) { return Promise.resolve(); }
+      }
+      function safeUnregisterSW() {
+        try {
+          if (!('serviceWorker' in navigator) || !navigator.serviceWorker.getRegistrations) return Promise.resolve();
+          return navigator.serviceWorker.getRegistrations().then(function(regs) {
+            return Promise.all(regs.map(function(r) {
+              return r.unregister().catch(function() {});
+            }));
+          }).catch(function() {});
+        } catch (e) { return Promise.resolve(); }
+      }
+      Promise.allSettled([safeClearCaches(), safeUnregisterSW()]).then(function() {
+        // Cache-Buster-Query stellt sicher, dass ein noch aktiver SW die nächste
+        // Navigation nicht aus seinem Cache bedient.
+        location.replace(location.pathname + '?_=' + Date.now());
+      });
+    });
+  }
+
   var aboutDialog = document.getElementById('about-dialog');
   if (aboutDialog) {
     aboutDialog.querySelector('.about-close').addEventListener('click', function() {

@@ -226,6 +226,15 @@
   de.setting_light = 'Hell';
   en.setting_light = 'Light';
 
+  de.setting_reset = 'Cache & Einstellungen zurücksetzen';
+  en.setting_reset = 'Reset cache & settings';
+
+  de.setting_reset_confirm = 'Lokale Daten, Cache und Einstellungen wirklich zurücksetzen? Die Seite wird danach neu geladen.';
+  en.setting_reset_confirm = 'Reset all local data, cache and settings? The page will reload afterwards.';
+
+  de.setting_reset_aria = 'Lokalen Cache und Einstellungen zurücksetzen, Seite neu laden';
+  en.setting_reset_aria = 'Reset local cache and settings, reload page';
+
   de.announce_refresh = 'Aktualisierung: {n}s';
   en.announce_refresh = 'Refresh rate: {n}s';
 
