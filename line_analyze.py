@@ -209,11 +209,14 @@ def print_report(line: str, days: int, results: list[dict]) -> None:
         print()
 
 
+DEFAULT_LOG_DIR = Path(__file__).resolve().parent / "data" / "line-logs"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--line", default="725")
     p.add_argument("--days", type=int, default=7)
-    p.add_argument("--dir", default="/var/lib/busradar/line-logs")
+    p.add_argument("--dir", default=str(DEFAULT_LOG_DIR))
     args = p.parse_args()
 
     log_dir = Path(args.dir)
