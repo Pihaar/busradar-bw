@@ -8,11 +8,13 @@ rate limiting, caching, and security headers.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
 import random
 import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -22,11 +24,12 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
+import fanout
 from tick import (
     TickTracker, ClientActivity, ConnectedClients, inject_tick_hints, tick_calibrator,
     is_valid_client_id, _TICK_ENABLED, TICK_MAX_AGE,
@@ -207,6 +210,11 @@ _inflight: dict[tuple, asyncio.Future] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Init-order guard: tick.py imports fanout and calls fanout.fire_tick()
+    # from tick_calibrator. If fanout's module-level state was somehow not
+    # set up before that fires, fail loud rather than silently miss ticks.
+    if not hasattr(fanout, "tick_condition") or not hasattr(fanout, "registry"):
+        raise RuntimeError("fanout module not initialized before lifespan")
     # Single-Worker-Annahme für ConnectedClients-Counter: jeder Worker hat eigene Map.
     # Bei N Workern würde der Counter durch N geteilt erscheinen.
     try:
@@ -282,6 +290,16 @@ async def schedule_daily_rebuild_wrapper(app: FastAPI):
 
 
 app = FastAPI(title="Busradar BW", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def _sanitized_exception_handler(request: Request, exc: Exception):
+    """Generic catch-all. Logs the traceback server-side but never returns
+    it to the client (SEC-236, no information disclosure). Validation
+    errors and HTTPException still get FastAPI's normal handling — this
+    only wraps unhandled exceptions from handlers."""
+    log.exception("[handler] unhandled exception in %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"error": "internal"})
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -841,6 +859,365 @@ if _SW_TEMPLATE and not _SW_RENDERED:
     log.warning("[startup] SW template loaded but render produced empty body")
 elif _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
+
+
+# === SSE Stream (Iter 1) ===
+
+ALLOWED_ORIGINS = tuple(
+    o.strip() for o in os.environ.get(
+        "BUSRADAR_ALLOWED_ORIGINS",
+        "https://busradar.pihaar.de,http://localhost:8000,http://127.0.0.1:8000",
+    ).split(",") if o.strip()
+)
+SSE_COOKIE_NAME = "busradar_sse"
+SSE_COOKIE_PATH = "/api/stream/"
+# Secure-Cookie nur über HTTPS. Per env überschreibbar damit Dev über plain
+# http://localhost weiterhin funktioniert (Browsers droppen Secure-Cookies
+# über Plain-HTTP); Production läuft hinter nginx-TLS → True.
+SSE_COOKIE_SECURE = os.environ.get("BUSRADAR_COOKIE_SECURE", "1") != "0"
+SSE_KEEPALIVE_MIN = 12.0
+SSE_KEEPALIVE_MAX = 18.0
+SSE_BODY_LIMIT = 1024  # POST viewport / select payloads stay small
+AUDIT_LOG_MAX_KEYS = 4096  # cap audit-log dict size against slow-leak via scanner
+
+_audit_log_last: dict[str, float] = {}
+_AUDIT_RATE = 60.0
+
+
+def _audit(reason: str, ip: str, **extra) -> None:
+    """Rate-limit audit-warnings to 1/min per (reason, ip-hash)."""
+    import hashlib
+    now = time.monotonic()
+    ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:8] if ip else "noip"
+    key = f"{reason}:{ip_hash}"
+    # Cap dict size against slow-leak via scanner rotating IPs forever.
+    if len(_audit_log_last) >= AUDIT_LOG_MAX_KEYS:
+        # Drop the oldest half — cheap, no per-entry timestamp scan.
+        oldest = sorted(_audit_log_last.items(), key=lambda kv: kv[1])[: AUDIT_LOG_MAX_KEYS // 2]
+        for k, _ in oldest:
+            _audit_log_last.pop(k, None)
+    last = _audit_log_last.get(key, 0.0)
+    if now - last < _AUDIT_RATE:
+        return
+    _audit_log_last[key] = now
+    log.warning("[audit] %s ip_hash=%s %s", reason, ip_hash, extra or "")
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
+def _check_origin(request: Request) -> bool:
+    origin = request.headers.get("Origin")
+    if not origin:
+        return False
+    return origin in ALLOWED_ORIGINS
+
+
+class ViewportPayload(BaseModel):
+    swLat: float = Field(ge=-90.0, le=90.0)
+    swLon: float = Field(ge=-180.0, le=180.0)
+    neLat: float = Field(ge=-90.0, le=90.0)
+    neLon: float = Field(ge=-180.0, le=180.0)
+    posMode: str = Field(default="CALC", pattern="^(CALC|REPORT_ONLY)$")
+
+    @field_validator("neLat")
+    @classmethod
+    def _check_lat_ordering(cls, v, info):
+        if "swLat" in info.data and v <= info.data["swLat"]:
+            raise ValueError("neLat must be greater than swLat")
+        return v
+
+    @field_validator("neLon")
+    @classmethod
+    def _check_lon_ordering(cls, v, info):
+        if "swLon" in info.data and v <= info.data["swLon"]:
+            raise ValueError("neLon must be greater than swLon")
+        return v
+
+
+def _format_sse(event: str | None, data: dict, event_id: int | None = None) -> str:
+    """Serialize one SSE message. `event` may be None for default 'message',
+    `data` is always JSON-encoded so the client side parses uniformly."""
+    parts: list[str] = []
+    if event_id is not None:
+        parts.append(f"id: {event_id}")
+    if event:
+        parts.append(f"event: {event}")
+    parts.append("data: " + json.dumps(data, separators=(",", ":")))
+    parts.append("")
+    parts.append("")
+    return "\n".join(parts)
+
+
+def _format_keepalive() -> str:
+    """Comment line — SSE-compliant, ignored by EventSource clients but keeps
+    proxies (nginx 30s/3600s, mobile carriers) from killing the connection."""
+    return ": keepalive\n\n"
+
+
+async def _fetch_vehicles_for_viewport(
+    app: FastAPI,
+    viewport: tuple[float, float, float, float],
+    posMode: str,
+) -> dict:
+    """Fetch one HAFAS snapshot for the given viewport. Uses bbox quantization
+    so subscribers within ~1.1 km share the singleflight inflight key."""
+    sw_lat, sw_lon, ne_lat, ne_lon = viewport
+    cx = int((sw_lon + ne_lon) / 2 * 1_000_000)
+    cy = int((sw_lat + ne_lat) / 2 * 1_000_000)
+    max_dist = int(min(80_000, ((ne_lat - sw_lat) * 111_000) / 2))
+
+    hafas_req = {
+        "ring": {"cCrd": {"x": cx, "y": cy}, "maxDist": max_dist},
+        "perSize": 120,
+        "perStep": 10,
+        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+        "trainPosMode": posMode,
+    }
+    # Synthesize a request-shaped object so _hafas_call's interface stays
+    # unchanged. Tests can pass app directly via this shim.
+    class _ReqShim:
+        def __init__(self, a): self.app = a
+    res = await _hafas_call(_ReqShim(app), "JourneyGeoPos", hafas_req)
+    if "error" in res:
+        return {"error": res["error"]}
+    return {"vehicles": _flatten_vehicles(res)}
+
+
+@app.get("/api/stream/")
+async def sse_stream(request: Request):
+    """SSE endpoint. Subscribers receive `vehicles` events whenever a HAFAS
+    tick is detected, plus `connected` count updates and `:keepalive`
+    comments. State changes (viewport, selection) come in via the sidecar
+    POST endpoints, identified by an HttpOnly cookie set on this first
+    GET response. Connection-id is never written to JS or to access_log.
+    Last-Event-ID is deliberately ignored — every reconnect is a fresh
+    subscriber with a fresh state. The browser auto-reconnects on drop."""
+
+    ip = _client_ip(request)
+    try:
+        sub = await fanout.registry.subscribe(ip)
+    except fanout.CapExceeded as e:
+        retry_after = secrets.randbelow(61) + 30  # 30-90s jitter
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "rate_limit",
+                "scope": e.scope,
+                "limit": e.limit,
+                "retryAfter": retry_after,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    async def event_generator():
+        try:
+            # First event: client knows the stream is live + the app version.
+            yield _format_sse(
+                "subscribe",
+                {"tickSeq": fanout.tick_seq, "appVersion": _VERSION},
+            )
+            # Emit current connected count up front so the UI doesn't wait
+            # up to 30s (one HAFAS tick) before showing it.
+            yield _format_sse("connected", {"count": len(fanout.registry)})
+
+            local_seq = fanout.tick_seq
+            event_id = 0
+            last_connected_count = len(fanout.registry)
+
+            while True:
+                # Wait either for a new tick or, in absence of one, for a
+                # randomized keepalive interval. asyncio.wait_for raises
+                # TimeoutError, which is the keepalive signal.
+                keepalive = SSE_KEEPALIVE_MIN + (
+                    secrets.randbelow(int((SSE_KEEPALIVE_MAX - SSE_KEEPALIVE_MIN) * 10))
+                    / 10.0
+                )
+                try:
+                    async with fanout.tick_condition:
+                        await asyncio.wait_for(
+                            fanout.tick_condition.wait_for(
+                                lambda: fanout.tick_seq > local_seq
+                            ),
+                            timeout=keepalive,
+                        )
+                    local_seq = fanout.tick_seq
+                except asyncio.TimeoutError:
+                    yield _format_keepalive()
+                    continue
+
+                # New tick. If subscriber gave us a viewport, fetch + emit.
+                if sub.viewport:
+                    snap = await _fetch_vehicles_for_viewport(
+                        request.app, sub.viewport, sub.pos_mode
+                    )
+                    event_id += 1
+                    if "error" in snap:
+                        yield _format_sse(
+                            "error",
+                            {"reason": snap["error"], "stale": True},
+                            event_id,
+                        )
+                    else:
+                        yield _format_sse("vehicles", snap, event_id)
+
+                # Always emit `connected` after a tick (coalesces with any
+                # add/remove that happened during this loop iteration).
+                count = len(fanout.registry)
+                if count != last_connected_count:
+                    last_connected_count = count
+                    yield _format_sse("connected", {"count": count})
+
+                if fanout.should_disconnect_slow_consumer(sub):
+                    _audit("slow-consumer-disconnect", sub.ip, drops=sub.consecutive_drops)
+                    break
+        finally:
+            # AsyncExitStack-style cleanup, but each step suppressed so a
+            # later step still runs if an earlier one raises.
+            try:
+                await fanout.registry.unsubscribe(sub.connection_id)
+            except Exception:
+                log.exception("[sse] unsubscribe failed for cid")
+            # Cookie cleared via headers on the StreamingResponse; the cookie
+            # is path-scoped so the browser keeps it only for /api/stream/*
+            # POSTs anyway. Task cancel happens at the StreamingResponse level
+            # when the client disconnects (CancelledError propagates here).
+
+    response = StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+    response.set_cookie(
+        SSE_COOKIE_NAME,
+        sub.connection_id,
+        max_age=7200,
+        httponly=True,
+        secure=SSE_COOKIE_SECURE,
+        samesite="strict",
+        path=SSE_COOKIE_PATH,
+    )
+    return response
+
+
+def _lookup_subscriber(request: Request) -> tuple[fanout.Subscriber | None, str | None]:
+    """Common subscriber-lookup for the sidecar POST endpoints.
+
+    Returns (sub, error_code) where error_code is one of:
+      None — sub is valid
+      'missing_cookie' — no cookie at all → 401
+      'unknown_connection' — cookie present but subscriber gone → 409
+      'origin_mismatch' — Origin header check failed → 403
+    """
+    if not _check_origin(request):
+        _audit("origin-mismatch", _client_ip(request),
+               origin=request.headers.get("Origin", "<missing>"))
+        return None, "origin_mismatch"
+    cid = request.cookies.get(SSE_COOKIE_NAME)
+    if not cid:
+        return None, "missing_cookie"
+    sub = fanout.registry.get(cid)
+    if sub is None:
+        _audit("invalid-cookie", _client_ip(request))
+        return None, "unknown_connection"
+    return sub, None
+
+
+def _err_response(code: str) -> JSONResponse:
+    status = {
+        "origin_mismatch": 403,
+        "missing_cookie": 401,
+        "unknown_connection": 409,
+        "body_too_large": 413,
+    }.get(code, 400)
+    return JSONResponse(status_code=status, content={"error": code})
+
+
+# Token-bucket for viewport-POST per subscriber: 1/s refill, burst 3.
+def _viewport_rate_check(sub) -> bool:
+    """Returns True if allowed. Continuous refill, capped at burst=3."""
+    now = time.monotonic()
+    last = getattr(sub, "_viewport_last_refill", now)
+    tokens = getattr(sub, "_viewport_tokens", 3.0)
+    tokens = min(3.0, tokens + (now - last))
+    sub._viewport_last_refill = now
+    if tokens >= 1.0:
+        sub._viewport_tokens = tokens - 1.0
+        return True
+    sub._viewport_tokens = tokens
+    return False
+
+
+async def _read_body_with_limit(request: Request, limit: int) -> bytes | None:
+    """Read body up to `limit` bytes. Returns None if Content-Length advertises
+    more than the limit (pre-read rejection) OR if the streamed body exceeds
+    the limit. Avoids buffering an attacker-supplied gigabyte payload."""
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > limit:
+                return None
+        except ValueError:
+            return None
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > limit:
+            return None
+    return bytes(buf)
+
+
+@app.post("/api/stream/viewport")
+async def stream_viewport(request: Request):
+    """Update the viewport the subscriber's next tick should fetch."""
+    raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
+    if raw is None:
+        _audit("body-too-large", _client_ip(request))
+        return _err_response("body_too_large")
+
+    sub, err = _lookup_subscriber(request)
+    if err:
+        return _err_response(err)
+
+    if not _viewport_rate_check(sub):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit", "scope": "subscriber"},
+            headers={"Retry-After": "1"},
+        )
+
+    try:
+        payload = ViewportPayload.model_validate_json(raw)
+    except Exception:
+        return JSONResponse(status_code=422, content={"error": "invalid_payload"})
+
+    sub.viewport = (payload.swLat, payload.swLon, payload.neLat, payload.neLon)
+    sub.pos_mode = payload.posMode
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/stream/select")
+async def stream_select(request: Request):
+    """Stub for iter 4. Validates origin + cookie, returns 501 for now so
+    the contract is testable but no journey/stationboard fetch happens yet."""
+    raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
+    if raw is None:
+        _audit("body-too-large", _client_ip(request))
+        return _err_response("body_too_large")
+
+    sub, err = _lookup_subscriber(request)
+    if err:
+        return _err_response(err)
+
+    return JSONResponse(
+        status_code=501,
+        content={"error": "not_implemented", "iter": 4},
+    )
 
 
 @app.get("/sw.js")
