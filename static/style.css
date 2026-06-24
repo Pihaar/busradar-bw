@@ -1185,6 +1185,48 @@ html, body {
 .settings-options--disabled .settings-opt {
   cursor: not-allowed;
 }
+.settings-group--reset {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.settings-reset-btn {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 90, 90, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 130, 130, 0.95);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms, color 120ms;
+}
+.settings-reset-btn:hover {
+  background: rgba(255, 90, 90, 0.12);
+  border-color: rgba(255, 90, 90, 0.55);
+  color: rgba(255, 160, 160, 1);
+}
+.settings-reset-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.settings-reset-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+[data-theme="light"] .settings-group--reset {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .settings-reset-btn {
+  border-color: rgba(180, 0, 0, 0.35);
+  color: rgba(170, 0, 0, 0.85);
+}
+[data-theme="light"] .settings-reset-btn:hover {
+  background: rgba(180, 0, 0, 0.08);
+  border-color: rgba(180, 0, 0, 0.55);
+  color: rgba(150, 0, 0, 1);
+}
 .settings-hint--inline {
   font-size: 10px;
   padding-top: 4px;
