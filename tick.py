@@ -364,6 +364,13 @@ async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: s
         if tracker.feed(positions, ts, min_changed=min_changed):
             wall_sec = time.localtime().tm_sec + (time.time() % 1)
             log.info("[tick_calibrator] tick at :%04.1f (%ds scan)", wall_sec, scan_seconds)
+            # Wake every SSE subscriber waiting on the fanout condition. Import is
+            # function-local so test files that mock or replace fanout still work.
+            try:
+                import fanout
+                await fanout.fire_tick()
+            except Exception:
+                log.exception("[tick_calibrator] fanout.fire_tick failed")
             return True
         await asyncio.sleep(1.0)
     return False
