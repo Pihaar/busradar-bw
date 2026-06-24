@@ -312,6 +312,24 @@
   de.about_legal_text = 'Privates, nicht-kommerzielles Projekt. Keine Gewähr für Vollständigkeit oder Korrektheit der angezeigten Daten.';
   en.about_legal_text = 'Private, non-commercial project. No guarantee for completeness or accuracy of displayed data.';
 
+  de.about_source_heading = 'Quellcode';
+  en.about_source_heading = 'Source code';
+
+  de.about_source_text = 'Open Source auf GitHub:';
+  en.about_source_text = 'Open source on GitHub:';
+
+  de.about_source_link = 'github.com/Pihaar/busradar-bw';
+  en.about_source_link = 'github.com/Pihaar/busradar-bw';
+
+  de.about_privacy_heading = 'Datenschutz';
+  en.about_privacy_heading = 'Privacy';
+
+  de.about_privacy_text = 'Keine Cookies, kein Analytics, kein Cross-Site-Tracking. Der Webserver protokolliert IP, Pfad und Zeit im Zugriffslog für Betrieb und Missbrauchserkennung. Zusätzlich wird die IP kurzzeitig im Anwendungsspeicher gehalten, um die Anzahl aktiver Nutzer pro IP zu begrenzen (kein Profil, keine Persistenz, kein Export). Karten- und Schriftdaten werden direkt vom Browser bei OpenStreetMap und CARTO geladen; deren Datenschutzhinweise gelten zusätzlich. Fragen via GitHub-Issue.';
+  en.about_privacy_text = 'No cookies, no analytics, no cross-site tracking. The web server logs IP, path and time in its access log for operations and abuse detection. The IP is additionally kept briefly in application memory to cap concurrent users per IP (no profile, no persistence, no export). Map and font assets are loaded directly by the browser from OpenStreetMap and CARTO; their privacy notices apply additionally. Questions via GitHub issue.';
+
+  de.about_version_label = 'Version';
+  en.about_version_label = 'Version';
+
   // === DELAY TEXT ===
   de.delay_ontime = '±0';
   en.delay_ontime = '±0';

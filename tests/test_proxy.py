@@ -46,6 +46,136 @@ class TestHealth:
         data = resp.json()
         assert data["circuit_breaker"] == "open"
 
+    @pytest.mark.asyncio
+    async def test_health_version_present(self, client):
+        import re
+        resp = await client.get("/api/health")
+        data = resp.json()
+        assert "version" in data
+        assert isinstance(data["version"], str)
+        assert re.match(r"^[A-Za-z0-9._+\-]{1,64}$", data["version"])
+
+
+class TestReadVersion:
+    def test_version_from_file(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        vfile = tmp_path / "VERSION"
+        vfile.write_text("v9.9.9\n")
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        assert _read_version() == "v9.9.9"
+
+    def test_version_file_empty_falls_through(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        (tmp_path / "VERSION").write_text("   \n")
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        # Falls through to git or "unknown"; just assert not the empty/whitespace value
+        result = _read_version()
+        assert result != ""
+        assert result.strip() == result
+
+    def test_version_file_oversize_truncated(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        (tmp_path / "VERSION").write_text("v" + "a" * 10000)
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        # 10001 chars, regex caps at 64 → rejected, falls through
+        result = _read_version()
+        assert len(result) <= 64
+
+    def test_version_file_rejects_control_chars(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        (tmp_path / "VERSION").write_text("v1.0.0\x00; rm -rf /")
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        result = _read_version()
+        # Control chars + injection attempt rejected by regex, falls through
+        assert "\x00" not in result
+        assert ";" not in result
+
+    def test_version_file_rejects_html(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        (tmp_path / "VERSION").write_text("<script>alert(1)</script>")
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        result = _read_version()
+        assert "<" not in result and ">" not in result
+
+    def test_version_invalid_utf8_does_not_crash(self, tmp_path, monkeypatch):
+        from proxy import _read_version
+        import proxy
+        (tmp_path / "VERSION").write_bytes(b"\xff\xfev1.0.0")
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        result = _read_version()
+        # Either falls through to "unknown" or rejected version, but no crash
+        assert isinstance(result, str)
+
+    def test_sanitize_accepts_valid(self):
+        from proxy import _sanitize_version
+        assert _sanitize_version("v1.0.0") == "v1.0.0"
+        assert _sanitize_version("v1.0.4-3-geccfaa3-dirty") == "v1.0.4-3-geccfaa3-dirty"
+        assert _sanitize_version("1.0+build.42") == "1.0+build.42"
+
+    def test_sanitize_rejects_invalid(self):
+        from proxy import _sanitize_version
+        assert _sanitize_version("") is None
+        assert _sanitize_version("   ") is None
+        assert _sanitize_version("v1.0; rm -rf") is None
+        assert _sanitize_version("v" * 65) is None
+        assert _sanitize_version("v1.0\nINJECTION") is None
+        assert _sanitize_version("hä") is None
+
+    def test_git_missing_falls_through_to_unknown(self, tmp_path, monkeypatch):
+        import proxy
+        from proxy import _read_version
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        monkeypatch.setattr(proxy.shutil, "which", lambda _: None)
+        assert _read_version() == "unknown"
+
+    def test_git_timeout_falls_through_to_unknown(self, tmp_path, monkeypatch):
+        import proxy
+        from proxy import _read_version
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+        def raise_timeout(*a, **kw):
+            raise proxy.subprocess.TimeoutExpired(cmd="git", timeout=2)
+        monkeypatch.setattr(proxy.subprocess, "run", raise_timeout)
+        assert _read_version() == "unknown"
+
+    def test_git_nonzero_returncode_falls_through(self, tmp_path, monkeypatch):
+        import proxy
+        from proxy import _read_version
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+        class FakeResult:
+            returncode = 128
+            stdout = b""
+        monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
+        assert _read_version() == "unknown"
+
+    def test_git_success_invalid_output_falls_through(self, tmp_path, monkeypatch):
+        import proxy
+        from proxy import _read_version
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+        class FakeResult:
+            returncode = 0
+            stdout = b"<script>alert(1)</script>"
+        monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
+        assert _read_version() == "unknown"
+
+    def test_git_success_valid_output(self, tmp_path, monkeypatch):
+        import proxy
+        from proxy import _read_version
+        monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
+        monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+        class FakeResult:
+            returncode = 0
+            stdout = b"v2.3.4-dirty\n"
+        monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
+        assert _read_version() == "v2.3.4-dirty"
+
 
 class TestInputValidation:
     @pytest.mark.asyncio

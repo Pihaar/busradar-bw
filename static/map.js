@@ -159,7 +159,36 @@ export var mapModule = {
         L.DomEvent.on(link, 'click', function(e) {
           L.DomEvent.preventDefault(e);
           var dlg = document.getElementById('about-dialog');
-          if (dlg && !dlg.open) dlg.showModal();
+          if (dlg && !dlg.open) {
+            var vNode = document.getElementById('about-version-value');
+            if (vNode) {
+              if (state._appVersion) {
+                vNode.textContent = state._appVersion;
+              } else if (state._appVersionFetch) {
+                vNode.textContent = '…';
+              } else {
+                vNode.textContent = '…';
+                var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+                var timer = ctrl ? setTimeout(function() { ctrl.abort(); }, 10000) : null;
+                state._appVersionFetch = window.fetch(CONFIG.apiBase + '/health', ctrl ? {signal: ctrl.signal} : undefined)
+                  .then(function(r) { return r.ok ? r.json() : null; })
+                  .then(function(j) {
+                    if (j && typeof j.version === 'string' && /^[A-Za-z0-9._+\-]{1,64}$/.test(j.version)) {
+                      state._appVersion = j.version;
+                      vNode.textContent = j.version;
+                    } else {
+                      vNode.textContent = '—';
+                    }
+                  })
+                  .catch(function() { vNode.textContent = '—'; })
+                  .then(function() {
+                    if (timer) clearTimeout(timer);
+                    state._appVersionFetch = null;
+                  });
+              }
+            }
+            dlg.showModal();
+          }
         });
         return container;
       },

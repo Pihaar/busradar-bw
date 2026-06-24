@@ -13,9 +13,12 @@ import math
 import os
 import random
 import re
+import shutil
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from enum import Enum
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Query, Request
@@ -42,6 +45,60 @@ STOPS_CACHE_TTL = 86400.0
 UPSTREAM_TIMEOUT = 10.0
 MAX_CONSECUTIVE_FAILURES = 3
 CIRCUIT_BREAKER_COOLDOWN = 30.0
+
+
+_VERSION_RE = re.compile(r"^[A-Za-z0-9._+\-]{1,64}$")
+_VERSION_FILE_MAX = 256
+
+
+def _sanitize_version(raw: str) -> str | None:
+    """Strip + validate version string. Reject control chars, oversize, exotic alphabets."""
+    v = raw.strip()
+    if not v or len(v) > 64:
+        return None
+    return v if _VERSION_RE.match(v) else None
+
+
+def _read_version() -> str:
+    """Resolve app version. Prefers VERSION file (set by RPM build), falls back
+    to `git describe` for local dev, "unknown" if neither yields a valid string.
+
+    Output is regex-validated (alphanumeric + `._+-`, max 64 chars) so that any
+    upstream tag content reaching `/api/health` stays a safe JSON literal."""
+    here = Path(__file__).resolve().parent
+    vfile = here / "VERSION"
+    if vfile.exists():
+        try:
+            raw = vfile.read_bytes()[:_VERSION_FILE_MAX].decode("utf-8", errors="replace")
+            v = _sanitize_version(raw)
+            if v:
+                return v
+        except OSError:
+            pass
+    git_bin = shutil.which("git")
+    if git_bin:
+        try:
+            r = subprocess.run(
+                [git_bin,
+                 "-c", "core.fsmonitor=",
+                 "-c", "core.sshCommand=",
+                 "-c", "core.pager=",
+                 "-c", "protocol.allow=never",
+                 "describe", "--tags", "--always", "--dirty"],
+                cwd=here, capture_output=True, timeout=2, check=False,
+                env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C"},
+            )
+            if r.returncode == 0:
+                raw = r.stdout.decode("utf-8", errors="replace")
+                v = _sanitize_version(raw)
+                if v:
+                    return v
+        except (subprocess.SubprocessError, OSError, ValueError):
+            pass
+    return "unknown"
+
+
+_VERSION = _read_version()
 
 logging.basicConfig(
     format='{"time":"%(asctime)s","level":"%(levelname)s","tag":"%(name)s","msg":"%(message)s"}',
@@ -698,6 +755,7 @@ async def health(request: Request):
     mono_now = time.monotonic()
     result = {
         "status": "ok",
+        "version": _VERSION,
         "circuit_breaker": "open" if breaker.is_open else "closed",
         "failures": breaker.failures,
     }
