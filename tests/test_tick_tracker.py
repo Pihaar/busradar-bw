@@ -239,6 +239,7 @@ class TestInjectTickHints:
         assert out["dataAge"] is None
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 class TestVehiclesEndpointTickHints:
     @pytest.fixture(autouse=True)
     def reset_state(self):
@@ -601,6 +602,7 @@ class TestPersistence:
         tracker._persist_tick(_mono())
 
 
+@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
 class TestSingleflight:
     @pytest.fixture(autouse=True)
     def reset_state(self):

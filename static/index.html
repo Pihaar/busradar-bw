@@ -168,6 +168,13 @@
     <button type="button" class="version-banner__dismiss" data-i18n-aria="version_banner_dismiss" aria-label="Schließen">✕</button>
   </div>
 
+  <div id="terminal-banner" class="version-banner version-banner--terminal" role="alert" aria-live="assertive" hidden>
+    <span class="version-banner__text" data-i18n="connection_lost_terminal">Verbindung zum Server verloren.</span>
+    <button type="button" class="version-banner__reload" data-i18n="terminal_reload">Neu laden</button>
+  </div>
+
+  <div id="sse-state-indicator" class="sse-state" aria-live="polite" data-state="connecting"></div>
+
   <script src="vendor/leaflet.js"></script>
   <script src="i18n.js"></script>
   <link rel="modulepreload" href="config.js">

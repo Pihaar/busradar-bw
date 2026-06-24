@@ -330,13 +330,17 @@ JID_PATTERN = re.compile(r"^[\d|#A-Za-z@:_\-. ]+$")
 LID_PATTERN = re.compile(r"^A=\d+@")
 
 
-async def _hafas_call(request: Request, method: str, req: dict) -> dict:
+async def _hafas_call(request_or_app, method: str, req: dict) -> dict:
+    """Call HAFAS. Accepts either a Request (for normal handlers) or a FastAPI
+    app (for SSE subscribers that don't have a per-request object). The shared
+    httpx.AsyncClient lives on app.state.client either way."""
+    app_ref = request_or_app.app if hasattr(request_or_app, "app") else request_or_app
     if breaker.is_open:
         return {"error": "upstream_unavailable", "detail": "Service temporarily unavailable"}
 
     payload = _build_hafas_envelope(method, req)
     try:
-        resp = await request.app.state.client.post(HAFAS_ENDPOINT, json=payload)
+        resp = await app_ref.state.client.post(HAFAS_ENDPOINT, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -461,104 +465,19 @@ def _inject_tick_hints_no_count(result: dict) -> dict:
 
 
 @app.get("/api/vehicles")
-async def get_vehicles(
-    request: Request,
-    swLat: float = Query(default=49.0, ge=45.0, le=56.0),
-    swLon: float = Query(default=8.0, ge=4.0, le=17.0),
-    neLat: float = Query(default=49.6, ge=45.0, le=56.0),
-    neLon: float = Query(default=9.0, ge=4.0, le=17.0),
-    posMode: str = Query(default="CALC", pattern="^(CALC|REPORT_ONLY)$"),
-    _t: int = Query(default=None),
-):
-    if swLat > neLat or swLon > neLon:
-        return JSONResponse(status_code=400, content={"error": "invalid_request", "detail": "Inverted bounds"})
-
-    cache_key = (round(swLat, 2), round(swLon, 2), round(neLat, 2), round(neLon, 2), posMode)
-    client_activity.touch()
-    cid = request.headers.get("X-Client-Id")
-    if is_valid_client_id(cid):
-        # uvicorn rekonstruiert request.client.host aus XFF (--proxy-headers --forwarded-allow-ips=*),
-        # daher direkt nutzen — kein eigenes XFF-Parsing nötig.
-        ip = request.client.host if request.client else ""
-        connected_clients.touch(cid, ip)
-    skip_cache = _t is not None
-
-    if not skip_cache:
-        if _TICK_ENABLED:
-            cached = await cache.get_tick_aware(cache_key, tick_tracker)
-            if cached:
-                return _inject_tick_hints(cached)
-        else:
-            cached = await cache.get(cache_key)
-            if cached:
-                from datetime import datetime
-                out = dict(cached)
-                out["serverTime"] = datetime.now().strftime("%H%M%S")
-                return out
-
-    # Singleflight: first request fetches, others await same Future
-    fut = _inflight.get(cache_key)
-    if fut is not None:
-        try:
-            return await asyncio.wait_for(asyncio.shield(fut), timeout=UPSTREAM_TIMEOUT + 2)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
-        # Fallback: try cache or proceed as new leader
-        cached = await cache.get_tick_aware(cache_key, tick_tracker) if _TICK_ENABLED else await cache.get(cache_key)
-        if cached:
-            return _inject_tick_hints(cached) if _TICK_ENABLED else cached
-
-    loop = asyncio.get_event_loop()
-    fut = loop.create_future()
-    _inflight[cache_key] = fut
-    try:
-        hafas_req = {
-            "rect": {
-                "llCrd": {"x": round(swLon * 1_000_000), "y": round(swLat * 1_000_000)},
-                "urCrd": {"x": round(neLon * 1_000_000), "y": round(neLat * 1_000_000)},
-            },
-            "perSize": 120,
-            "perStep": 10,
-            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-            "trainPosMode": posMode,
-        }
-
-        res = await _hafas_call(request, "JourneyGeoPos", hafas_req)
-
-        if "error" in res:
-            stale = cache.stale_data
-            if stale:
-                response = _inject_tick_hints_no_count(stale) if _TICK_ENABLED else stale
-                if not fut.done():
-                    fut.set_result(response)
-                return response
-            response = JSONResponse(status_code=502, content=res)
-            if not fut.done():
-                fut.set_result(response)
-            return response
-
-        from datetime import datetime
-        now_dt = datetime.now()
-        vehicles = _flatten_vehicles(res)
-        result = {
-            "vehicles": vehicles,
-            "count": len(vehicles),
-            "timestamp": time.time(),
-            "serverTime": now_dt.strftime("%H%M%S"),
-        }
-
-        await cache.set(cache_key, result)
-
-        response = _inject_tick_hints(result) if _TICK_ENABLED else result
-        if not fut.done():
-            fut.set_result(response)
-        return response
-    except Exception as e:
-        if not fut.done():
-            fut.set_exception(e)
-        raise
-    finally:
-        _inflight.pop(cache_key, None)
+async def get_vehicles_legacy(request: Request):
+    """Polling endpoint is gone — the client now uses /api/stream/. Returns
+    410 with a stable JSON envelope so any stale bookmark/SDK can detect the
+    migration without parsing the HTML shell. Hits are audit-logged
+    (rate-limited per IP-hash) so we can see whether anything still polls
+    during the iter 2b 72h evidence-gate."""
+    ip = request.client.host if request.client else ""
+    _audit("legacy-polling-hit", ip)
+    return JSONResponse(
+        status_code=410,
+        content={"error": "gone", "migrate": "sse", "stream": "/api/stream/"},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def _discover_platforms(request: Request, lid: str) -> list[dict]:
@@ -962,11 +881,17 @@ async def _fetch_vehicles_for_viewport(
     posMode: str,
 ) -> dict:
     """Fetch one HAFAS snapshot for the given viewport. Uses bbox quantization
-    so subscribers within ~1.1 km share the singleflight inflight key."""
+    so subscribers within ~1.1 km share the singleflight inflight key; under
+    the same key, exactly one upstream HAFAS call runs regardless of how many
+    subscribers are pulling that quantized cell on the current tick."""
     sw_lat, sw_lon, ne_lat, ne_lon = viewport
     cx = int((sw_lon + ne_lon) / 2 * 1_000_000)
     cy = int((sw_lat + ne_lat) / 2 * 1_000_000)
-    max_dist = int(min(80_000, ((ne_lat - sw_lat) * 111_000) / 2))
+    # Use max of lat/lon spans (in metres) so wide-short viewports still get coverage.
+    lat_span_m = (ne_lat - sw_lat) * 111_000
+    lon_span_m = (ne_lon - sw_lon) * 111_000 * math.cos(math.radians((sw_lat + ne_lat) / 2))
+    max_dist = int(min(80_000, max(lat_span_m, lon_span_m) / 2))
+    posMode = posMode if posMode in ("CALC", "REPORT_ONLY") else "CALC"
 
     hafas_req = {
         "ring": {"cCrd": {"x": cx, "y": cy}, "maxDist": max_dist},
@@ -975,14 +900,51 @@ async def _fetch_vehicles_for_viewport(
         "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
         "trainPosMode": posMode,
     }
-    # Synthesize a request-shaped object so _hafas_call's interface stays
-    # unchanged. Tests can pass app directly via this shim.
-    class _ReqShim:
-        def __init__(self, a): self.app = a
-    res = await _hafas_call(_ReqShim(app), "JourneyGeoPos", hafas_req)
-    if "error" in res:
-        return {"error": res["error"]}
-    return {"vehicles": _flatten_vehicles(res)}
+    key = ("sse", fanout.quantize_bbox(viewport), posMode)
+    existing = _inflight.get(key)
+    if existing is not None and not existing.done():
+        try:
+            return await asyncio.shield(existing)
+        except (asyncio.CancelledError, Exception):
+            # Originator's future died (cancelled or errored). Don't piggyback;
+            # fall through and start our own fetch under the same key. Pop the
+            # stale entry so it can't catch the next requester either.
+            _inflight.pop(key, None)
+
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    _inflight[key] = fut
+    try:
+        # Cap _inflight via simple LRU-like eviction so a viewport-spam attack
+        # can't grow the dict unbounded. Pop oldest only when over cap and not
+        # the entry we just inserted.
+        if len(_inflight) > fanout.MAX_INFLIGHT:
+            oldest = next(iter(_inflight))
+            if oldest != key:
+                _inflight.pop(oldest, None)
+        res = await _hafas_call(app, "JourneyGeoPos", hafas_req)
+        if "error" in res:
+            out = {"error": res["error"]}
+        else:
+            from datetime import datetime
+            out = {
+                "vehicles": _flatten_vehicles(res),
+                "serverTime": datetime.now().strftime("%H%M%S"),
+            }
+        if not fut.done():
+            fut.set_result(out)
+        return out
+    except asyncio.CancelledError:
+        # Originator cancelled mid-flight. Propagate cancellation to any
+        # piggyback awaiters so they don't hang.
+        if not fut.done():
+            fut.cancel()
+        raise
+    except Exception as e:
+        if not fut.done():
+            fut.set_exception(e)
+        raise
+    finally:
+        _inflight.pop(key, None)
 
 
 @app.get("/api/stream/")

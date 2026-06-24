@@ -3,13 +3,15 @@ import { state, settings, t, applyI18n, parseCoord, parseZoom } from './state.js
 import { urlState } from './api.js';
 import { mapModule, stopsLayer } from './map.js';
 import { ui, search } from './ui.js';
-import { scheduleRefresh, showError, announce, refresh } from './refresh.js';
+import { startStream, notifyViewportChange, refresh, showError, announce } from './refresh.js';
 
 var SETTINGS_KEY = 'busradar_settings_v1';
 
 // === CLIENT ID ===
-// Synchron beim Module-Load — muss vor jedem Fetch gesetzt sein.
-// Tab-lokal, kein localStorage, kein Cookie. Header X-Client-Id wird in api.js gesendet.
+// Iter 3 of the SSE migration will delete this entirely once the
+// ConnectedClients UUID-header counter is gone. For now it stays so the
+// (deprecated 410-Gone) /api/vehicles endpoint and any other legacy fetch
+// path see a stable identifier.
 function _generateClientId() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
     try { return window.crypto.randomUUID(); } catch (e) { /* fallthrough */ }
@@ -50,8 +52,10 @@ settings._bindUI = function() {
       self._userRefreshInterval = self.current.refreshInterval;
       self._save();
       state.currentInterval = self.current.refreshInterval;
-      clearTimeout(state.refreshTimeout);
-      scheduleRefresh();
+      // Iter 2a: the SSE stream pushes data at the HAFAS-tick cadence;
+      // there is no setTimeout poll loop to nudge. Refresh-Intervall setting
+      // is kept only for the 1s status ticker / status text formatting.
+      notifyViewportChange();
       self._updateGroup('setting-refresh', opt.dataset.value);
       announce(t('announce_refresh', {n: self.current.refreshInterval / 1000}));
     });
@@ -89,7 +93,7 @@ settings._bindUI = function() {
       } else {
         announce(self._userInterpolation ? t('announce_posmode_gps_anim_off') : t('announce_posmode_gps'));
       }
-      scheduleRefresh(0);
+      notifyViewportChange();
     });
   });
 
@@ -246,13 +250,21 @@ function init() {
 
   state._pendingRestore = (params.jid || params.stop) ? params : null;
   state._restoreInProgress = !!state._pendingRestore;
-  refresh();
+  startStream();
 
   state.map.on('moveend', function() {
     if (state._restoreInProgress || state._navigating || state._followPanning) return;
     if (!state.selectedJid && !state.selectedStop) {
       urlState.saveMapPosition();
     }
+    // Re-anchor the SSE viewport on every user-initiated pan/zoom. Server
+    // debounces but also accepts every POST; refresh.js itself trailing-
+    // debounces by 250 ms.
+    notifyViewportChange();
+  });
+  state.map.on('zoomend', function() {
+    if (state._restoreInProgress || state._navigating || state._followPanning) return;
+    notifyViewportChange();
   });
 
   window.addEventListener('popstate', function(e) {
@@ -308,12 +320,10 @@ function init() {
   });
 
   document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-      if (state.refreshTimeout) {
-        clearTimeout(state.refreshTimeout);
-        state.refreshTimeout = null;
-      }
-    } else {
+    // refresh.js owns SSE lifecycle on visibilitychange (close-on-hide is
+    // unnecessary — EventSource stays open in the background; on visible
+    // refresh.js itself reconnects if the stream had closed).
+    if (!document.hidden) {
       refresh();
     }
   });
@@ -325,7 +335,9 @@ window.addEventListener('offline', function(e) {
 });
 window.addEventListener('online', function(e) {
   if (!e.isTrusted) return;
-  scheduleRefresh(0);
+  // EventSource will auto-reconnect; just kick the viewport so the next tick
+  // brings data for the right bbox.
+  refresh();
 });
 
 if (document.readyState === 'loading') {

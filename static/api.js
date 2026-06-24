@@ -7,23 +7,6 @@ export var api = {
   _stationDepAbort: null,
   _stationArrAbort: null,
 
-  getVehicles: function(swLat, swLon, neLat, neLon, forceRefresh) {
-    var params = new URLSearchParams({
-      swLat: swLat.toFixed(5),
-      swLon: swLon.toFixed(5),
-      neLat: neLat.toFixed(5),
-      neLon: neLon.toFixed(5),
-      posMode: settings.current.posMode,
-    });
-    if (forceRefresh) params.set('_t', Date.now());
-    var fetchOpts = state._clientId ? { headers: { 'X-Client-Id': state._clientId } } : undefined;
-    return window.fetch(CONFIG.apiBase + '/vehicles?' + params.toString(), fetchOpts)
-      .then(function(r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      });
-  },
-
   getStops: function(lat, lon, radius) {
     var params = new URLSearchParams({
       lat: lat.toFixed(5),
