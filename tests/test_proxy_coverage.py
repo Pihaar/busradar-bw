@@ -12,6 +12,13 @@ from proxy import (app, breaker, cache, tick_tracker, _flatten_vehicles,
 
 @pytest.fixture(autouse=True)
 def reset_state():
+    # Drop any cached state that leaks between tests. The per-IP REST
+    # rate-limit bucket lives in sse_handler and accumulates from any
+    # earlier test that hit /api/journey, /api/stationboard or
+    # /api/line_search from the shared test client — without resetting it
+    # here the third line_search test in this file sees a depleted bucket
+    # and the assertion against 502 trips on a 429 instead.
+    import sse_handler
     breaker.failures = 0
     breaker.last_failure_time = 0.0
     cache._key = None
@@ -22,6 +29,7 @@ def reset_state():
     _stationboard_cache.clear()
     _line_search_cache.clear()
     _inflight.clear()
+    sse_handler._post_rate_per_ip.clear()
     orig_tick = tick_tracker.last_tick_ts
     yield
     breaker.failures = 0
@@ -33,6 +41,7 @@ def reset_state():
     _stationboard_cache.clear()
     _line_search_cache.clear()
     _inflight.clear()
+    sse_handler._post_rate_per_ip.clear()
     tick_tracker.last_tick_ts = orig_tick
 
 

@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 log = logging.getLogger("busradar")
 
@@ -86,12 +86,27 @@ class StationSelection(BaseModel):
     # behave as they did before. Clients that want ARR pushes set this to
     # "ARR"; the SSE handler dispatches on it.
     board_type: Literal["DEP", "ARR"] = "DEP"
+    # Window the client is showing. Auto-expand on the client walks 60 → 120
+    # → … → 1440 until results arrive; the live SSE push must match that
+    # window or the rendered list shrinks on the first tick (midnight-wrap
+    # entries vanish, +1d badges with them). Must be a multiple of 60 —
+    # mismatched values are rejected with 422 rather than silently snapped,
+    # so a misbehaving client gets a visible error instead of inheriting a
+    # narrower window than it asked for.
+    dur: int = Field(60, ge=60, le=1440)
+
+    @field_validator("dur")
+    @classmethod
+    def _dur_must_be_multiple_of_60(cls, v: int) -> int:
+        if v % 60 != 0:
+            raise ValueError("dur must be a multiple of 60")
+        return v
 
     def event_name(self) -> str:
         return "stationboard"
 
     def cache_key(self) -> tuple:
-        return (self.lid, self.board_type, 60)
+        return (self.lid, self.board_type, self.dur)
 
 
 # Discriminated union for the Subscriber.selection field and SelectPayload.

@@ -558,7 +558,17 @@ class BoardType(str, Enum):
 class StationBoardRequest(BaseModel):
     lid: str = Field(max_length=200)
     type: BoardType = BoardType.DEP
-    dur: int = Field(default=60, ge=1, le=1440)
+    # Window must match the SSE-side StationSelection constraint (60..1440,
+    # multiples of 60) so the two interfaces can't pollute their shared
+    # _stationboard_cache with keys the other side will never reuse.
+    dur: int = Field(default=60, ge=60, le=1440)
+
+    @field_validator("dur")
+    @classmethod
+    def _dur_must_be_multiple_of_60(cls, v: int) -> int:
+        if v % 60 != 0:
+            raise ValueError("dur must be a multiple of 60")
+        return v
 
     @field_validator("lid")
     @classmethod

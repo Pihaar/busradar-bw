@@ -1091,22 +1091,28 @@ export var ui = {
     state._depExpandCount = 0;
     state._arrExpandCount = 0;
 
-    ui.loadDepartures(loc, stopExtId, 60, true);
-    ui.loadArrivals(loc, stopExtId, 60, true);
-    // Subscribe the SSE stream so the departure list refreshes on every
-    // tick. ARR is still loaded explicitly when the user switches tab;
-    // Default the new stop to DEP — the switchTab handler updates to ARR
-    // if the user switches over.
+    // Serialise the two auto-expand cascades. Both can walk up to
+    // maxExpandIterations steps on a quiet stop; firing in parallel
+    // doubles the peak POST rate and burns through the per-IP rate-limit
+    // burst on stops with no service in the next 60 min. DEP loads first
+    // (visible tab on stop-open), ARR follows once DEP settles. Most
+    // users never see ARR, so the latency cost only kicks in if they
+    // switch tabs before ARR has settled — applyPushedStationboard /
+    // refreshStationBoard cover that case by refetching on demand.
+    ui.loadDepartures(loc, stopExtId, 60, true).finally(function () {
+      if (state.selectedStop && state.selectedStop.lid === loc.lid) {
+        ui.loadArrivals(loc, stopExtId, 60, true);
+      }
+    });
     if (loc && loc.lid) {
       state._activeStationBoardType = 'DEP';
-      api.selectStream('stationboard', loc.lid, 'DEP').catch(function () {});
     }
   },
 
   loadDepartures: function(loc, stopExtId, dur, autoExpand) {
     if (autoExpand) state._autoExpandingDep = true;
     var capturedLid = loc.lid;
-    api.getStationBoard(loc.lid, 'DEP', dur).then(function(data) {
+    return api.getStationBoard(loc.lid, 'DEP', dur).then(function(data) {
       if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
         state._autoExpandingDep = false;
         return;
@@ -1136,6 +1142,12 @@ export var ui = {
         if (autoExpand && dur === 60) {
           announce(t('departures_loaded', {name: loc.name || t('stop_fallback', {idx: ''})}));
         }
+        // The SSE stationboard push must match the final window we just
+        // rendered, or the next tick replaces the expanded list with the
+        // narrower default and midnight-wrap entries disappear.
+        if (state._activeStationBoardType === 'DEP') {
+          api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
+        }
       }
     }).catch(function(err) {
       state._autoExpandingDep = false;
@@ -1147,7 +1159,7 @@ export var ui = {
   loadArrivals: function(loc, stopExtId, dur, autoExpand) {
     if (autoExpand) state._autoExpandingArr = true;
     var capturedLid = loc.lid;
-    api.getStationBoard(loc.lid, 'ARR', dur).then(function(data) {
+    return api.getStationBoard(loc.lid, 'ARR', dur).then(function(data) {
       if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
         state._autoExpandingArr = false;
         return;
@@ -1175,6 +1187,11 @@ export var ui = {
         state._autoExpandingArr = false;
         if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
         ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
+        // Same dur-must-match story as DEP — keep the SSE push aligned with
+        // the actually-rendered window.
+        if (state._activeStationBoardType === 'ARR') {
+          api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
+        }
       }
     }).catch(function(err) {
       state._autoExpandingArr = false;
@@ -1210,10 +1227,15 @@ export var ui = {
       var newDur = Math.min(currentDur + 60, 1440);
       btn.textContent = t('loading');
       btn.disabled = true;
+      // Single-step on explicit user click: don't cascade further. The
+      // initial stop-open path uses autoExpand=true to walk forward until
+      // it finds any data; once the user is stepping manually they pay for
+      // each load by clicking again, which keeps the per-IP HAFAS budget
+      // under the rate-limit ceiling.
       if (type === 'ARR') {
-        ui.loadArrivals(loc, stopExtId, newDur, true);
+        ui.loadArrivals(loc, stopExtId, newDur, false);
       } else {
-        ui.loadDepartures(loc, stopExtId, newDur, true);
+        ui.loadDepartures(loc, stopExtId, newDur, false);
       }
     });
     li.appendChild(btn);
@@ -1612,7 +1634,8 @@ export var ui = {
       var newBoardType = (tab === 'arrivals') ? 'ARR' : 'DEP';
       if (state._activeStationBoardType !== newBoardType) {
         state._activeStationBoardType = newBoardType;
-        api.selectStream('stationboard', state.selectedStop.lid, newBoardType).catch(function () {});
+        var switchDur = (newBoardType === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
+        api.selectStream('stationboard', state.selectedStop.lid, newBoardType, switchDur).catch(function () {});
       }
     }
     if (tab === 'departures' && state._stationDepData) {

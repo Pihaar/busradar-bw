@@ -291,7 +291,12 @@ def _err_response(code: str) -> JSONResponse:
 #   one IP opens N subscribers (up to MAX_SUBSCRIBERS_PER_IP=20) and each
 #   gets a fresh per-subscriber bucket (would otherwise allow 60 POSTs/s).
 _post_rate_per_ip: dict[str, tuple[float, float]] = {}  # ip → (tokens, last_refill)
-_POST_RATE_PER_IP_BURST = 10.0
+# Burst sized to absorb a legitimate "open stop, watch auto-expand walk to
+# 24h" pulse without 429ing the user — the auto-expand on a quiet stop can
+# fire ~24 cascading POSTs in a couple of seconds against /api/stationboard.
+# Refill stays at 1 token/s so sustained rate is unchanged; the burst just
+# pushes the cliff out far enough that the cascade fits.
+_POST_RATE_PER_IP_BURST = 30.0
 _POST_RATE_PER_IP_MAX_KEYS = 4096
 
 
@@ -391,13 +396,14 @@ async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
     )
 
 
-async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str, board_type: str = "DEP") -> dict:
+async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str, board_type: str = "DEP", dur: int = 60) -> dict:
     """Shared HAFAS stationboard fetch with cache. Singleflight by
-    (lid, board_type, 60) so concurrent subscribers for the same stop and
-    side (DEP or ARR) share. ARR pushes are enabled via the StationSelection
-    discriminator field on the SSE side; the legacy POST endpoint uses DEP."""
+    (lid, board_type, dur) so concurrent subscribers for the same stop and
+    side share whenever they want the same window. ARR pushes are enabled
+    via the StationSelection discriminator field on the SSE side; the legacy
+    POST endpoint uses DEP with dur=60."""
     import proxy as _proxy
-    cache_key = (lid, board_type, 60)
+    cache_key = (lid, board_type, dur)
     return await cached_singleflight(
         cache=_stationboard_cache,
         lock=_stationboard_cache_lock,
@@ -409,7 +415,7 @@ async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str, board_type:
         fetch_fn=lambda: _proxy._hafas_call_via_app(app, "StationBoard", {
             "stbLoc": {"lid": lid},
             "type": board_type,
-            "dur": 60,
+            "dur": dur,
             "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
         }),
     )
@@ -455,7 +461,7 @@ async def _fetch_for_selection(app: FastAPI, sel: "fanout.Selection") -> tuple[s
             return ("error", {"reason": "upstream", "selection": "journey"})
         return ("journey", {"jid": sel.jid, "journey": result})
     if isinstance(sel, fanout.StationSelection):
-        result = await _fetch_stationboard_for_subscriber(app, sel.lid, sel.board_type)
+        result = await _fetch_stationboard_for_subscriber(app, sel.lid, sel.board_type, sel.dur)
         if "error" in result:
             return ("error", {"reason": "upstream", "selection": "stationboard"})
         return ("stationboard", {"lid": sel.lid, "boardType": sel.board_type, "stationboard": result})

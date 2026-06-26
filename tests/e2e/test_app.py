@@ -185,13 +185,30 @@ class TestHafasMessages:
 
 class TestOffline:
     def test_offline_indicator_on_network_error(self, server, page):
-        """After blocking requests, offline indicator appears."""
+        """After the browser flips to offline, indicator turns red, and
+        clears back to --live when the network returns.
+
+        In polling-era code, an aborted GET /api/vehicles each cycle would
+        increment consecutiveErrors and flip the dot. The SSE migration
+        keeps a single long-lived EventSource — `page.route(...).abort()`
+        only blocks NEW requests, not the established stream, so the old
+        test (route-block + 15s wait) can no longer trigger the indicator
+        within its window. The realistic network-loss signal in SSE-land is
+        `navigator.onLine` flipping false, which is what BrowserContext's
+        offline mode emulates. The recovery assertion below catches the
+        wedge regression where _errorUntil=Infinity locks the dot red
+        forever even after data resumes."""
         page.goto(server + "/#lat=49.342&lon=8.66&z=15")
         page.wait_for_timeout(3000)
-        # Block the SSE stream and its sidecar POSTs so the frontend's
-        # reconnect/terminal path triggers. /api/stream/ is the live channel
-        # (the previous polling endpoint /api/vehicles is gone).
-        page.route("**/api/stream/**", lambda route: route.abort())
-        page.wait_for_timeout(15000)
+        # Real-world offline: radio off, no carrier, lid closed. Browser
+        # fires the `offline` event; our handler in static/refresh.js
+        # surfaces the persistent error banner.
+        page.context.set_offline(True)
+        page.wait_for_timeout(2000)
         dot = page.locator(".status-dot")
         expect(dot).to_have_class(re.compile("status-dot--(offline|error)"))
+        # And clears when the network comes back. The next vehicles event
+        # paints --live; up to one HAFAS tick (~30s) of wait is normal so
+        # we give it 35s before failing.
+        page.context.set_offline(False)
+        expect(dot).to_have_class(re.compile(r"status-dot--live(\s|$)"), timeout=35000)

@@ -36,6 +36,8 @@ CIRCUIT_BREAKER_COOLDOWN = 30.0
 # - Use [0-9] explicitly NOT \d, because Python 3 `re` defaults to Unicode
 #   mode where \d matches Arabic-Indic / Devanagari digits — that's the
 #   cache-key-fabrication primitive we want to block.
+# - End-anchored with \Z (NOT $) — in Python `$` matches before a trailing
+#   newline, so `A=1@L=6003411@\n` would slip through and reach HAFAS.
 # - Stay loose on the alphabet: real HAFAS jids carry hash-structured
 #   payloads like "2|#VN#1#ST#1782426904#PI#0#…#ZB#Bus  721#…" (embedded
 #   spaces, # separators, mixed-case alpha). An earlier tightening tried
@@ -43,12 +45,17 @@ CIRCUIT_BREAKER_COOLDOWN = 30.0
 #   the documented EXAMPLE format, not the actual production wire format.
 # - End-anchored + length-bounded (Pydantic max_length=300) keeps the
 #   cache-key surface bounded.
-JID_PATTERN = re.compile(r"^[0-9|#A-Za-z@:_\-. ]+$")
-# LID format: real-world looks like `A=1@O=Sandhausen Altes Rathaus@L=6003411@`
-# or with German umlauts in stop names. Keep the prefix tight (`A=<num>@`),
-# end-anchor, but accept the wider alphabet observed in the wild. Length cap
-# (Pydantic max_length=300) bounds the cache-key surface.
-LID_PATTERN = re.compile(r"^A=[0-9]+@[\w#|=.\-: @äöüÄÖÜß×]*$")
+JID_PATTERN = re.compile(r"\A[0-9|#A-Za-z@:_\-. ]+\Z")
+# LID format: real-world looks like `A=1@L=44278341@` or fully qualified
+# `A=1@O=Wiesloch-Walldorf Bahnhof@X=8664801@Y=49291306@U=80@L=44278341@i=A×de:08226:4252:1:A,b×BRN_304521@`.
+# Keep the prefix tight (`A=<num>@`), end-anchor, accept the wider alphabet
+# observed in the wild: comma in the `i=` provider metadata, parens for
+# station names like "Köln(Hbf)" or "Frankfurt(Main)Hbf", slash for the
+# occasional "Bahnhof/ZOB". Spell out the ASCII letter/digit/underscore
+# class — `\w` in Python 3 default mode matches Unicode-category Nd digits
+# and would re-open the cache-key fabrication primitive we explicitly
+# close on JID_PATTERN above.
+LID_PATTERN = re.compile(r"\AA=[0-9]+@[A-Za-z0-9_#|=.\-,:/(): @äöüÄÖÜß×]*\Z")
 
 
 log = logging.getLogger("busradar")
