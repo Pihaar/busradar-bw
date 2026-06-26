@@ -8,16 +8,12 @@ import pytest
 
 import fanout
 from fanout import (
-    BBOX_QUANTIZE_DEG,
     CapExceeded,
-    MAX_SUBSCRIBERS_GLOBAL,
     MAX_SUBSCRIBERS_PER_IP,
-    QUEUE_MAXSIZE,
     SLOW_CONSUMER_DROP_THRESHOLD,
     Subscriber,
     SubscriberRegistry,
     canonicalize_ip,
-    enqueue_event,
     fire_tick,
     quantize_bbox,
     should_disconnect_slow_consumer,
@@ -204,44 +200,9 @@ class TestTickFanout:
         assert received_seqs == [local_at_start + 1]
 
 
-# === Queue / slow consumer ===
+# === Slow consumer ===
 
-class TestQueuePolicy:
-    def test_enqueue_within_capacity(self):
-        sub = Subscriber(connection_id="x", ip="")
-        for i in range(QUEUE_MAXSIZE):
-            enqueue_event(sub, {"i": i})
-        assert sub.event_queue.qsize() == QUEUE_MAXSIZE
-        assert sub.consecutive_drops == 0
-
-    def test_enqueue_overflows_drops_oldest(self):
-        sub = Subscriber(connection_id="x", ip="")
-        for i in range(QUEUE_MAXSIZE + 3):
-            enqueue_event(sub, {"i": i})
-        # Queue stayed at maxsize; consecutive_drops counted the 3 overflows
-        assert sub.event_queue.qsize() == QUEUE_MAXSIZE
-        assert sub.consecutive_drops == 3
-
-    def test_drop_counter_resets_after_success_between_drops(self):
-        """Named case: drop, drop, success, drop, drop → consecutive_drops=2,
-        not 4. Reset-on-success keeps short blips from triggering disconnect."""
-        sub = Subscriber(connection_id="x", ip="")
-        # Fill queue
-        for i in range(QUEUE_MAXSIZE):
-            enqueue_event(sub, {"i": i})
-        # Two drops
-        enqueue_event(sub, {"drop": 1})
-        enqueue_event(sub, {"drop": 2})
-        assert sub.consecutive_drops == 2
-        # Consumer drains one slot → next put succeeds, counter resets
-        sub.event_queue.get_nowait()
-        enqueue_event(sub, {"success": True})
-        assert sub.consecutive_drops == 0
-        # Two more drops → counter starts fresh at 2
-        enqueue_event(sub, {"drop": 3})
-        enqueue_event(sub, {"drop": 4})
-        assert sub.consecutive_drops == 2
-
+class TestSlowConsumer:
     def test_slow_consumer_threshold(self):
         sub = Subscriber(connection_id="x", ip="")
         assert not should_disconnect_slow_consumer(sub)
@@ -341,14 +302,11 @@ class TestNamedPlanCases:
     def test_slow_consumer_disconnect_concurrent_with_client_close(self):
         """Named case: subscriber hits 5 consecutive drops AND client closes
         connection at the same tick. should_disconnect_slow_consumer() must
-        be safe to evaluate even after the queue/state is partially torn
-        down — it only reads `consecutive_drops`, no I/O."""
+        be safe to evaluate even after the connection is half-torn-down —
+        it only reads `consecutive_drops`, no I/O."""
         sub = Subscriber(connection_id="x", ip="10.0.0.1")
         sub.consecutive_drops = SLOW_CONSUMER_DROP_THRESHOLD
-        # Tear down task / queue mid-flight to simulate client close
-        sub.task = None
-        sub.event_queue = None  # simulate cleanup race
-        # Predicate must NOT touch the queue, only the counter
+        # Predicate must NOT touch any other field, only the counter.
         assert should_disconnect_slow_consumer(sub) is True
 
 

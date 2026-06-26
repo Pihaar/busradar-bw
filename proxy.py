@@ -3,18 +3,22 @@ Busradar BW — FastAPI Backend Proxy
 
 Proxies requests to the HAFAS mgate.exe API, adding input validation,
 rate limiting, caching, and security headers.
+
+This module orchestrates: route registration, app/lifespan setup, security
+middleware, and the version/service-worker plumbing. Helpers live in:
+
+* audit.py       — rate-limited audit logging
+* hafas.py       — HAFAS endpoint client + circuit breaker
+* caches.py      — single-slot + per-endpoint caches and singleflight
+* sse_handler.py — SSE stream handler + sidecar POST endpoints
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import math
 import os
-import random
 import re
-import secrets
 import shutil
 import subprocess
 import time
@@ -24,30 +28,93 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 import fanout
+# Re-export submodule symbols so tests can keep using `from proxy import X`.
+# noqa: F401 — these names are deliberately imported into the proxy namespace.
+from audit import (  # noqa: F401
+    _audit,
+    _audit_log_last,
+    AUDIT_LOG_MAX_KEYS,
+)
+from caches import (  # noqa: F401
+    _Cache,
+    cache,
+    stops_cache,
+    cached_singleflight,
+    _inflight,
+    _journey_cache,
+    _journey_cache_lock,
+    _inflight_journey,
+    _JOURNEY_CACHE_TTL,
+    _stationboard_cache,
+    _stationboard_cache_lock,
+    _inflight_stationboard,
+    _STATIONBOARD_CACHE_TTL,
+    _line_search_cache,
+    _LINE_SEARCH_CACHE_TTL,
+    CACHE_TTL,
+    STOPS_CACHE_TTL,
+)
+from hafas import (  # noqa: F401
+    HAFAS_ENDPOINT,
+    AUTH_AID,
+    CLIENT_ID,
+    CLIENT_VERSION,
+    CLIENT_NAME,
+    EXT,
+    VER,
+    UPSTREAM_TIMEOUT,
+    MAX_CONSECUTIVE_FAILURES,
+    CIRCUIT_BREAKER_COOLDOWN,
+    JID_PATTERN,
+    LID_PATTERN,
+    _build_hafas_envelope,
+    _CircuitBreaker,
+    breaker,
+    _hafas_call_via_app,
+)
+from sse_handler import (  # noqa: F401
+    ALLOWED_ORIGINS,
+    SSE_COOKIE_NAME,
+    SSE_COOKIE_PATH,
+    SSE_COOKIE_SECURE,
+    SSE_PROTOCOL_VERSION,
+    SSE_KEEPALIVE_MIN,
+    SSE_KEEPALIVE_MAX,
+    SSE_BODY_LIMIT,
+    SSE_SLOW_YIELD_THRESHOLD_S,
+    SelectPayload,
+    ViewportPayload,
+    _client_ip,
+    _check_origin,
+    _err_response,
+    _fetch_for_selection,
+    _fetch_journey_for_subscriber,
+    _fetch_stationboard_for_subscriber,
+    _fetch_vehicles_for_viewport,
+    _format_keepalive,
+    _format_sse,
+    _lookup_subscriber,
+    _noop_async,
+    _post_rate_check,
+    _post_rate_check_ip,
+    _post_rate_per_ip,
+    _rate_check_request,
+    _read_body_with_limit,
+    client_activity,
+    handle_sse_stream,
+    handle_viewport,
+    handle_select,
+)
 from tick import (
-    TickTracker, ClientActivity, tick_calibrator,
+    TickTracker, tick_calibrator,
     _TICK_ENABLED, TICK_MAX_AGE,
 )
-
-HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
-AUTH_AID = "FiBa5ytjCvR0J47P"
-CLIENT_ID = "DB-REGIO"
-CLIENT_VERSION = "3000000"
-CLIENT_NAME = "DB Busradar BW"
-EXT = "DB.REGIO.1"
-VER = "1.39"
-
-CACHE_TTL = 9.5
-STOPS_CACHE_TTL = 86400.0
-UPSTREAM_TIMEOUT = 10.0
-MAX_CONSECUTIVE_FAILURES = 3
-CIRCUIT_BREAKER_COOLDOWN = 30.0
 
 
 _VERSION_RE = re.compile(r"^[A-Za-z0-9._+\-]{1,64}$")
@@ -110,101 +177,7 @@ logging.basicConfig(
 log = logging.getLogger("busradar")
 
 
-def _build_hafas_envelope(method: str, req: dict) -> dict:
-    return {
-        "auth": {"type": "AID", "aid": AUTH_AID},
-        "client": {"type": "AND", "id": CLIENT_ID, "v": CLIENT_VERSION, "name": CLIENT_NAME},
-        "ext": EXT,
-        "ver": VER,
-        "lang": "de",
-        "svcReqL": [{"meth": method, "req": req}],
-    }
-
-
-class _Cache:
-    def __init__(self, ttl: float = CACHE_TTL, daily_reset_hour: int | None = None):
-        self._data: dict | None = None
-        self._key: tuple | None = None
-        self._ts: float = 0
-        self._mono_ts: float = 0.0
-        self._jitter: float = 0.0
-        self._lock = asyncio.Lock()
-        self._ttl = ttl
-        self._daily_reset_hour = daily_reset_hour
-
-    def _is_expired(self) -> bool:
-        if self._ts == 0:
-            return True
-        if self._daily_reset_hour is not None:
-            from datetime import datetime
-            cached_dt = datetime.fromtimestamp(self._ts)
-            now = datetime.now()
-            reset_today = now.replace(hour=self._daily_reset_hour, minute=0, second=0, microsecond=0)
-            if now >= reset_today and cached_dt < reset_today:
-                return True
-            return False
-        return (time.time() - self._ts) >= self._ttl
-
-    async def get(self, key: tuple) -> dict | None:
-        async with self._lock:
-            if self._key == key and not self._is_expired():
-                return self._data
-            return None
-
-    async def get_tick_aware(self, key: tuple, tracker) -> dict | None:
-        """Return cached data if key matches and tick-based expiry hasn't passed. Thread-safe."""
-        async with self._lock:
-            if self._key != key or self._data is None:
-                return None
-            age = time.monotonic() - self._mono_ts if self._mono_ts else 0.0
-            remaining = tracker.cache_expiry_seconds(age, fallback_ttl=self._ttl)
-            if remaining > self._jitter:
-                return self._data
-            return None
-
-    async def set(self, key: tuple, data: dict):
-        async with self._lock:
-            self._key = key
-            self._data = data
-            self._ts = time.time()
-            self._mono_ts = time.monotonic()
-            self._jitter = random.uniform(0, 0.5)
-
-    @property
-    def stale_data(self) -> dict | None:
-        return self._data
-
-
-class _CircuitBreaker:
-    def __init__(self):
-        self.failures = 0
-        self.last_failure_time = 0.0
-
-    def record_failure(self):
-        self.failures += 1
-        self.last_failure_time = time.time()
-        if self.failures == MAX_CONSECUTIVE_FAILURES:
-            log.warning("[circuit_breaker] OPEN after %d failures", self.failures)
-
-    def record_success(self):
-        if self.failures >= MAX_CONSECUTIVE_FAILURES:
-            log.info("[circuit_breaker] CLOSED, upstream recovered")
-        self.failures = 0
-
-    @property
-    def is_open(self) -> bool:
-        if self.failures >= MAX_CONSECUTIVE_FAILURES:
-            elapsed = time.time() - self.last_failure_time
-            return elapsed < CIRCUIT_BREAKER_COOLDOWN
-        return False
-
-
-cache = _Cache(ttl=CACHE_TTL)
-stops_cache = _Cache(daily_reset_hour=3)
-breaker = _CircuitBreaker()
-client_activity = ClientActivity()
 tick_tracker = TickTracker()
-_inflight: dict[tuple, asyncio.Future] = {}
 
 
 @asynccontextmanager
@@ -328,52 +301,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-JID_PATTERN = re.compile(r"^[\d|#A-Za-z@:_\-. ]+$")
-LID_PATTERN = re.compile(r"^A=\d+@")
-
-
-async def _hafas_call(request_or_app, method: str, req: dict) -> dict:
-    """Call HAFAS. Accepts either a Request (for normal handlers) or a FastAPI
-    app (for SSE subscribers that don't have a per-request object). The shared
-    httpx.AsyncClient lives on app.state.client either way."""
-    app_ref = request_or_app.app if hasattr(request_or_app, "app") else request_or_app
-    if breaker.is_open:
-        return {"error": "upstream_unavailable", "detail": "Service temporarily unavailable"}
-
-    payload = _build_hafas_envelope(method, req)
-    try:
-        resp = await app_ref.state.client.post(HAFAS_ENDPOINT, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if data.get("err") != "OK":
-            breaker.record_failure()
-            log.warning("[hafas] api_error method=%s err=%s", method, data.get("err"))
-            return {"error": "upstream_error", "detail": "HAFAS error"}
-
-        svc_res = data.get("svcResL", [{}])[0]
-        if svc_res.get("err") != "OK":
-            breaker.record_failure()
-            log.warning("[hafas] svc_error method=%s err=%s", method, svc_res.get("err"))
-            return {"error": "upstream_error", "detail": "HAFAS service error"}
-
-        breaker.record_success()
-        return svc_res.get("res", {})
-
-    except httpx.TimeoutException:
-        breaker.record_failure()
-        log.warning("[hafas] timeout method=%s", method)
-        return {"error": "upstream_timeout", "detail": "HAFAS did not respond in time"}
-    except httpx.HTTPError as e:
-        breaker.record_failure()
-        log.error("[hafas] http_error method=%s type=%s", method, type(e).__name__)
-        return {"error": "upstream_error", "detail": "Upstream HTTP error"}
-    except Exception:
-        breaker.record_failure()
-        log.exception("[hafas] unexpected_error method=%s", method)
-        return {"error": "internal_error", "detail": "Internal proxy error"}
-
-
 def _calc_delay(stop: dict) -> int | None:
     for prefix in ("d", "a"):
         time_s = stop.get(f"{prefix}TimeS")
@@ -456,21 +383,6 @@ def _flatten_vehicles(res: dict) -> list[dict]:
     return vehicles
 
 
-@app.get("/api/vehicles")
-async def get_vehicles_legacy(request: Request):
-    """Polling endpoint is gone — the client now uses /api/stream/. Returns
-    410 with a stable JSON envelope so any stale bookmark/SDK can detect the
-    migration without parsing the HTML shell. Hits are audit-logged
-    (rate-limited per IP-hash) so we can see whether anything still polls."""
-    ip = request.client.host if request.client else ""
-    _audit("legacy-polling-hit", ip)
-    return JSONResponse(
-        status_code=410,
-        content={"error": "gone", "migrate": "sse", "stream": "/api/stream/"},
-        headers={"Cache-Control": "no-store"},
-    )
-
-
 async def _discover_platforms(request: Request, lid: str) -> list[dict]:
     """Discover sub-platforms by querying DEP+ARR StationBoard and extracting locL entries."""
     platforms = []
@@ -483,7 +395,7 @@ async def _discover_platforms(request: Request, lid: str) -> list[dict]:
             "dur": 1440,
             "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
         }
-        res = await _hafas_call(request, "StationBoard", hafas_req)
+        res = await _hafas_call_via_app(request.app, "StationBoard", hafas_req)
         if "error" in res:
             continue
 
@@ -600,28 +512,40 @@ class JourneyRequest(BaseModel):
         return v
 
 
-_journey_cache: dict = {}
-_JOURNEY_CACHE_TTL = 30
-
-
 @app.post("/api/journey")
 async def get_journey(request: Request, body: JourneyRequest):
+    # Per-IP rate-limit so the unauthenticated POST surface can't be flooded.
+    # Opt-in burst 10/s per IP (canonicalized) — matches SSE sidecar gates.
+    if not _rate_check_request(request, sub=None):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit", "scope": "ip"},
+            headers={"Retry-After": "1"},
+        )
     now = time.time()
     cached = _journey_cache.get(body.jid)
     if cached and (now - cached[0]) < _JOURNEY_CACHE_TTL:
         return cached[1]
 
     hafas_req = {"jid": body.jid, "getPolyline": True}
-    res = await _hafas_call(request, "JourneyDetails", hafas_req)
+    res = await _hafas_call_via_app(request.app, "JourneyDetails", hafas_req)
 
     if "error" in res:
-        return JSONResponse(status_code=502, content=res)
+        # Opaque client-facing reason — same shape as the SSE path. Internal
+        # taxonomy (`upstream_unavailable`, `upstream_timeout`, etc.) stays in
+        # logs but never reaches the wire.
+        return JSONResponse(status_code=502, content={"error": "upstream"})
 
-    _journey_cache[body.jid] = (now, res)
-    if len(_journey_cache) > 200:
-        oldest = sorted(_journey_cache, key=lambda k: _journey_cache[k][0])[:100]
-        for k in oldest:
-            del _journey_cache[k]
+    # Cache write + eviction under the same lock the SSE singleflight path
+    # uses, otherwise concurrent eviction's `sorted(...)` over the live dict
+    # can race the SSE writer with a "dictionary changed size during iteration"
+    # RuntimeError.
+    async with _journey_cache_lock:
+        _journey_cache[body.jid] = (time.time(), res)
+        if len(_journey_cache) > 200:
+            oldest = sorted(_journey_cache, key=lambda k: _journey_cache[k][0])[:100]
+            for k in oldest:
+                _journey_cache.pop(k, None)
 
     return res
 
@@ -644,12 +568,14 @@ class StationBoardRequest(BaseModel):
         return v
 
 
-_stationboard_cache: dict = {}
-_STATIONBOARD_CACHE_TTL = 10
-
-
 @app.post("/api/stationboard")
 async def get_stationboard(request: Request, body: StationBoardRequest):
+    if not _rate_check_request(request, sub=None):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit", "scope": "ip"},
+            headers={"Retry-After": "1"},
+        )
     now = time.time()
     cache_key = (body.lid, body.type.value, body.dur)
     cached = _stationboard_cache.get(cache_key)
@@ -663,16 +589,17 @@ async def get_stationboard(request: Request, body: StationBoardRequest):
         "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
     }
 
-    res = await _hafas_call(request, "StationBoard", hafas_req)
+    res = await _hafas_call_via_app(request.app, "StationBoard", hafas_req)
 
     if "error" in res:
-        return JSONResponse(status_code=502, content=res)
+        return JSONResponse(status_code=502, content={"error": "upstream"})
 
-    _stationboard_cache[cache_key] = (now, res)
-    if len(_stationboard_cache) > 500:
-        oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
-        for k in oldest:
-            del _stationboard_cache[k]
+    async with _stationboard_cache_lock:
+        _stationboard_cache[cache_key] = (time.time(), res)
+        if len(_stationboard_cache) > 500:
+            oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
+            for k in oldest:
+                _stationboard_cache.pop(k, None)
 
     return res
 
@@ -695,16 +622,18 @@ async def health(request: Request):
     return result
 
 
-_line_search_cache: dict = {}
-_LINE_SEARCH_CACHE_TTL = 30
-
-
 @app.get("/api/line_search")
 async def line_search(
     request: Request,
     q: str = Query(min_length=1, max_length=10),
 ):
     """Search for active bus lines BW-wide."""
+    if not _rate_check_request(request, sub=None):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit", "scope": "ip"},
+            headers={"Retry-After": "1"},
+        )
     q_lower = q.strip().lower()
     now = time.time()
     cached = _line_search_cache.get("bw")
@@ -721,9 +650,9 @@ async def line_search(
             "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
             "trainPosMode": "CALC",
         }
-        res = await _hafas_call(request, "JourneyGeoPos", hafas_req)
+        res = await _hafas_call_via_app(request.app, "JourneyGeoPos", hafas_req)
         if "error" in res:
-            return JSONResponse(status_code=502, content=res)
+            return JSONResponse(status_code=502, content={"error": "upstream"})
         all_vehicles = _flatten_vehicles(res)
         _line_search_cache["bw"] = (now, all_vehicles)
 
@@ -771,534 +700,19 @@ elif _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
 
 
-# === SSE Stream ===
-
-ALLOWED_ORIGINS = tuple(
-    o.strip() for o in os.environ.get(
-        "BUSRADAR_ALLOWED_ORIGINS",
-        "https://busradar.pihaar.de,http://localhost:8000,http://127.0.0.1:8000",
-    ).split(",") if o.strip()
-)
-SSE_COOKIE_NAME = "busradar_sse"
-SSE_COOKIE_PATH = "/api/stream/"
-# Secure-Cookie nur über HTTPS. Per env überschreibbar damit Dev über plain
-# http://localhost weiterhin funktioniert (Browsers droppen Secure-Cookies
-# über Plain-HTTP); Production läuft hinter nginx-TLS → True.
-SSE_COOKIE_SECURE = os.environ.get("BUSRADAR_COOKIE_SECURE", "1") != "0"
-SSE_KEEPALIVE_MIN = 12.0
-SSE_KEEPALIVE_MAX = 18.0
-SSE_BODY_LIMIT = 1024  # POST viewport / select payloads stay small
-AUDIT_LOG_MAX_KEYS = 4096  # cap audit-log dict size against slow-leak via scanner
-
-_audit_log_last: dict[str, float] = {}
-_AUDIT_RATE = 60.0
-
-
-def _audit(reason: str, ip: str, **extra) -> None:
-    """Rate-limit audit-warnings to 1/min per (reason, ip-hash)."""
-    import hashlib
-    now = time.monotonic()
-    ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:8] if ip else "noip"
-    key = f"{reason}:{ip_hash}"
-    # Cap dict size against slow-leak via scanner rotating IPs forever.
-    if len(_audit_log_last) >= AUDIT_LOG_MAX_KEYS:
-        # Drop the oldest half — cheap, no per-entry timestamp scan.
-        oldest = sorted(_audit_log_last.items(), key=lambda kv: kv[1])[: AUDIT_LOG_MAX_KEYS // 2]
-        for k, _ in oldest:
-            _audit_log_last.pop(k, None)
-    last = _audit_log_last.get(key, 0.0)
-    if now - last < _AUDIT_RATE:
-        return
-    _audit_log_last[key] = now
-    log.warning("[audit] %s ip_hash=%s %s", reason, ip_hash, extra or "")
-
-
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else ""
-
-
-def _check_origin(request: Request) -> bool:
-    origin = request.headers.get("Origin")
-    if not origin:
-        return False
-    return origin in ALLOWED_ORIGINS
-
-
-class ViewportPayload(BaseModel):
-    swLat: float = Field(ge=-90.0, le=90.0)
-    swLon: float = Field(ge=-180.0, le=180.0)
-    neLat: float = Field(ge=-90.0, le=90.0)
-    neLon: float = Field(ge=-180.0, le=180.0)
-    posMode: str = Field(default="CALC", pattern="^(CALC|REPORT_ONLY)$")
-
-    @field_validator("neLat")
-    @classmethod
-    def _check_lat_ordering(cls, v, info):
-        if "swLat" in info.data and v <= info.data["swLat"]:
-            raise ValueError("neLat must be greater than swLat")
-        return v
-
-    @field_validator("neLon")
-    @classmethod
-    def _check_lon_ordering(cls, v, info):
-        if "swLon" in info.data and v <= info.data["swLon"]:
-            raise ValueError("neLon must be greater than swLon")
-        return v
-
-
-def _format_sse(event: str | None, data: dict, event_id: int | None = None) -> str:
-    """Serialize one SSE message. `event` may be None for default 'message',
-    `data` is always JSON-encoded so the client side parses uniformly."""
-    parts: list[str] = []
-    if event_id is not None:
-        parts.append(f"id: {event_id}")
-    if event:
-        parts.append(f"event: {event}")
-    parts.append("data: " + json.dumps(data, separators=(",", ":")))
-    parts.append("")
-    parts.append("")
-    return "\n".join(parts)
-
-
-def _format_keepalive() -> str:
-    """Comment line — SSE-compliant, ignored by EventSource clients but keeps
-    proxies (nginx 30s/3600s, mobile carriers) from killing the connection."""
-    return ": keepalive\n\n"
-
-
-async def _fetch_vehicles_for_viewport(
-    app: FastAPI,
-    viewport: tuple[float, float, float, float],
-    posMode: str,
-) -> dict:
-    """Fetch one HAFAS snapshot for the given viewport. Uses bbox quantization
-    so subscribers within ~1.1 km share the singleflight inflight key; under
-    the same key, exactly one upstream HAFAS call runs regardless of how many
-    subscribers are pulling that quantized cell on the current tick."""
-    sw_lat, sw_lon, ne_lat, ne_lon = viewport
-    cx = int((sw_lon + ne_lon) / 2 * 1_000_000)
-    cy = int((sw_lat + ne_lat) / 2 * 1_000_000)
-    # Use max of lat/lon spans (in metres) so wide-short viewports still get coverage.
-    lat_span_m = (ne_lat - sw_lat) * 111_000
-    lon_span_m = (ne_lon - sw_lon) * 111_000 * math.cos(math.radians((sw_lat + ne_lat) / 2))
-    max_dist = int(min(80_000, max(lat_span_m, lon_span_m) / 2))
-    posMode = posMode if posMode in ("CALC", "REPORT_ONLY") else "CALC"
-
-    hafas_req = {
-        "ring": {"cCrd": {"x": cx, "y": cy}, "maxDist": max_dist},
-        "perSize": 120,
-        "perStep": 10,
-        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-        "trainPosMode": posMode,
-    }
-    key = ("sse", fanout.quantize_bbox(viewport), posMode)
-    existing = _inflight.get(key)
-    if existing is not None and not existing.done():
-        try:
-            return await asyncio.shield(existing)
-        except (asyncio.CancelledError, Exception):
-            # Originator's future died (cancelled or errored). Don't piggyback;
-            # fall through and start our own fetch under the same key. Pop the
-            # stale entry so it can't catch the next requester either.
-            _inflight.pop(key, None)
-
-    fut: asyncio.Future = asyncio.get_running_loop().create_future()
-    _inflight[key] = fut
-    try:
-        # Cap _inflight via simple LRU-like eviction so a viewport-spam attack
-        # can't grow the dict unbounded. Pop oldest only when over cap and not
-        # the entry we just inserted.
-        if len(_inflight) > fanout.MAX_INFLIGHT:
-            oldest = next(iter(_inflight))
-            if oldest != key:
-                _inflight.pop(oldest, None)
-        res = await _hafas_call(app, "JourneyGeoPos", hafas_req)
-        if "error" in res:
-            out = {"error": res["error"]}
-        else:
-            from datetime import datetime
-            out = {
-                "vehicles": _flatten_vehicles(res),
-                "serverTime": datetime.now().strftime("%H%M%S"),
-            }
-        if not fut.done():
-            fut.set_result(out)
-        return out
-    except asyncio.CancelledError:
-        # Originator cancelled mid-flight. Propagate cancellation to any
-        # piggyback awaiters so they don't hang.
-        if not fut.done():
-            fut.cancel()
-        raise
-    except Exception as e:
-        if not fut.done():
-            fut.set_exception(e)
-        raise
-    finally:
-        _inflight.pop(key, None)
-
-
 @app.get("/api/stream/")
 async def sse_stream(request: Request):
-    """SSE endpoint. Subscribers receive `vehicles` events whenever a HAFAS
-    tick is detected, plus `connected` count updates and `:keepalive`
-    comments. State changes (viewport, selection) come in via the sidecar
-    POST endpoints, identified by an HttpOnly cookie set on this first
-    GET response. Connection-id is never written to JS or to access_log.
-    Last-Event-ID is deliberately ignored — every reconnect is a fresh
-    subscriber with a fresh state. The browser auto-reconnects on drop."""
-
-    ip = _client_ip(request)
-    try:
-        sub = await fanout.registry.subscribe(ip)
-    except fanout.CapExceeded as e:
-        retry_after = secrets.randbelow(61) + 30  # 30-90s jitter
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "rate_limit",
-                "scope": e.scope,
-                "limit": e.limit,
-                "retryAfter": retry_after,
-            },
-            headers={"Retry-After": str(retry_after)},
-        )
-    # Tick calibrator runs at IDLE_CALIB_INTERVAL=30min when no client activity
-    # is recorded. After the iter-2a /api/vehicles → 410 cutover, that touch is
-    # gone — calibrator stalls and the SSE loop never wakes. Touch on every new
-    # subscribe so the calibrator stays in ACTIVE_CALIB_INTERVAL (5min) mode.
-    client_activity.touch()
-
-    async def event_generator():
-        try:
-            # First event: client knows the stream is live + the app version.
-            yield _format_sse(
-                "subscribe",
-                {"tickSeq": fanout.tick_seq, "appVersion": _VERSION},
-            )
-            # Emit current connected count up front so the UI doesn't wait
-            # up to 30s (one HAFAS tick) before showing it.
-            yield _format_sse("connected", {"count": len(fanout.registry)})
-
-            local_seq = fanout.tick_seq
-            event_id = 0
-            last_connected_count = len(fanout.registry)
-
-            while True:
-                # Wait either for a new tick or, in absence of one, for a
-                # randomized keepalive interval. asyncio.wait_for raises
-                # TimeoutError, which is the keepalive signal.
-                keepalive = SSE_KEEPALIVE_MIN + (
-                    secrets.randbelow(int((SSE_KEEPALIVE_MAX - SSE_KEEPALIVE_MIN) * 10))
-                    / 10.0
-                )
-                try:
-                    async with fanout.tick_condition:
-                        await asyncio.wait_for(
-                            fanout.tick_condition.wait_for(
-                                lambda: fanout.tick_seq > local_seq
-                            ),
-                            timeout=keepalive,
-                        )
-                    local_seq = fanout.tick_seq
-                    # Keep calibrator in ACTIVE_CALIB_INTERVAL (5min) mode.
-                    client_activity.touch()
-                except asyncio.TimeoutError:
-                    yield _format_keepalive()
-                    continue
-
-                # New tick. If subscriber gave us a viewport, fetch + emit.
-                if sub.viewport:
-                    snap = await _fetch_vehicles_for_viewport(
-                        request.app, sub.viewport, sub.pos_mode
-                    )
-                    event_id += 1
-                    if "error" in snap:
-                        yield _format_sse(
-                            "error",
-                            {"reason": snap["error"], "stale": True},
-                            event_id,
-                        )
-                    else:
-                        yield _format_sse("vehicles", snap, event_id)
-
-                # Detail-panel pushes: ship journey or stationboard whenever
-                # the subscriber has one selected. Selection-seq prevents us
-                # from emitting a stale fetch result for a selection the user
-                # has already swapped away from.
-                sel = sub.selection
-                sel_seq_at_start = getattr(sub, "selection_seq", 0)
-                if isinstance(sel, fanout.JourneySelection):
-                    jdata = await _fetch_journey_for_subscriber(request.app, sel.jid)
-                    if getattr(sub, "selection_seq", 0) == sel_seq_at_start and sub.selection is sel:
-                        event_id += 1
-                        if "error" in jdata:
-                            yield _format_sse("error", {"reason": jdata["error"], "selection": "journey"}, event_id)
-                        else:
-                            yield _format_sse("journey", {"jid": sel.jid, "journey": jdata}, event_id)
-                elif isinstance(sel, fanout.StationSelection):
-                    sdata = await _fetch_stationboard_for_subscriber(request.app, sel.lid)
-                    if getattr(sub, "selection_seq", 0) == sel_seq_at_start and sub.selection is sel:
-                        event_id += 1
-                        if "error" in sdata:
-                            yield _format_sse("error", {"reason": sdata["error"], "selection": "stationboard"}, event_id)
-                        else:
-                            yield _format_sse("stationboard", {"lid": sel.lid, "stationboard": sdata}, event_id)
-
-                # Always emit `connected` after a tick (coalesces with any
-                # add/remove that happened during this loop iteration).
-                count = len(fanout.registry)
-                if count != last_connected_count:
-                    last_connected_count = count
-                    yield _format_sse("connected", {"count": count})
-
-                if fanout.should_disconnect_slow_consumer(sub):
-                    _audit("slow-consumer-disconnect", sub.ip, drops=sub.consecutive_drops)
-                    break
-        finally:
-            # AsyncExitStack-style cleanup, but each step suppressed so a
-            # later step still runs if an earlier one raises.
-            try:
-                await fanout.registry.unsubscribe(sub.connection_id)
-            except Exception:
-                log.exception("[sse] unsubscribe failed for cid")
-            # Cookie cleared via headers on the StreamingResponse; the cookie
-            # is path-scoped so the browser keeps it only for /api/stream/*
-            # POSTs anyway. Task cancel happens at the StreamingResponse level
-            # when the client disconnects (CancelledError propagates here).
-
-    response = StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-    response.set_cookie(
-        SSE_COOKIE_NAME,
-        sub.connection_id,
-        max_age=7200,
-        httponly=True,
-        secure=SSE_COOKIE_SECURE,
-        samesite="strict",
-        path=SSE_COOKIE_PATH,
-    )
-    return response
-
-
-def _lookup_subscriber(request: Request) -> tuple[fanout.Subscriber | None, str | None]:
-    """Common subscriber-lookup for the sidecar POST endpoints.
-
-    Returns (sub, error_code) where error_code is one of:
-      None — sub is valid
-      'missing_cookie' — no cookie at all → 401
-      'unknown_connection' — cookie present but subscriber gone → 409
-      'origin_mismatch' — Origin header check failed → 403
-    """
-    if not _check_origin(request):
-        _audit("origin-mismatch", _client_ip(request),
-               origin=request.headers.get("Origin", "<missing>"))
-        return None, "origin_mismatch"
-    cid = request.cookies.get(SSE_COOKIE_NAME)
-    if not cid:
-        return None, "missing_cookie"
-    sub = fanout.registry.get(cid)
-    if sub is None:
-        _audit("invalid-cookie", _client_ip(request))
-        return None, "unknown_connection"
-    return sub, None
-
-
-def _err_response(code: str) -> JSONResponse:
-    status = {
-        "origin_mismatch": 403,
-        "missing_cookie": 401,
-        "unknown_connection": 409,
-        "body_too_large": 413,
-    }.get(code, 400)
-    return JSONResponse(status_code=status, content={"error": code})
-
-
-# Token-bucket for viewport-POST per subscriber: 1/s refill, burst 3.
-def _viewport_rate_check(sub) -> bool:
-    """Returns True if allowed. Continuous refill, capped at burst=3."""
-    now = time.monotonic()
-    last = getattr(sub, "_viewport_last_refill", now)
-    tokens = getattr(sub, "_viewport_tokens", 3.0)
-    tokens = min(3.0, tokens + (now - last))
-    sub._viewport_last_refill = now
-    if tokens >= 1.0:
-        sub._viewport_tokens = tokens - 1.0
-        return True
-    sub._viewport_tokens = tokens
-    return False
-
-
-async def _read_body_with_limit(request: Request, limit: int) -> bytes | None:
-    """Read body up to `limit` bytes. Returns None if Content-Length advertises
-    more than the limit (pre-read rejection) OR if the streamed body exceeds
-    the limit. Avoids buffering an attacker-supplied gigabyte payload."""
-    cl = request.headers.get("content-length")
-    if cl is not None:
-        try:
-            if int(cl) > limit:
-                return None
-        except ValueError:
-            return None
-    buf = bytearray()
-    async for chunk in request.stream():
-        buf.extend(chunk)
-        if len(buf) > limit:
-            return None
-    return bytes(buf)
+    return await handle_sse_stream(request, _VERSION)
 
 
 @app.post("/api/stream/viewport")
 async def stream_viewport(request: Request):
-    """Update the viewport the subscriber's next tick should fetch."""
-    raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
-    if raw is None:
-        _audit("body-too-large", _client_ip(request))
-        return _err_response("body_too_large")
-
-    sub, err = _lookup_subscriber(request)
-    if err:
-        return _err_response(err)
-
-    if not _viewport_rate_check(sub):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "rate_limit", "scope": "subscriber"},
-            headers={"Retry-After": "1"},
-        )
-
-    try:
-        payload = ViewportPayload.model_validate_json(raw)
-    except Exception:
-        return JSONResponse(status_code=422, content={"error": "invalid_payload"})
-
-    sub.viewport = (payload.swLat, payload.swLon, payload.neLat, payload.neLon)
-    sub.pos_mode = payload.posMode
-    # Plan: "sofortiger Pull bei Viewport-Change". The SSE loop is waiting on
-    # the tick condition; fire it now so the subscriber fetches its new
-    # viewport without waiting for the next 30s HAFAS tick (or, worse,
-    # the 5/30-minute calibrator beat). The singleflight `_inflight` keeps
-    # this from amplifying — other subscribers wake too but their fetches
-    # collapse onto the same upstream call if they share a quantized bbox.
-    await fanout.fire_tick()
-    return JSONResponse(content={"ok": True})
-
-
-class SelectPayload(BaseModel):
-    """Client tells the server which journey or stationboard the subscriber
-    currently wants pushed on every tick. Mutex enforced via type tag (matches
-    fanout.Selection's tagged union)."""
-    type: str = Field(pattern="^(journey|stationboard|none)$")
-    id: str = Field(default="", max_length=300)
-
-    @field_validator("id")
-    @classmethod
-    def validate_id(cls, v: str, info) -> str:
-        t = info.data.get("type")
-        if t == "none":
-            return ""
-        if not v:
-            raise ValueError("id required for journey/stationboard selection")
-        if t == "journey" and not JID_PATTERN.match(v):
-            raise ValueError("invalid jid")
-        if t == "stationboard" and not LID_PATTERN.match(v):
-            raise ValueError("invalid lid")
-        return v
-
-
-async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
-    """Shared HAFAS journey fetch with cache. Mirrors /api/journey's path."""
-    now = time.time()
-    cached = _journey_cache.get(jid)
-    if cached and (now - cached[0]) < _JOURNEY_CACHE_TTL:
-        return cached[1]
-    hafas_req = {"jid": jid, "getPolyline": True}
-    res = await _hafas_call(app, "JourneyDetails", hafas_req)
-    if "error" in res:
-        return {"error": res["error"]}
-    _journey_cache[jid] = (now, res)
-    if len(_journey_cache) > 200:
-        oldest = sorted(_journey_cache, key=lambda k: _journey_cache[k][0])[:100]
-        for k in oldest:
-            del _journey_cache[k]
-    return res
-
-
-async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str) -> dict:
-    """Shared HAFAS stationboard fetch with cache. DEP only for the SSE path
-    (the UI's tab switch will trigger another /select for ARR if needed)."""
-    now = time.time()
-    cache_key = (lid, "DEP", 60)
-    cached = _stationboard_cache.get(cache_key)
-    if cached and (now - cached[0]) < _STATIONBOARD_CACHE_TTL:
-        return cached[1]
-    hafas_req = {
-        "stbLoc": {"lid": lid},
-        "type": "DEP",
-        "dur": 60,
-        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-    }
-    res = await _hafas_call(app, "StationBoard", hafas_req)
-    if "error" in res:
-        return {"error": res["error"]}
-    _stationboard_cache[cache_key] = (now, res)
-    if len(_stationboard_cache) > 500:
-        oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
-        for k in oldest:
-            del _stationboard_cache[k]
-    return res
+    return await handle_viewport(request)
 
 
 @app.post("/api/stream/select")
 async def stream_select(request: Request):
-    """Tag a subscriber with a current journey or stationboard. The SSE loop
-    then ships journey/stationboard events on every tick alongside vehicles
-    until the subscriber selects 'none' or disconnects."""
-    raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
-    if raw is None:
-        _audit("body-too-large", _client_ip(request))
-        return _err_response("body_too_large")
-
-    sub, err = _lookup_subscriber(request)
-    if err:
-        return _err_response(err)
-
-    try:
-        payload = SelectPayload.model_validate_json(raw)
-    except Exception as e:
-        msg = str(e).lower()
-        if "jid" in msg:
-            _audit("invalid-jid", _client_ip(request))
-        elif "lid" in msg:
-            _audit("invalid-lid", _client_ip(request))
-        return JSONResponse(status_code=422, content={"error": "invalid_payload"})
-
-    if payload.type == "journey":
-        sub.selection = fanout.JourneySelection(jid=payload.id)
-    elif payload.type == "stationboard":
-        sub.selection = fanout.StationSelection(lid=payload.id)
-    else:
-        sub.selection = None
-
-    # Plan: rapid selection switches must cancel any in-flight fetch the
-    # subscriber loop is still running for the previous selection. The loop
-    # itself awaits on the tick condition or the singleflight future, so
-    # cancelling the subscriber's task is heavyweight; instead we tag the
-    # selection with a monotonic counter (Subscriber.selection_seq) and the
-    # loop discards stale fetches at result-emit time. Simpler than killing
-    # tasks mid-flight.
-    sub.selection_seq = (getattr(sub, "selection_seq", 0) or 0) + 1
-    # Wake the loop so the new selection ships on the next tick — same logic
-    # as viewport-POST.
-    await fanout.fire_tick()
-    return JSONResponse(content={"ok": True})
+    return await handle_select(request)
 
 
 @app.get("/sw.js")

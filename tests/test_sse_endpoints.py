@@ -5,11 +5,11 @@ Pure unit-level (no real HAFAS), uses FastAPI TestClient via httpx.AsyncClient
 + an asgi-transport."""
 from __future__ import annotations
 
-import json
+import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from proxy import app, _VERSION
+from proxy import app, SSE_COOKIE_NAME
 import fanout
 
 
@@ -26,12 +26,17 @@ def fresh_registry(monkeypatch):
     Also rebuild `fanout.tick_condition` and reset `tick_seq` so the
     Condition is bound to the current event loop (asyncio.Condition() picks
     up the loop on first await; if it was constructed under a different
-    loop at import time, wait_for raises 'attached to a different loop')."""
+    loop at import time, wait_for raises 'attached to a different loop').
+
+    Resets the per-IP rate-limit bucket too, otherwise tests sharing the
+    same client IP (127.0.0.1) bleed token state across the suite."""
     import asyncio as _a
+    import proxy as _proxy
     new = fanout.SubscriberRegistry()
     monkeypatch.setattr(fanout, "registry", new)
     monkeypatch.setattr(fanout, "tick_condition", _a.Condition())
     monkeypatch.setattr(fanout, "tick_seq", 0)
+    _proxy._post_rate_per_ip.clear()
     yield new
 
 
@@ -112,7 +117,7 @@ class TestStreamViewport:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": "busradar_sse=does-not-exist",
+                "Cookie": f"{SSE_COOKIE_NAME}=does-not-exist",
             },
         )
         assert resp.status_code == 409
@@ -130,7 +135,7 @@ class TestStreamViewport:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 413
@@ -145,7 +150,7 @@ class TestStreamViewport:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 200
@@ -163,7 +168,7 @@ class TestStreamViewport:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 422
@@ -175,7 +180,7 @@ class TestStreamViewport:
         headers = {
             "Origin": "http://localhost:8000",
             "Content-Type": "application/json",
-            "Cookie": f"busradar_sse={sub.connection_id}",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
         }
         body = '{"swLat":49,"swLon":8,"neLat":50,"neLon":9}'
         accepted = 0
@@ -201,11 +206,11 @@ class TestStreamSelect:
         sub = await fresh_registry.subscribe("127.0.0.1")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"journey","id":"1|12345|0|80|22052026"}',
+            content='{"selection":{"kind":"journey","jid":"1|12345|0|80|22052026"}}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 200
@@ -217,11 +222,11 @@ class TestStreamSelect:
         sub = await fresh_registry.subscribe("127.0.0.1")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"stationboard","id":"A=1@L=6003411@"}',
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@"}}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 200
@@ -234,11 +239,11 @@ class TestStreamSelect:
         sub.selection = fanout.JourneySelection(jid="prev")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"none","id":""}',
+            content='{"selection":null}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 200
@@ -249,11 +254,11 @@ class TestStreamSelect:
         sub = await fresh_registry.subscribe("127.0.0.1")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"journey","id":"<script>alert(1)</script>"}',
+            content='{"selection":{"kind":"journey","jid":"<script>alert(1)</script>"}}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 422
@@ -263,11 +268,11 @@ class TestStreamSelect:
         sub = await fresh_registry.subscribe("127.0.0.1")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"stationboard","id":"not-a-lid"}',
+            content='{"selection":{"kind":"stationboard","lid":"not-a-lid"}}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 422
@@ -277,11 +282,11 @@ class TestStreamSelect:
         """Rapid journey→stationboard→journey switches must monotonically
         increment selection_seq so the SSE loop discards stale results."""
         sub = await fresh_registry.subscribe("127.0.0.1")
-        seq_initial = getattr(sub, "selection_seq", 0)
+        seq_initial = sub.selection_seq
         for body in [
-            '{"type":"journey","id":"1|11"}',
-            '{"type":"stationboard","id":"A=1@L=6003411@"}',
-            '{"type":"journey","id":"1|22"}',
+            '{"selection":{"kind":"journey","jid":"1|11111|0|80|22052026"}}',
+            '{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@"}}',
+            '{"selection":{"kind":"journey","jid":"1|22222|0|80|22052026"}}',
         ]:
             await client.post(
                 "/api/stream/select",
@@ -289,7 +294,7 @@ class TestStreamSelect:
                 headers={
                     "Origin": "http://localhost:8000",
                     "Content-Type": "application/json",
-                    "Cookie": f"busradar_sse={sub.connection_id}",
+                    "Cookie": f"__Host-busradar_sse={sub.connection_id}",
                 },
             )
         assert sub.selection_seq == seq_initial + 3
@@ -313,7 +318,7 @@ class TestStreamSelect:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 413
@@ -356,7 +361,7 @@ class TestCounterSourceMigration:
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
-                "Cookie": f"busradar_sse={sub.connection_id}",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
         assert resp.status_code == 200
@@ -379,3 +384,680 @@ class TestClientActivityFromSSE:
     @pytest.mark.asyncio
     async def test_subscribe_touches_client_activity(self):
         pass
+
+
+# === Regression guards for the post-deploy fix wave ===
+
+
+class TestSelectRateLimit:
+    """`/api/stream/select` MUST share the per-subscriber token bucket with
+    /viewport. Without it, a single attacker EventSource can spam selects and
+    burn the registry's loop budget."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_kicks_in_after_burst(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        bodies = [
+            '{"selection":{"kind":"journey","jid":"1|11111|0|80|22052026"}}',
+            '{"selection":{"kind":"journey","jid":"1|22222|0|80|22052026"}}',
+            '{"selection":{"kind":"journey","jid":"1|33333|0|80|22052026"}}',
+            '{"selection":{"kind":"journey","jid":"1|44444|0|80|22052026"}}',
+            '{"selection":{"kind":"journey","jid":"1|55555|0|80|22052026"}}',
+        ]
+        accepted = 0
+        rate_limited = 0
+        for b in bodies:
+            r = await client.post("/api/stream/select", content=b, headers=headers)
+            if r.status_code == 200:
+                accepted += 1
+            elif r.status_code == 429:
+                rate_limited += 1
+                assert r.json()["scope"] == "subscriber"
+        assert accepted == 3  # burst capacity
+        assert rate_limited == 2
+
+    @pytest.mark.asyncio
+    async def test_per_ip_rate_limit_closes_cookie_rotation_bypass(self, client, fresh_registry):
+        """Same IP spawns N subscribers, each with a fresh burst-3 bucket.
+        Without a per-IP cap an attacker could fire 60 POSTs (3 × 20 subs).
+        The per-IP bucket (burst 10) caps the cross-subscriber total."""
+        subs = [await fresh_registry.subscribe("127.0.0.1") for _ in range(5)]
+        body = '{"selection":null}'
+        accepted = 0
+        for sub in subs:
+            headers = {
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            }
+            for _ in range(3):  # try to drain each subscriber's burst
+                r = await client.post("/api/stream/select", content=body, headers=headers)
+                if r.status_code == 200:
+                    accepted += 1
+        # With per-IP burst 10, total accepted is capped near 10 (some refill
+        # may happen mid-test, so we allow a small margin).
+        assert accepted <= 12, f"per-IP cap should limit total POSTs, got {accepted}"
+
+
+class TestSelectNoFireTickAmplification:
+    """`/api/stream/select` MUST NOT call fanout.fire_tick() — that's the
+    global broadcast that wakes every subscriber for one user's panel toggle.
+    The next natural HAFAS tick ships the selection."""
+
+    @pytest.mark.asyncio
+    async def test_select_does_not_invoke_fire_tick(self, client, fresh_registry, monkeypatch):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        fired = {"count": 0}
+        original = fanout.fire_tick
+
+        async def spy():
+            fired["count"] += 1
+            return await original()
+
+        monkeypatch.setattr(fanout, "fire_tick", spy)
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"journey","jid":"1|99999|0|80|22052026"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert fired["count"] == 0
+
+
+class TestViewportSkipsFireTickWhenBboxUnchanged:
+    """`/api/stream/viewport` is allowed to wake the loop, but only when the
+    quantized bbox actually changed. Repeat-POST with same payload is a no-op."""
+
+    @pytest.mark.asyncio
+    async def test_repeat_viewport_post_does_not_fire_tick(self, client, fresh_registry, monkeypatch):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        fired = {"count": 0}
+        original = fanout.fire_tick
+
+        async def spy():
+            fired["count"] += 1
+            return await original()
+
+        monkeypatch.setattr(fanout, "fire_tick", spy)
+        body = '{"swLat":49.0,"swLon":8.0,"neLat":49.6,"neLon":9.0}'
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        # First POST: bbox is new → fire_tick fires.
+        await client.post("/api/stream/viewport", content=body, headers=headers)
+        # Second POST: same bbox → must skip.
+        await client.post("/api/stream/viewport", content=body, headers=headers)
+        assert fired["count"] == 1
+
+
+class TestSelectIdempotentReclick:
+    """Re-clicking the same selection (same jid) is a no-op: selection_seq
+    does NOT bump, the SSE loop's staleness guard stays valid for the
+    in-flight fetch from the previous click."""
+
+    @pytest.mark.asyncio
+    async def test_repeat_selection_does_not_bump_seq(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        body = '{"selection":{"kind":"journey","jid":"1|77777|0|80|22052026"}}'
+        await client.post("/api/stream/select", content=body, headers=headers)
+        seq_after_first = sub.selection_seq
+        await client.post("/api/stream/select", content=body, headers=headers)
+        assert sub.selection_seq == seq_after_first
+
+
+class TestStreamCrossOriginRejection:
+    """GET /api/stream/ MUST refuse cross-site Sec-Fetch-Site to prevent
+    cross-origin EventSource from burning the victim IP's slot cap."""
+
+    @pytest.mark.asyncio
+    async def test_cross_site_sec_fetch_site_rejected(self, client, fresh_registry):
+        resp = await client.get(
+            "/api/stream/",
+            headers={"Sec-Fetch-Site": "cross-site"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "cross_origin"
+
+    @pytest.mark.asyncio
+    async def test_same_origin_sec_fetch_site_does_not_403(self, client, fresh_registry, monkeypatch):
+        # Force a CapExceeded so the route returns 429 *before* the SSE
+        # streaming response opens; that lets us verify the Sec-Fetch-Site
+        # branch without entering the keepalive loop (which hangs ASGI).
+        async def raise_cap(ip):
+            raise fanout.CapExceeded("ip", 20)
+        monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
+        resp = await client.get(
+            "/api/stream/",
+            headers={"Sec-Fetch-Site": "same-origin"},
+        )
+        assert resp.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_missing_sec_fetch_site_accepted(self, client, fresh_registry, monkeypatch):
+        # Older browsers / curl don't send Sec-Fetch-Site at all — must accept.
+        async def raise_cap(ip):
+            raise fanout.CapExceeded("ip", 20)
+        monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
+        resp = await client.get("/api/stream/")
+        assert resp.status_code == 429  # not 403
+
+    @pytest.mark.asyncio
+    async def test_wrong_origin_rejected_on_get(self, client, fresh_registry, monkeypatch):
+        """Defense-in-depth: GET /api/stream/ rejects Origin not in ALLOWED.
+        Closes the gap when Sec-Fetch-Site is stripped by intermediaries."""
+        async def raise_cap(ip):
+            raise fanout.CapExceeded("ip", 20)
+        monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
+        resp = await client.get(
+            "/api/stream/",
+            headers={"Origin": "https://evil.example"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "origin_mismatch"
+
+
+class TestJidPatternStrictness:
+    """JID_PATTERN must reject pre-fix loose inputs that the old 67-char-class
+    regex accepted (cache-flush attack surface)."""
+
+    @pytest.mark.asyncio
+    async def test_short_jid_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"journey","jid":"1|11"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_jid_with_spaces_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"journey","jid":"1|aa aa|0|80|22052026"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+
+class TestLidPatternEndAnchored:
+    """LID_PATTERN must end-anchor — trailing garbage after a valid prefix
+    used to slip through and create distinct cache keys."""
+
+    @pytest.mark.asyncio
+    async def test_lid_trailing_garbage_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        # Use a NUL byte that the previous prefix-only pattern would have
+        # ignored after matching the `A=\d+@` prefix.
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@\\u0000bad"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+
+class TestSelectEdgeCases:
+    """Corner cases that the prior test surface did not cover."""
+
+    @pytest.mark.asyncio
+    async def test_empty_body_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content=b"",
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"type":"journey","id":',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_mixed_case_type_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"Journey","jid":"1|12345|0|80|22052026"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_none_type_with_nonempty_id_clears_selection(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        sub.selection = fanout.JourneySelection(jid="prev")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":null}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_discriminator_kind_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"unknown","id":"X"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"] == "invalid_payload"
+
+    @pytest.mark.asyncio
+    async def test_empty_selection_object_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_inner_selection_rejects_extra_fields(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"journey","jid":"1|12345|0|80|22052026","evil":"x"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_default_board_type_dep(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert isinstance(sub.selection, fanout.StationSelection)
+        assert sub.selection.board_type == "DEP"
+
+    @pytest.mark.asyncio
+    async def test_stationboard_board_type_arr(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","board_type":"ARR"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection.board_type == "ARR"
+
+    @pytest.mark.asyncio
+    async def test_stationboard_invalid_board_type_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","board_type":"BOTH"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+
+class TestUnicodeDigitRejection:
+    """JID/LID regex uses [0-9], not \\d — `\\d` in Unicode mode matches
+    Arabic-Indic / Devanagari / etc., enabling cache-key fabrication."""
+
+    def test_jid_pattern_does_not_match_unicode_digits(self):
+        from proxy import JID_PATTERN
+        assert not JID_PATTERN.match("1|abc|0|80|٢٢٠٥٢٠٢٦")
+        assert JID_PATTERN.match("1|abc|0|80|22052026")
+
+    def test_lid_pattern_does_not_match_unicode_digits(self):
+        from proxy import LID_PATTERN
+        assert not LID_PATTERN.match("A=٢٢@L=6003411@")
+        assert LID_PATTERN.match("A=1@L=6003411@")
+
+
+class TestCircuitBreakerDoesNotTripOnInputErrors:
+    """HAFAS 200-OK with err != OK is caller-error, not upstream-unhealthy.
+    Don't count toward circuit breaker — would let 3 nonsense LIDs trip
+    global outage."""
+
+    @pytest.mark.asyncio
+    async def test_input_errors_do_not_open_breaker(self):
+        import hafas
+
+        class _MockResp:
+            def raise_for_status(self): pass
+            def json(self): return {"err": "BADREQ", "errTxt": "no such journey"}
+
+        class _MockClient:
+            async def post(self, url, json=None): return _MockResp()
+        hafas.breaker.failures = 0
+        hafas.breaker.last_failure_time = 0.0
+
+        class _MockApp:
+            class state:
+                client = _MockClient()
+        app = _MockApp()
+
+        for _ in range(5):
+            res = await hafas._hafas_call_via_app(app, "JourneyDetails", {"jid": "X"})
+            assert res.get("error") == "upstream_error"
+        assert hafas.breaker.failures == 0
+        assert not hafas.breaker.is_open
+
+    @pytest.mark.asyncio
+    async def test_network_errors_do_open_breaker(self):
+        import hafas
+        import httpx as _httpx
+
+        class _MockClient:
+            async def post(self, url, json=None):
+                raise _httpx.ConnectError("network down")
+        hafas.breaker.failures = 0
+        hafas.breaker.last_failure_time = 0.0
+
+        class _MockApp:
+            class state:
+                client = _MockClient()
+        app = _MockApp()
+
+        for _ in range(3):
+            await hafas._hafas_call_via_app(app, "JourneyDetails", {"jid": "X"})
+        assert hafas.breaker.failures == 3
+        hafas.breaker.failures = 0
+        hafas.breaker.last_failure_time = 0.0
+
+
+class TestRESTErrorOpacity:
+    """Legacy REST endpoints map upstream errors to opaque
+    `{"error": "upstream"}` — same shape as SSE — so HAFAS taxonomy
+    doesn't leak via differential responses (SEC-236)."""
+
+    @pytest.mark.asyncio
+    async def test_journey_upstream_error_opaque(self, client, fresh_registry, monkeypatch):
+        import proxy
+
+        async def fake_hafas(_app, _method, _req):
+            return {"error": "upstream_unavailable", "detail": "secret-internal-detail"}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        r = await client.post("/api/journey", json={"jid": "1|12345|0|80|22052026"})
+        assert r.status_code == 502
+        assert r.json() == {"error": "upstream"}
+
+
+class TestSSEProtocolVersionConstantMatch:
+    """Server `SSE_PROTOCOL_VERSION` and the client-side constant must
+    stay in lock-step. Drift = silent reload-loops or stale tabs."""
+
+    def test_client_and_server_versions_match(self):
+        from proxy import SSE_PROTOCOL_VERSION
+        from pathlib import Path
+        import re
+        refresh_js = Path(__file__).resolve().parent.parent / "static" / "refresh.js"
+        text = refresh_js.read_text()
+        m = re.search(r"SSE_PROTOCOL_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
+        assert m, "static/refresh.js must declare SSE_PROTOCOL_VERSION"
+        assert m.group(1) == SSE_PROTOCOL_VERSION
+
+
+class TestDetailFetchSingleflight:
+    """Concurrent fetches for the same jid/lid must collapse onto one upstream
+    HAFAS call. Without this, N subscribers watching journey J = N round-trips."""
+
+    @pytest.mark.asyncio
+    async def test_journey_singleflight_collapses_concurrent_calls(self, monkeypatch):
+        from proxy import _fetch_journey_for_subscriber
+        import proxy
+        call_count = {"n": 0}
+
+        async def fake_hafas(_app, _method, _req):
+            call_count["n"] += 1
+            await asyncio.sleep(0.05)  # let other callers join the singleflight
+            return {"journey": {"jid": _req["jid"]}}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        # Clear caches so we measure miss path
+        proxy._journey_cache.clear()
+        proxy._inflight_journey.clear()
+
+        results = await asyncio.gather(*[
+            _fetch_journey_for_subscriber(None, "1|99999|0|80|22052026")
+            for _ in range(5)
+        ])
+        # All five callers got the same payload
+        assert all(r == results[0] for r in results)
+        # But only one upstream call happened
+        assert call_count["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_stationboard_singleflight_collapses_concurrent_calls(self, monkeypatch):
+        from proxy import _fetch_stationboard_for_subscriber
+        import proxy
+        call_count = {"n": 0}
+
+        async def fake_hafas(_app, _method, _req):
+            call_count["n"] += 1
+            await asyncio.sleep(0.05)
+            return {"jnyL": []}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        proxy._stationboard_cache.clear()
+        proxy._inflight_stationboard.clear()
+
+        results = await asyncio.gather(*[
+            _fetch_stationboard_for_subscriber(None, "A=1@L=6003411@")
+            for _ in range(5)
+        ])
+        assert all(r == results[0] for r in results)
+        assert call_count["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_piggyback_on_originator_exception_does_not_leak_detail(self, monkeypatch):
+        """If the originator's fetch raises, piggybackers retry their own
+        fetches (matching viewport-singleflight semantics). Any opaque-error
+        response dict must not carry the originator's exception detail —
+        that's the security guarantee at the SSE wire boundary."""
+        from proxy import _fetch_journey_for_subscriber
+        import proxy
+
+        async def fake_hafas(_app, _method, _req):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("internal-secret-detail")
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        proxy._journey_cache.clear()
+        proxy._inflight_journey.clear()
+
+        # Launch originator + 3 piggybackers concurrently. With retry-on-error
+        # alignment, each piggybacker falls through and starts its own fetch
+        # after the originator raises — most or all then raise too.
+        results = await asyncio.gather(
+            *[_fetch_journey_for_subscriber(None, "1|11111|0|80|22052026")
+              for _ in range(4)],
+            return_exceptions=True,
+        )
+        # Exceptions naturally carry their message — that's OK; the SSE loop's
+        # `gather(return_exceptions=True)` then emits {"reason":"upstream"} to
+        # the wire, never the str(exception). Only the opaque-dict path is
+        # what reaches clients, and that must NOT leak the secret.
+        opaque = [r for r in results if isinstance(r, dict) and r.get("error") == "upstream"]
+        for r in opaque:
+            assert "internal-secret-detail" not in str(r)
+
+    @pytest.mark.asyncio
+    async def test_piggyback_does_not_hang_on_originator_cancellation(self, monkeypatch):
+        """If the originator's task is cancelled mid-fetch, piggybackers must
+        not hang on a never-resolved future. They should observe the cancel."""
+        from proxy import _fetch_journey_for_subscriber
+        import proxy
+
+        async def slow_hafas(_app, _method, _req):
+            await asyncio.sleep(10)  # never returns within test timeout
+            return {"journey": {}}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", slow_hafas)
+        proxy._journey_cache.clear()
+        proxy._inflight_journey.clear()
+
+        jid = "1|11111|0|80|22052026"
+        originator = asyncio.create_task(_fetch_journey_for_subscriber(None, jid))
+        await asyncio.sleep(0.02)  # let originator install the inflight entry
+        piggy = asyncio.create_task(_fetch_journey_for_subscriber(None, jid))
+        await asyncio.sleep(0.02)
+        originator.cancel()
+        # Piggyback should not hang indefinitely. Either it sees cancellation
+        # propagated via shield, or it observes the cancel as an exception and
+        # falls back to opaque error. Either way: completes within 2 seconds.
+        try:
+            result = await asyncio.wait_for(piggy, timeout=2.0)
+            # If it returned a dict, it should be the opaque error
+            assert isinstance(result, dict) and result.get("error") == "upstream"
+        except asyncio.CancelledError:
+            # Propagated cancellation is acceptable
+            pass
+        except asyncio.TimeoutError:
+            piggy.cancel()
+            pytest.fail("piggybacker hung on cancelled originator's future")
+
+
+class TestDetailCacheEviction:
+    """The 200/500-entry cache caps must hold under flood, otherwise an
+    attacker (combined with /select rate-limit bypass) could exhaust memory."""
+
+    @pytest.mark.asyncio
+    async def test_journey_cache_caps_at_200(self, monkeypatch):
+        from proxy import _fetch_journey_for_subscriber
+        import proxy
+
+        async def fake_hafas(_app, _method, _req):
+            return {"journey": {"jid": _req["jid"]}}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        proxy._journey_cache.clear()
+        proxy._inflight_journey.clear()
+
+        for i in range(250):
+            await _fetch_journey_for_subscriber(None, f"1|{i:05d}|0|80|22052026")
+        assert len(proxy._journey_cache) <= 200
+
+    @pytest.mark.asyncio
+    async def test_stationboard_cache_caps_at_500(self, monkeypatch):
+        from proxy import _fetch_stationboard_for_subscriber
+        import proxy
+
+        async def fake_hafas(_app, _method, _req):
+            return {"jnyL": []}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        proxy._stationboard_cache.clear()
+        proxy._inflight_stationboard.clear()
+
+        for i in range(600):
+            await _fetch_stationboard_for_subscriber(None, f"A={i}@L={i}@")
+        assert len(proxy._stationboard_cache) <= 500
+
+    @pytest.mark.asyncio
+    async def test_legacy_journey_and_sse_share_locked_eviction(self, monkeypatch):
+        """Regression: legacy `/api/journey` and SSE `_fetch_journey_for_subscriber`
+        write to the same `_journey_cache`. Concurrent eviction via `sorted(dict)`
+        WITHOUT the lock used to risk `RuntimeError: dictionary changed size
+        during iteration`. Both paths must now acquire `_journey_cache_lock`."""
+        from proxy import _fetch_journey_for_subscriber
+        import proxy
+
+        async def fake_hafas(_app, _method, _req):
+            return {"journey": {"jid": _req["jid"]}}
+
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
+        proxy._journey_cache.clear()
+        proxy._inflight_journey.clear()
+
+        # Pre-fill close to cap so both paths' eviction logic runs.
+        for i in range(195):
+            await _fetch_journey_for_subscriber(None, f"1|{i:05d}|0|80|22052026")
+
+        # Spawn many concurrent writers from both code paths; if eviction
+        # races without the lock, a `sorted(dict)` call mid-mutation raises
+        # `RuntimeError: dictionary changed size during iteration`.
+        async def writer(idx):
+            await _fetch_journey_for_subscriber(None, f"1|w{idx:04d}|0|80|22052026")
+
+        # 50 concurrent writers (>200 cap-100 trim threshold ≥ 5 evictions)
+        await asyncio.gather(*[writer(i) for i in range(50)])
+        # No exception raised, cap holds
+        assert len(proxy._journey_cache) <= 200

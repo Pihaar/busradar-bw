@@ -18,6 +18,10 @@ export { updateStatus, getServerTimeStr, showError, showPersistentError, clearPe
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 15000, 15000];
 const VIEWPORT_DEBOUNCE_MS = 250;
 const REGEX_VERSION = /^[A-Za-z0-9._+\-]{1,64}$/;
+// The protocol version the client speaks. Must match the server's
+// `subscribe` event payload — mismatch means the deployed app and the
+// running tab are incompatible and the user must reload.
+const SSE_PROTOCOL_VERSION = '1';
 
 let _es = null;
 let _reconnectAttempt = 0;
@@ -99,6 +103,21 @@ export function startStream() {
     }
     try {
       const d = JSON.parse(ev.data);
+      if (d.protocol && d.protocol !== SSE_PROTOCOL_VERSION) {
+        // Server speaks a different SSE protocol than this tab knows.
+        // Reloading is the only safe recovery — the event shapes may have
+        // shifted. Skip the reconnect loop and go straight to terminal.
+        try { _es.close(); } catch (e) {}
+        _es = null;
+        state._lastConnectedClients = null;
+        if (ui && typeof ui.showVersionUpdateBanner === 'function') {
+          state._versionUpdateBannerShown = true;
+          ui.showVersionUpdateBanner();
+        } else if (ui && typeof ui.showTerminalBanner === 'function') {
+          ui.showTerminalBanner();
+        }
+        return;
+      }
       _maybeUpdateAppVersion(d.appVersion);
     } catch (e) {}
     _sendCurrentViewport();
@@ -130,43 +149,42 @@ export function startStream() {
     if (state.selectedJid !== data.jid) return;
     const journeyData = data.journey;
     if (!journeyData) return;
-    state.selectedJourneyData = journeyData;
-    state._currentStopL = (journeyData.journey || {}).stopL || [];
-    try {
-      const sv = state.vehicles.get(state.selectedJid);
-      const jPos = (journeyData.journey || {}).pos || {};
-      const jLat = jPos.y ? jPos.y / 1e6 : null;
-      const jLon = jPos.x ? jPos.x / 1e6 : null;
-      if (sv) {
-        if (jLat && jLon && sv.missedCycles > 0) {
-          sv.data.lat = jLat;
-          sv.data.lon = jLon;
-          sv.marker.setLatLng([jLat, jLon]);
-          sv.missedCycles = 0;
-        }
-        ui.updateJourneyStopDelays(journeyData);
-        ui.drawRoute(journeyData, sv.data);
-      }
-    } catch (e) { console.warn('journey SSE handler:', e); }
+    _applyJourneyPayload(data.jid, journeyData);
   });
 
   _es.addEventListener('stationboard', function (ev) {
+    // The server pushes the selected stop's board on every tick. Board-type
+    // (DEP or ARR) follows the user's current tab; the payload includes a
+    // `boardType` field so the client renders the right list.
     let data;
     try { data = JSON.parse(ev.data); } catch (e) { return; }
     if (!data || !data.lid) return;
     if (!state.selectedStop || state.selectedStop.lid !== data.lid) return;
     try {
-      ui.refreshStationBoard(state.selectedStop);
+      ui.applyPushedStationboard(state.selectedStop, data.stationboard || {}, data.boardType || 'DEP');
     } catch (e) { console.warn('stationboard SSE handler:', e); }
   });
 
   _es.addEventListener('error', function (ev) {
-    // Server-emitted `error` SSE event (stale-on-upstream-fail). Browser-level
-    // network errors do NOT come through addEventListener('error', ...); those
-    // land on _es.onerror below.
+    // Server-emitted `error` SSE event. Branches:
+    //   - {stale: true}            → vehicles fetch failed, freeze map
+    //   - {selection: 'journey'}   → detail fetch failed, leave panel
+    //   - {selection: 'stationboard'} → board fetch failed, leave panel
+    // Browser-level network errors do NOT come through addEventListener('error');
+    // those land on _es.onerror below.
     try {
       const d = JSON.parse(ev.data || '{}');
-      if (d && d.stale) showPersistentError(t('connection_stale'));
+      if (!d) return;
+      if (d.stale) {
+        showPersistentError(t('connection_stale'));
+        return;
+      }
+      if (d.selection === 'journey' || d.selection === 'stationboard') {
+        // Transient upstream hiccup for the currently-selected panel.
+        // Stay quiet — next tick (≤30s) the data will refresh. A persistent
+        // banner here would flap on every short HAFAS blip.
+        console.warn('detail-fetch error from server:', d.selection, d.reason);
+      }
     } catch (e) {}
   });
 
@@ -243,9 +261,10 @@ export function refresh() {
 }
 
 // === Vehicle-payload handler ===
-// Extracted from the old polling success branch. Everything below was the
-// .then() body of the previous refresh() implementation; the EventSource just
-// drives the same downstream code paths.
+// Receives `vehicles` SSE events. Updates markers, status, follow-bus pan,
+// and triggers URL-restore on first delivery. Detail-panel updates flow
+// through the dedicated `journey`/`stationboard` SSE handlers — no per-tick
+// polling here.
 function _handleVehiclesPayload(data) {
   const capturedInteractionSeq = state._userInteractionSeq;
   const vehicles = data.vehicles || [];
@@ -275,35 +294,16 @@ function _handleVehiclesPayload(data) {
   stopsLayer.update(vehicles);
   updateStatus(vehicles.length, data.dataAge, state._lastConnectedClients);
 
-  let _followHandledMissed = false;
   if (state.followBus && state.selectedJid) {
     const followEntry = state.vehicles.get(state.selectedJid);
     if (!followEntry) {
+      // Bus disappeared from BBox. The journey SSE event handles position
+      // correction when the bus is selected; if not selected, nothing to do.
       if (!state._notStartedJid) ui._disableFollow();
-    } else if (followEntry.missedCycles > 0) {
-      _followHandledMissed = true;
-      const followSeq = ++state._journeyReqSeq;
-      const followJid = state.selectedJid;
-      api.getJourney(followJid).then(function (jData) {
-        if (state._journeyReqSeq !== followSeq || state.selectedJid !== followJid) return;
-        const jp = (jData.journey || {}).pos || {};
-        const fLat = jp.y ? jp.y / 1e6 : null;
-        const fLon = jp.x ? jp.x / 1e6 : null;
-        if (fLat && fLon) {
-          followEntry.data.lat = fLat;
-          followEntry.data.lon = fLon;
-          followEntry.marker.setLatLng([fLat, fLon]);
-          followEntry.missedCycles = 0;
-          state.selectedJourneyData = jData;
-          state._currentStopL = (jData.journey || {}).stopL || [];
-          if (!state._followPanning) {
-            state._followPanning = true;
-            state.map.setView([fLat, fLon], state.map.getZoom(), { animate: false });
-            state._followPanning = false;
-          }
-        }
-      }).catch(function () {});
-    } else if (!state._followPanning && !state._navigating) {
+    } else if (followEntry.missedCycles === 0
+               && !state._followPanning && !state._navigating) {
+      // Bus is visible — pan to it. Missed-cycles correction happens in the
+      // `journey` SSE handler from server-pushed position data.
       const target = L.latLng(followEntry.data.lat, followEntry.data.lon);
       const current = state.map.getCenter();
       const followDist = current.distanceTo(target);
@@ -313,7 +313,7 @@ function _handleVehiclesPayload(data) {
           state.map.setView(target, state.map.getZoom(), { animate: false });
           state._followPanning = false;
         } else {
-          const panDur = Math.min(2, 2);  // 2s default pan duration
+          const panDur = 2;  // 2s default pan duration
           state.map.panTo(target, { duration: panDur });
           state.map.once('moveend', function () { state._followPanning = false; });
           clearTimeout(state._followPanTimeout);
@@ -355,6 +355,8 @@ function _handleVehiclesPayload(data) {
     state._restoreInProgress = false;
   }
 
+  // Transition out of "not-started" once the bus appears in BBox. The journey
+  // SSE event drives further detail updates from there.
   try {
     if (state.selectedJid && state._notStartedJid && state.vehicles.get(state.selectedJid)) {
       const transVehicle = state.vehicles.get(state.selectedJid);
@@ -372,123 +374,15 @@ function _handleVehiclesPayload(data) {
       announce(t('journey_started_announce', { line: transVehicle.data.line }));
     }
 
-    if (state.selectedJid && state.selectedJourneyData && !_followHandledMissed) {
+    // Delay badge updates when the bus reappears in BBox per tick. The full
+    // journey panel is rendered from the `journey` SSE event, not here.
+    if (state.selectedJid && state.selectedJourneyData) {
       const selectedVehicle = state.vehicles.get(state.selectedJid);
       if (selectedVehicle) {
         const cls = getDelayClass(selectedVehicle.data.delay);
         ui.detailDelay.textContent = getDelayText(selectedVehicle.data.delay);
         ui.detailDelay.className = 'detail-delay-badge detail-delay-badge--' + cls;
-
-        const seq2 = ++state._journeyReqSeq;
-        const capturedJid = state.selectedJid;
-        api.getJourney(capturedJid).then(function (journeyData) {
-          if (state._journeyReqSeq !== seq2) return;
-          if (state.selectedJid !== capturedJid) return;
-          state.selectedJourneyData = journeyData;
-          state._currentStopL = (journeyData.journey || {}).stopL || [];
-          const jPos = (journeyData.journey || {}).pos || {};
-          const jLat = jPos.y ? jPos.y / 1e6 : null;
-          const jLon = jPos.x ? jPos.x / 1e6 : null;
-          if (!jLat || !jLon) {
-            const jStopL = (journeyData.journey || {}).stopL || [];
-            const jLastStop = jStopL.length > 0 ? jStopL[jStopL.length - 1] : null;
-            const jLastTime = jLastStop ? (jLastStop.aTimeR || jLastStop.aTimeS || jLastStop.dTimeR || jLastStop.dTimeS || '') : '';
-            let jLastMin = jLastTime ? parseHafasTimeToMin(jLastTime) : 0;
-            if (jLastMin === null) jLastMin = 0;
-            const elMs2 = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
-            const nowM2 = (state.serverTimeMin || 0) + elMs2 / 60000;
-            if (nowM2 > 1080 && jLastMin < 360) jLastMin += 1440;
-            if (nowM2 < 360 && jLastMin > 1080) jLastMin -= 1440;
-            if (jLastTime && (jLastMin + 5) <= nowM2) {
-              ui.showJourneyEnded();
-            } else if (!state.vehicles.get(capturedJid)) {
-              if (state._notStartedJid === capturedJid) return;
-              ui.showJourneyEnded();
-            } else {
-              ui.updateJourneyStopDelays(journeyData);
-            }
-            return;
-          }
-          const sv = state.vehicles.get(state.selectedJid);
-          if (sv) {
-            if (sv.missedCycles > 0) {
-              sv.data.lat = jLat;
-              sv.data.lon = jLon;
-              sv.marker.setLatLng([jLat, jLon]);
-              sv.missedCycles = 0;
-            }
-            ui.updateJourneyStopDelays(journeyData);
-            ui.drawRoute(journeyData, sv.data);
-          }
-        }).catch(function () {});
-      } else if (state._notStartedJid === state.selectedJid) {
-        const now = Date.now();
-        if (now - state._notStartedSince > 30 * 60 * 1000) {
-          state._notStartedJid = null;
-          state._notStartedSince = 0;
-          state._notStartedLastPoll = 0;
-          const expLi = document.createElement('li');
-          expLi.className = 'empty-state';
-          expLi.textContent = t('journey_poll_expired');
-          ui.stopList.replaceChildren(expLi);
-        } else if (now - state._notStartedLastPoll >= 30000) {
-          state._notStartedLastPoll = now;
-          const seq3 = ++state._journeyReqSeq;
-          const pollJid = state._notStartedJid;
-          api.getJourney(pollJid).then(function (jData) {
-            if (state._journeyReqSeq !== seq3) return;
-            if (state.selectedJid !== pollJid || state._notStartedJid !== pollJid) return;
-            const j = jData.journey || {};
-            if (j.isCncl) { ui._showJourneyCancelled(); return; }
-            const pos = j.pos || {};
-            const pLat = pos.y ? pos.y / 1e6 : null;
-            const pLon = pos.x ? pos.x / 1e6 : null;
-            if (pLat && pLon) { ui._transitionToRunning(jData); }
-          }).catch(function () {});
-        }
-      } else {
-        state._journeyGoneCycles = (state._journeyGoneCycles || 0) + 1;
-        if (state._journeyGoneCycles >= 2) {
-          state._journeyGoneCycles = 0;
-          const goneSeq = ++state._journeyReqSeq;
-          const goneJid = state.selectedJid;
-          api.getJourney(goneJid).then(function (jData) {
-            if (state._journeyReqSeq !== goneSeq) return;
-            if (state.selectedJid !== goneJid) return;
-            const gJ = jData.journey || {};
-            const gPos = gJ.pos || {};
-            const gLat = gPos.y ? gPos.y / 1e6 : null;
-            const gLon = gPos.x ? gPos.x / 1e6 : null;
-            if (gLat && gLon) {
-              state.selectedJourneyData = jData;
-              state._currentStopL = gJ.stopL || [];
-              ui.updateJourneyStopDelays(jData);
-              ui.drawRoute(jData, { jid: goneJid, lat: gLat, lon: gLon });
-              return;
-            }
-            const gStopL = gJ.stopL || [];
-            const gLastStop = gStopL.length > 0 ? gStopL[gStopL.length - 1] : null;
-            const gLastTime = gLastStop ? (gLastStop.aTimeR || gLastStop.aTimeS || gLastStop.dTimeR || gLastStop.dTimeS || '') : '';
-            let gLastMin = gLastTime ? parseHafasTimeToMin(gLastTime) : 0;
-            if (gLastMin === null) gLastMin = 0;
-            const gElMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
-            const gNowM = (state.serverTimeMin || 0) + gElMs / 60000;
-            if (gNowM > 1080 && gLastMin < 360) gLastMin += 1440;
-            if (gNowM < 360 && gLastMin > 1080) gLastMin -= 1440;
-            if (gLastTime && (gLastMin + 5) <= gNowM) {
-              ui.showJourneyEnded();
-            } else {
-              state._notStartedJid = goneJid;
-              if (!state._notStartedSince) state._notStartedSince = Date.now();
-              state._notStartedLastPoll = Date.now();
-            }
-          }).catch(function () {});
-        }
       }
-    }
-
-    if (state.selectedStop) {
-      ui.refreshStationBoard(state.selectedStop);
     }
   } catch (e) {
     console.warn('Panel update error:', e);
@@ -497,4 +391,68 @@ function _handleVehiclesPayload(data) {
   if (vehicles.length === 0) {
     announce(t('no_buses'));
   }
+}
+
+// Apply a server-pushed journey payload to the detail panel. Shared by the
+// `journey` SSE event handler and by the not-started/journey-ended branch
+// below. Handles three cases:
+//   1. Position present       → update marker + draw route + delays
+//   2. Position absent, route ended (last stop time elapsed) → showJourneyEnded
+//   3. Position absent, route still upcoming → mark as not-started, keep panel
+// Exported (underscore-prefixed) so the test suite can drive each branch
+// without setting up an EventSource mock.
+export function _applyJourneyPayload(jid, journeyData) {
+  state.selectedJourneyData = journeyData;
+  const journey = journeyData.journey || {};
+  state._currentStopL = journey.stopL || [];
+
+  const jPos = journey.pos || {};
+  const jLat = jPos.y ? jPos.y / 1e6 : null;
+  const jLon = jPos.x ? jPos.x / 1e6 : null;
+
+  if (jLat != null && jLon != null) {
+    const sv = state.vehicles.get(jid);
+    if (sv) {
+      if (sv.missedCycles > 0) {
+        sv.data.lat = jLat;
+        sv.data.lon = jLon;
+        sv.marker.setLatLng([jLat, jLon]);
+        sv.missedCycles = 0;
+      }
+      ui.updateJourneyStopDelays(journeyData);
+      ui.drawRoute(journeyData, sv.data);
+    } else {
+      // Bus has pos but isn't in BBox (user panned away). Still update the
+      // panel from the server-pushed data.
+      ui.updateJourneyStopDelays(journeyData);
+    }
+    return;
+  }
+
+  // No position. Either the journey ended, or it hasn't started yet.
+  const stopL = journey.stopL || [];
+  const lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
+  const lastTime = lastStop ? (lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || '') : '';
+  let lastMin = lastTime ? parseHafasTimeToMin(lastTime) : 0;
+  if (lastMin === null) lastMin = 0;
+  const elMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+  const nowM = (state.serverTimeMin || 0) + elMs / 60000;
+  if (nowM > 1080 && lastMin < 360) lastMin += 1440;
+  if (nowM < 360 && lastMin > 1080) lastMin -= 1440;
+
+  if (lastTime && (lastMin + 5) <= nowM) {
+    ui.showJourneyEnded();
+    return;
+  }
+  if (journey.isCncl) {
+    if (ui._showJourneyCancelled) ui._showJourneyCancelled();
+    return;
+  }
+  // Otherwise: not started yet. Mark the jid so _handleVehiclesPayload can
+  // transition once the bus appears in BBox.
+  if (!state._notStartedJid || state._notStartedJid !== jid) {
+    state._notStartedJid = jid;
+    if (!state._notStartedSince) state._notStartedSince = Date.now();
+  }
+  ui.updateJourneyStopDelays(journeyData);
 }
