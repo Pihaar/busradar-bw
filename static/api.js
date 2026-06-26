@@ -1,6 +1,81 @@
 import { CONFIG } from './config.js';
 import { state, settings } from './state.js';
 
+// === SELECTSTREAM DEBOUNCE ===
+// Rapid load-more clicks would fire one POST /api/stream/select per
+// click; the server-side per-subscriber rate-limit (burst 3, refill 1/s)
+// 429s the 4th+ in a burst. Debounce 250ms trailing: rapid clicks
+// collapse into a single POST with the LAST window the user landed on.
+// The intermediate dur values are irrelevant to the server — only the
+// final state matters for the next SSE tick's push. The 250ms feels
+// instant for a user click while comfortably ducking under the rate
+// budget for click bursts up to ~6/s.
+var _selectStreamTimer = null;
+var _selectStreamPending = null;
+var _selectStreamResolvers = [];
+var _selectStreamRejecters = [];
+
+function _selectStreamFlush() {
+  _selectStreamTimer = null;
+  var pending = _selectStreamPending;
+  var resolvers = _selectStreamResolvers;
+  var rejecters = _selectStreamRejecters;
+  _selectStreamPending = null;
+  _selectStreamResolvers = [];
+  _selectStreamRejecters = [];
+  window.fetch(CONFIG.apiBase + '/stream/select', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ selection: pending }),
+    credentials: 'same-origin',
+  }).then(function(r) {
+    if (r.status === 401 || r.status === 409) {
+      // Broken session — caller should treat as "EventSource will reconnect".
+      // The viewport-POST path in refresh.js does the actual recovery; here
+      // we just signal the failure as an Error so .catch handlers can
+      // diagnose. Don't reload-loop from selectStream itself, the viewport
+      // POST that follows on every map move already triggers the reconnect.
+      var err = new Error('HTTP ' + r.status + ' broken_session');
+      rejecters.forEach(function (f) { f(err); });
+      return;
+    }
+    if (!r.ok) {
+      var err2 = new Error('HTTP ' + r.status);
+      rejecters.forEach(function (f) { f(err2); });
+      return;
+    }
+    r.json().then(function (data) {
+      resolvers.forEach(function (f) { f(data); });
+    }).catch(function (e) {
+      rejecters.forEach(function (f) { f(e); });
+    });
+  }).catch(function (e) {
+    rejecters.forEach(function (f) { f(e); });
+  });
+}
+
+function _selectStreamImpl(type, id, boardType, dur) {
+  var selection;
+  if (type === 'journey') {
+    selection = { kind: 'journey', jid: id };
+  } else if (type === 'stationboard') {
+    var d = parseInt(dur, 10);
+    if (!isFinite(d) || d < 60) d = 60;
+    if (d > 1440) d = 1440;
+    if (d % 60 !== 0) d = 60;
+    selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP', dur: d };
+  } else {
+    selection = null;
+  }
+  _selectStreamPending = selection;
+  return new Promise(function (resolve, reject) {
+    _selectStreamResolvers.push(resolve);
+    _selectStreamRejecters.push(reject);
+    if (_selectStreamTimer) clearTimeout(_selectStreamTimer);
+    _selectStreamTimer = setTimeout(_selectStreamFlush, 250);
+  });
+}
+
 // === API LAYER ===
 export var api = {
   _journeyUserAbort: null,
@@ -68,36 +143,13 @@ export var api = {
   // The `dur` value must match the window the client is currently rendering
   // (auto-expand walks 60→120→…→1440 until results appear). Pushing the
   // wrong dur shrinks the displayed list on every tick.
+  //
+  // Debounced 250ms trailing: rapid load-more clicks fired one POST per
+  // click and hit the per-subscriber burst=3 rate-limit on /api/stream/
+  // select. Coalescing to the last call keeps the user-visible action
+  // (display the new window) correct while collapsing the wire traffic.
   selectStream: function(type, id, boardType, dur) {
-    var selection;
-    if (type === 'journey') {
-      selection = { kind: 'journey', jid: id };
-    } else if (type === 'stationboard') {
-      var d = parseInt(dur, 10);
-      if (!isFinite(d) || d < 60) d = 60;
-      if (d > 1440) d = 1440;
-      if (d % 60 !== 0) d = 60;
-      selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP', dur: d };
-    } else {
-      selection = null;
-    }
-    return window.fetch(CONFIG.apiBase + '/stream/select', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ selection: selection }),
-      credentials: 'same-origin',
-    }).then(function(r) {
-      if (r.status === 401 || r.status === 409) {
-        // Broken session — caller should treat as "EventSource will reconnect".
-        // The viewport-POST path in refresh.js does the actual recovery; here
-        // we just signal the failure as an Error so .catch handlers can
-        // diagnose. Don't reload-loop from selectStream itself, the viewport
-        // POST that follows on every map move already triggers the reconnect.
-        throw new Error('HTTP ' + r.status + ' broken_session');
-      }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    });
+    return _selectStreamImpl(type, id, boardType, dur);
   },
 };
 
