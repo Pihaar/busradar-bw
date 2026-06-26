@@ -232,18 +232,6 @@ class SubscriberRegistry:
     def __len__(self) -> int:
         return len(self._subs)
 
-    def display_count(self) -> str:
-        """Bucketed for the connected-clients UI. Matches the buckets the
-        old ConnectedClients class exposed so the UI doesn't change."""
-        n = len(self._subs)
-        if n <= 1:
-            return "1"
-        if n <= 5:
-            return "2-5"
-        if n <= 20:
-            return "6-20"
-        return "20+"
-
 
 registry = SubscriberRegistry()
 
