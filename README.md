@@ -23,7 +23,7 @@ python3 -m uvicorn proxy:app --host 0.0.0.0 --port 8000
 
 - Live-Buspositionen auf OpenStreetMap (Dark + Light Theme)
 - Echtzeit-Verspätungsanzeige (farbcodiert: grün/gelb/rot/weiß/grau)
-- Bus-Interpolation (flüssige Bewegung zwischen API-Refreshes)
+- Bus-Interpolation (flüssige Bewegung zwischen Tick-Updates)
 - Tick-aware Cache (synchronisiert auf HAFAS-Update-Tick, vermeidet stale data)
 - Richtungspfeile auf Bus-Markern
 - Haltestellensuche (BW-weit, 10.400+ Stops)
@@ -39,42 +39,49 @@ python3 -m uvicorn proxy:app --host 0.0.0.0 --port 8000
 - Bottom-Sheet (Mobile) / Side-Panel (Desktop)
 - Responsive Design (Mobile + Desktop)
 - Mehrsprachig (Deutsch + English)
-- Connected-Users-Counter (Bucket-basiert, anonym per Tab-UUID)
-- Client-Einstellungen (Refresh-Intervall, Interpolation, Positionsmodus, Theme, Sprache)
+- Connected-Users-Counter (exakt ≤99, "100+" darüber, anonym aus Subscriber-Registry)
+- Client-Einstellungen (Interpolation, Positionsmodus, Theme, Sprache, Cache-Reset)
 - About/Impressum Dialog
-- 10s Auto-Refresh (zoom-abhängig: 30s bei weitem Zoom)
-- Offline-Toleranz: Circuit Breaker + stale-while-revalidate
+- Server-Sent Events (Push statt Polling, Frontend pollt nicht mehr)
+- Auto-Reconnect mit Backoff (1/2/5/15/15s + Jitter), Terminal-Banner nach 5 Fehlschlägen
 - PWA: Service Worker + Web App Manifest (installierbar, offline-capable)
 
 ## Architektur
 
 ```
 [Browser: Leaflet + Vanilla JS + i18n + Service Worker]
-        ↓ fetch /api/*
+        ↓ EventSource /api/stream/  (persistent, server pushes vehicles/journey/stationboard)
+        ↓ POST /api/stream/viewport (Map-Pan/Zoom, debounced 250ms)
+        ↓ POST /api/stream/select   (Bus/Stop-Auswahl)
 [proxy.py (FastAPI + uvicorn + httpx)]
-        ↓ POST (async, cached, tick-aware)
+        ↓ POST (async, cached, tick-aware, singleflight)
 [https://db-regio.hafas.de/bin/mgate.exe]
 ```
+
+Persistent SSE-Connection statt Polling-Loop. Server pushed Vehicles auf jedem HAFAS-Tick (~30s),
+plus journey/stationboard für die aktuelle Auswahl. Viewport-Updates und Selektionswechsel
+fließen als kleine POSTs zurück; der State lebt server-seitig auf der Subscriber-Connection.
 
 ## Dateien
 
 ```
 busradar-bw/
-├── proxy.py                 # FastAPI Backend-Proxy (~760 LOC)
-├── tick.py                  # Tick-Tracker + Connected-Clients-Counter
+├── proxy.py                 # FastAPI Backend-Proxy mit SSE-Stream (~1500 LOC)
+├── fanout.py                # Subscriber-Registry + Tick-Fanout (Condition + selection_seq)
+├── tick.py                  # Tick-Tracker (HAFAS-Update-Detection)
 ├── stops_builder.py         # BW-weiter Stops-Cache-Builder
 ├── stops_cache.json         # 10.400+ Stops (täglich neu gebaut)
 ├── line_analyze.py          # Verspätungs-Analyzer für gesammelte Tracking-Daten
 ├── line_logger.py           # Per-Fahrt JSONL-Logger (auf Wunsch reaktivierbar)
-├── requirements.txt         # Python deps (fastapi, uvicorn, httpx)
+├── requirements.txt         # Python deps (fastapi, uvicorn, httpx, pydantic v2)
 ├── static/
 │   ├── index.html           # Frontend HTML + About-Dialog
-│   ├── init.js              # Bootstrap (UUID, SW-Registration)
+│   ├── init.js              # Bootstrap, Service-Worker-Registration
 │   ├── state.js, config.js  # State + Konfiguration
-│   ├── api.js               # Fetch-Layer
+│   ├── api.js               # Fetch-Layer + selectStream-Wrapper
 │   ├── map.js               # Leaflet-Karte, Marker, Polylines
 │   ├── ui.js                # Sheet/Panel, Listen, Dialoge (~2200 LOC)
-│   ├── refresh.js           # Polling, Circuit Breaker
+│   ├── refresh.js           # EventSource-Driver, Reconnect-Backoff, _applyJourneyPayload
 │   ├── status.js            # Status-Bar (Tick, User-Counter)
 │   ├── sw.js                # Service Worker (precache, offline)
 │   ├── i18n.js              # Übersetzungen DE+EN
@@ -94,13 +101,15 @@ busradar-bw/
 
 | Endpoint | Methode | Beschreibung |
 |----------|---------|-------------|
-| `/api/vehicles` | GET | Live-Buspositionen (swLat, swLon, neLat, neLon, posMode) |
-| `/api/journey` | POST | Fahrtdetails + Polyline (jid) |
-| `/api/stationboard` | POST | Abfahrten/Ankünfte (lid, type, dur) |
+| `/api/stream/` | GET | SSE-Connection (`subscribe`, `vehicles`, `journey`, `stationboard`, `connected`, `error`) |
+| `/api/stream/viewport` | POST | Sichtbaren Bbox an Subscriber binden (HttpOnly-Cookie-bound) |
+| `/api/stream/select` | POST | Aktuelle Auswahl an Subscriber binden (journey/stationboard/none) |
+| `/api/journey` | POST | Fahrtdetails + Polyline (Click-Time, parallel zum SSE-Push) |
+| `/api/stationboard` | POST | Abfahrten/Ankünfte (Click-Time, ARR über tab-switch) |
 | `/api/stops` | GET | Haltestellen im Radius (aus Cache) |
 | `/api/search` | GET | HAFAS-Haltestellensuche (q, lat, lon) |
 | `/api/line_search` | GET | BW-weite Liniensuche (q) |
-| `/api/health` | GET | Server-Status + Circuit Breaker |
+| `/api/health` | GET | Server-Status + Tick-Calibrator |
 
 ## Sicherheit
 

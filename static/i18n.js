@@ -321,8 +321,8 @@
   de.about_data_heading = 'Datenquelle';
   en.about_data_heading = 'Data source';
 
-  de.about_data_text = 'Echtzeit-Positionen via HAFAS API.';
-  en.about_data_text = 'Real-time positions via HAFAS API.';
+  de.about_data_text = 'Echtzeit-Positionen via HAFAS API, gepusht über Server-Sent Events.';
+  en.about_data_text = 'Real-time positions via HAFAS API, pushed via Server-Sent Events.';
 
   de.about_data_publisher = 'Herausgeber: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';
   en.about_data_publisher = 'Publisher: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';

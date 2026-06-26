@@ -48,6 +48,11 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 UMask=0077
 MemoryMax=512M
 TasksMax=64
+# 500 SSE subscribers (MAX_SUBSCRIBERS_GLOBAL) + HAFAS sockets + uvicorn
+# internals can exceed the systemd default 1024. Pin so the app-level cap
+# governs behavior — without this, accept() fails with EMFILE before the
+# Python cap rejects with a clean 429.
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target

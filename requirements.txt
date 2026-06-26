@@ -1,3 +1,7 @@
 fastapi==0.128.8
 uvicorn==0.39.0
 httpx==0.28.1
+# Pydantic comes in transitively via fastapi, but pin it explicitly so the
+# deployed version matches what was tested. field_validator + ValidationError
+# .errors() loc-based introspection require v2.
+pydantic>=2.7,<3

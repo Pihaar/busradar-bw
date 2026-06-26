@@ -2,37 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { state, settings, SETTINGS_KEY, BACKOFF_BASE, getDelayClass, getDelayText, decodePolyline, applyI18n, t, extractHafasMessages, formatTime } from '../../static/state.js';
 import { api, urlState } from '../../static/api.js';
 
-describe.skip('api.getVehicles — removed since the polling-to-SSE switch', () => {
-  var originalFetch;
-  beforeEach(() => {
-    if (!settings.current) settings.init();
-    originalFetch = window.fetch;
-    window.fetch = vi.fn();
-  });
-  afterEach(() => {
-    window.fetch = originalFetch;
-  });
-
-  it('calls fetch with correct params and returns json', async () => {
-    var mockData = { vehicles: [{ jid: 'J1', lat: 49.3, lon: 8.6 }] };
-    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(mockData) });
-
-    var result = await api.getVehicles(49.0, 8.0, 49.5, 9.0);
-    expect(window.fetch).toHaveBeenCalledOnce();
-    var url = window.fetch.mock.calls[0][0];
-    expect(url).toContain('/api/vehicles?');
-    expect(url).toContain('swLat=49.00000');
-    expect(url).toContain('neLat=49.50000');
-    expect(url).toContain('posMode=');
-    expect(result).toEqual(mockData);
-  });
-
-  it('throws on non-ok response', async () => {
-    window.fetch.mockResolvedValue({ ok: false, status: 502 });
-    await expect(api.getVehicles(49, 8, 50, 9)).rejects.toThrow('HTTP 502');
-  });
-});
-
 describe('api.getStops', () => {
   var originalFetch;
   beforeEach(() => {
@@ -860,46 +829,7 @@ describe('state._nextFreshDataIn (tick hint)', () => {
 
 
 // === Connected Clients header ===
+// The X-Client-Id header was an artefact of the UUID-keyed connected-clients
+// counter; both are gone since the polling-to-SSE switch. Counter is now
+// derived from len(SubscriberRegistry) server-side.
 
-describe.skip('api.getVehicles X-Client-Id header — removed since the polling-to-SSE switch', () => {
-  var originalFetch;
-  beforeEach(() => {
-    if (!settings.current) settings.init();
-    originalFetch = window.fetch;
-    window.fetch = vi.fn();
-  });
-  afterEach(() => {
-    window.fetch = originalFetch;
-    state._clientId = null;
-  });
-
-  it('adds X-Client-Id header when state._clientId is set', async () => {
-    state._clientId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
-    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
-
-    await api.getVehicles(49.0, 8.0, 49.5, 9.0);
-    var opts = window.fetch.mock.calls[0][1];
-    expect(opts).toBeDefined();
-    expect(opts.headers).toEqual({ 'X-Client-Id': 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa' });
-  });
-
-  it('omits header when state._clientId is null', async () => {
-    state._clientId = null;
-    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
-
-    await api.getVehicles(49.0, 8.0, 49.5, 9.0);
-    var opts = window.fetch.mock.calls[0][1];
-    expect(opts).toBeUndefined();
-  });
-
-  it('still sends header with forceRefresh', async () => {
-    state._clientId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
-    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
-
-    await api.getVehicles(49.0, 8.0, 49.5, 9.0, true);
-    var url = window.fetch.mock.calls[0][0];
-    var opts = window.fetch.mock.calls[0][1];
-    expect(url).toContain('_t=');
-    expect(opts.headers).toEqual({ 'X-Client-Id': 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb' });
-  });
-});

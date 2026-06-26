@@ -28,9 +28,10 @@ import ipaddress
 import logging
 import secrets
 import time
-from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Annotated, Literal, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 log = logging.getLogger("busradar")
 
@@ -40,7 +41,6 @@ log = logging.getLogger("busradar")
 MAX_SUBSCRIBERS_PER_IP = 20      # IPv4 = /32, IPv6 = /64 canonicalized
 MAX_SUBSCRIBERS_GLOBAL = 500
 MAX_INFLIGHT = 200                # LRU-evict ältester
-QUEUE_MAXSIZE = 32
 SLOW_CONSUMER_DROP_THRESHOLD = 5  # consecutive drops → disconnect
 CONNECTION_ID_BYTES = 32          # 32 * 8 / 1.33 ≈ 192-bit Entropy via urlsafe
 CAP_REJECT_LOG_RATE = 60.0        # 1 warning per ip-hash per minute
@@ -51,20 +51,54 @@ BBOX_QUANTIZE_DEG = 0.01          # ~1.1 km grid; viewports <1.1km collapse on p
 
 # === Selection Tagged Union ===
 # Mutually exclusive subscriber state: either a selected journey, a selected
-# stationboard, or neither. The type tag enforces the mutex at parse time
-# (Pydantic), saving us from defending the invariant in code.
+# stationboard, or neither. The Pydantic discriminator field "kind" enforces
+# the mutex at parse time AND lets the same models serve as both the SSE
+# input (SelectPayload) and the subscriber-stored state, removing the
+# manual dataclass→Pydantic mapping that lived in the /select handler.
+#
+# Each Selection type carries the metadata the SSE dispatch needs:
+#   - event_name(): SSE event name to emit
+#   - cache_key():  key shape for the helper's singleflight cache
+# The actual fetch lives in proxy.py (module boundary keeps fanout.py free
+# of HTTP/HAFAS dependencies); proxy dispatches via _fetch_for_selection().
 
-@dataclass(frozen=True)
-class JourneySelection:
-    jid: str
+
+class JourneySelection(BaseModel):
+    # frozen=True for hash + immutability; extra="forbid" so the wire
+    # format doesn't silently accept fields the server doesn't know about
+    # (Pydantic does NOT propagate extra="forbid" from a parent model).
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["journey"] = "journey"
+    jid: str = Field(max_length=300)
+
+    def event_name(self) -> str:
+        return "journey"
+
+    def cache_key(self) -> str:
+        return self.jid
 
 
-@dataclass(frozen=True)
-class StationSelection:
-    lid: str
+class StationSelection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["stationboard"] = "stationboard"
+    lid: str = Field(max_length=300)
+    # Default DEP so the existing /select calls that don't carry board_type
+    # behave as they did before. Clients that want ARR pushes set this to
+    # "ARR"; the SSE handler dispatches on it.
+    board_type: Literal["DEP", "ARR"] = "DEP"
+
+    def event_name(self) -> str:
+        return "stationboard"
+
+    def cache_key(self) -> tuple:
+        return (self.lid, self.board_type, 60)
 
 
-Selection = Union[None, JourneySelection, StationSelection]
+# Discriminated union for the Subscriber.selection field and SelectPayload.
+Selection = Annotated[
+    Union[JourneySelection, StationSelection],
+    Field(discriminator="kind"),
+]
 
 
 # === Subscriber ===
@@ -78,12 +112,19 @@ class Subscriber:
     ip: str                                    # canonicalized (IPv4 /32 or IPv6 /64)
     viewport: tuple[float, float, float, float] | None = None  # (swLat, swLon, neLat, neLon)
     pos_mode: str = "CALC"                     # "CALC" or "REPORT_ONLY"
-    selection: Selection = None
-    event_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=QUEUE_MAXSIZE))
-    task: Optional[asyncio.Task] = None
+    selection: Optional[Union[JourneySelection, StationSelection]] = None
+    selection_seq: int = 0                     # monotonic; bumped on /select POST so the SSE loop can discard stale fetch results
     created_at: float = field(default_factory=time.monotonic)
+    # Slow-consumer disconnect counter. Incremented when a yield batch exceeds
+    # SSE_SLOW_YIELD_THRESHOLD_S (proxy.py); 5 consecutive trips → disconnect.
     consecutive_drops: int = 0
-    last_seen_tick_seq: int = 0
+    # Per-subscriber token-bucket state for the /viewport and /select POST
+    # rate-limiters. Refill is continuous at 1 token/s, cap = 3 (burst).
+    post_rate_last_refill: float = field(default_factory=time.monotonic)
+    post_rate_tokens: float = 3.0
+    # Bbox-quantize of the viewport when /viewport was last accepted, so
+    # /viewport POST can skip fire_tick() when nothing actually changed.
+    last_viewport_bbox: tuple[int, int, int, int] | None = None
 
 
 # === Tick fanout primitives ===
@@ -183,6 +224,10 @@ class SubscriberRegistry:
         self._subs: dict[str, Subscriber] = {}
         self._per_ip: dict[str, set[str]] = {}  # ip → set of connection-ids
         self._inflection_warned = False
+        # Separate one-shot for the viewports inflection — fires when many
+        # subscribers track distinct quantized bboxes, signaling that the
+        # singleflight cache is no longer collapsing fan-out effectively.
+        self._inflection_viewports_warned = False
 
     async def subscribe(self, ip: str) -> Subscriber:
         """Allocate a new connection-id, enforce caps under lock, register."""
@@ -237,34 +282,34 @@ class SubscriberRegistry:
     def __len__(self) -> int:
         return len(self._subs)
 
+    def maybe_warn_viewport_inflection(self) -> None:
+        """Count distinct quantized bboxes across subscribers; warn once when
+        the population crosses INFLECTION_VIEWPORTS. Signals that singleflight
+        is no longer collapsing fan-out and a master-poll architecture should
+        be evaluated. One-shot per process lifetime per direction (reset when
+        the count drops below half the threshold)."""
+        distinct = len({sub.last_viewport_bbox for sub in self._subs.values() if sub.last_viewport_bbox is not None})
+        if distinct > INFLECTION_VIEWPORTS and not self._inflection_viewports_warned:
+            self._inflection_viewports_warned = True
+            log.warning(
+                "[fanout] inflection_point distinct_viewports=%d threshold=%d",
+                distinct, INFLECTION_VIEWPORTS,
+            )
+        elif self._inflection_viewports_warned and distinct <= INFLECTION_VIEWPORTS // 2:
+            self._inflection_viewports_warned = False
+
 
 registry = SubscriberRegistry()
 
 
-# === Queue put with drop-oldest policy ===
-
-def enqueue_event(sub: Subscriber, event: dict) -> None:
-    """Drop-oldest on full queue, count consecutive drops for slow-consumer
-    detection. Reset drop-counter on every successful put (even after prior
-    drops in the same window)."""
-    q = sub.event_queue
-    try:
-        q.put_nowait(event)
-        sub.consecutive_drops = 0
-    except asyncio.QueueFull:
-        # Drop oldest, retry. get_nowait may race with the consumer; suppress
-        # if it does (rare but possible if the consumer just popped).
-        with suppress(asyncio.QueueEmpty):
-            q.get_nowait()
-        try:
-            q.put_nowait(event)
-            sub.consecutive_drops += 1
-        except asyncio.QueueFull:  # pragma: no cover — only if consumer races back
-            sub.consecutive_drops += 1
-
+# === Slow-consumer detection ===
+# The SSE event_generator measures wall-clock around each yield batch in
+# proxy.py and bumps `sub.consecutive_drops` when a batch exceeds the slow
+# threshold. The queue-based dispatch path (`enqueue_event`) was removed —
+# this predicate is read-only.
 
 def should_disconnect_slow_consumer(sub: Subscriber) -> bool:
-    """5+ consecutive drops means the consumer can't keep up. The caller
-    cancels the subscriber's task; the AsyncExitStack cleanup runs from
-    there."""
+    """5+ consecutive slow yield batches means the consumer can't keep up.
+    The caller (SSE handler) breaks out of its loop; AsyncExitStack cleanup
+    runs from there."""
     return sub.consecutive_drops >= SLOW_CONSUMER_DROP_THRESHOLD

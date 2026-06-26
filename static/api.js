@@ -58,11 +58,25 @@ export var api = {
   // then ships matching SSE events on every tick. Used alongside the one-off
   // getJourney/getStationBoard fetches above so detail-panel updates flow
   // over the stream rather than per-tick polls.
-  selectStream: function(type, id) {
+  //
+  // Wire format is a Pydantic discriminated union on the server side:
+  //   selectStream('journey', jid)               → {"selection":{"kind":"journey","jid":...}}
+  //   selectStream('stationboard', lid, 'DEP')   → {"selection":{"kind":"stationboard","lid":...,"board_type":"DEP"}}
+  //   selectStream('stationboard', lid, 'ARR')   → {"selection":{"kind":"stationboard","lid":...,"board_type":"ARR"}}
+  //   selectStream('none')                       → {"selection":null}
+  selectStream: function(type, id, boardType) {
+    var selection;
+    if (type === 'journey') {
+      selection = { kind: 'journey', jid: id };
+    } else if (type === 'stationboard') {
+      selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP' };
+    } else {
+      selection = null;
+    }
     return window.fetch(CONFIG.apiBase + '/stream/select', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({type: type, id: id || ''}),
+      body: JSON.stringify({ selection: selection }),
       credentials: 'same-origin',
     }).then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);

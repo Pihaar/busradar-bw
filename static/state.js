@@ -9,6 +9,7 @@ export var state = {
   selectedJid: null,
   selectedJourneyData: null,
   selectedStop: null,
+  _activeStationBoardType: 'DEP',  // mirrors StationSelection.board_type server-side
   routeLayer: null,
   routeStopMarkers: [],
   routeCoords: null,

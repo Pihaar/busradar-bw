@@ -1095,9 +1095,11 @@ export var ui = {
     ui.loadArrivals(loc, stopExtId, 60, true);
     // Subscribe the SSE stream so the departure list refreshes on every
     // tick. ARR is still loaded explicitly when the user switches tab;
-    // SSE only pushes DEP.
+    // Default the new stop to DEP — the switchTab handler updates to ARR
+    // if the user switches over.
     if (loc && loc.lid) {
-      api.selectStream('stationboard', loc.lid).catch(function () {});
+      state._activeStationBoardType = 'DEP';
+      api.selectStream('stationboard', loc.lid, 'DEP').catch(function () {});
     }
   },
 
@@ -1602,6 +1604,17 @@ export var ui = {
     }
 
     state._activeTab = tab;
+    // Switch the SSE board-type push when the user moves between DEP/ARR
+    // tabs of the same stop. The selection cookie stays the same; only the
+    // board_type field changes. We update it only when a stop is selected
+    // and the new tab is a stationboard tab.
+    if (state.selectedStop && (tab === 'departures' || tab === 'arrivals')) {
+      var newBoardType = (tab === 'arrivals') ? 'ARR' : 'DEP';
+      if (state._activeStationBoardType !== newBoardType) {
+        state._activeStationBoardType = newBoardType;
+        api.selectStream('stationboard', state.selectedStop.lid, newBoardType).catch(function () {});
+      }
+    }
     if (tab === 'departures' && state._stationDepData) {
       ui.buildLineFilter(state._stationDepData, null);
     } else if (tab === 'arrivals' && state._stationArrData) {
@@ -1732,6 +1745,47 @@ export var ui = {
         ui.addLoadMoreButton('arrival-list', loc, stopExtId, arrDur, 'ARR');
       }
     }).catch(function() {});
+  },
+
+  // Consume server-pushed stationboard from the SSE `stationboard` event.
+  // Renders into either the DEP or the ARR list depending on the boardType
+  // the server included in the payload (matches the StationSelection
+  // board_type field). Same de-dup signature as refreshStationBoard so
+  // identical pushes don't flicker the DOM.
+  applyPushedStationboard: function(loc, data, boardType) {
+    if (state._autoExpandingDep || state._autoExpandingArr) return;
+    var capturedLid = loc.lid;
+    var stopExtId = '';
+    if (loc.extId) {
+      stopExtId = loc.extId;
+    } else if (loc.lid) {
+      var match = loc.lid.match(/@L=(\d+)@/);
+      if (match) stopExtId = match[1];
+    }
+    var isArr = boardType === 'ARR';
+    var filterLine = isArr ? (state._arrFilter || null) : (state._depFilter || null);
+    var dur = isArr ? (state._stationArrDur || 60) : (state._stationDepDur || 60);
+    var boardSig = function(jnyL) {
+      return (jnyL || []).map(function(j) {
+        var stb = j.stbStop || {};
+        return (j.jid || '') + '|' + (j.prodX != null ? j.prodX : '') + '|' + (j.dirTxt || '') + '|' + (j.date || '') + '|' + (stb.locX != null ? stb.locX : '') + '|' + (stb.dTimeS || '') + '|' + (stb.dTimeR || '') + '|' + (stb.aTimeS || '') + '|' + (stb.aTimeR || '');
+      }).join(';');
+    };
+    if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+    var sig = boardSig(data.jnyL);
+    if (isArr) {
+      if (sig === state._lastArrSig) return;
+      state._lastArrSig = sig;
+      state._stationArrData = data;
+      ui.renderArrivals(data, loc, stopExtId, filterLine);
+      ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
+    } else {
+      if (sig === state._lastDepSig) return;
+      state._lastDepSig = sig;
+      state._stationDepData = data;
+      ui.renderDepartures(data, loc, stopExtId, filterLine);
+      ui.addLoadMoreButton('departure-list', loc, stopExtId, dur, 'DEP');
+    }
   },
 
   focusJourneyById: function(jid, prod, skipHistory) {

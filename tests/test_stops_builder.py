@@ -1,10 +1,7 @@
 """Tests for stops_builder.py — pure functions + integration with mocked HAFAS."""
 import asyncio
 import json
-import math
 from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 

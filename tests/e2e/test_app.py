@@ -119,14 +119,18 @@ class TestUrlRestore:
 
 class TestHafasMessages:
     def _find_bus_with_messages(self, page, server):
-        """Find a currently active bus that has journey-level messages."""
+        """Find a currently active bus that has journey-level messages.
+
+        Uses /api/line_search to seed jids (no /api/vehicles since the
+        polling endpoint is gone — SSE is the live channel and we can't
+        easily snapshot it via page.request)."""
         import json
-        resp = page.request.get(server + "/api/vehicles?swLat=47.5&swLon=7.5&neLat=49.7&neLon=10.2")
+        resp = page.request.get(server + "/api/line_search?q=725")
         if resp.status != 200:
             return None
-        vehicles = resp.json().get("vehicles", [])
-        for v in vehicles[:30]:
-            jid = v.get("jid", "")
+        results = resp.json().get("results", [])
+        for entry in results[:30]:
+            jid = entry.get("jid", "")
             if not jid:
                 continue
             jr = page.request.post(server + "/api/journey", data=json.dumps({"jid": jid}),
@@ -184,7 +188,10 @@ class TestOffline:
         """After blocking requests, offline indicator appears."""
         page.goto(server + "/#lat=49.342&lon=8.66&z=15")
         page.wait_for_timeout(3000)
-        page.route("**/api/vehicles*", lambda route: route.abort())
+        # Block the SSE stream and its sidecar POSTs so the frontend's
+        # reconnect/terminal path triggers. /api/stream/ is the live channel
+        # (the previous polling endpoint /api/vehicles is gone).
+        page.route("**/api/stream/**", lambda route: route.abort())
         page.wait_for_timeout(15000)
         dot = page.locator(".status-dot")
         expect(dot).to_have_class(re.compile("status-dot--(offline|error)"))
