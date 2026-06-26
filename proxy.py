@@ -686,6 +686,19 @@ except OSError as e:
     log.error("[startup] failed to read %s: %s", _SW_PATH, e)
     _SW_TEMPLATE = ""
 
+# index.html carries the same `__APP_VERSION__` placeholder in style/script
+# URLs so a deploy busts the browser's HTTP cache for those resources
+# (StaticFiles serves them with the nginx-default max-age=2592000 and there's
+# no other cache-bust path — the SW cache rotates on its own version-baked
+# cache key, but only after the new SW has activated, which doesn't help a
+# tab that still holds the previous CSS in its HTTP cache).
+_INDEX_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+try:
+    _INDEX_TEMPLATE = _INDEX_PATH.read_text(encoding="utf-8")
+except OSError as e:
+    log.error("[startup] failed to read %s: %s", _INDEX_PATH, e)
+    _INDEX_TEMPLATE = ""
+
 _SW_PLACEHOLDER = "__APP_VERSION__"
 
 
@@ -708,6 +721,8 @@ if _SW_TEMPLATE and not _SW_RENDERED:
     log.warning("[startup] SW template loaded but render produced empty body")
 elif _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
+
+_INDEX_RENDERED = _render_sw(_INDEX_TEMPLATE, _VERSION) if _INDEX_TEMPLATE else ""
 
 
 @app.get("/api/stream/")
@@ -744,6 +759,37 @@ async def serve_sw():
             "Service-Worker-Allowed": "/",
         },
     )
+
+
+async def _serve_index() -> Response:
+    """Hand-serve index.html with the version placeholder substituted so the
+    style/script URLs carry a cache-bust query param. no-cache on the document
+    itself ensures the browser re-fetches the HTML on every navigation, picking
+    up the new ?v= URLs whenever the deploy version changes — the heavy
+    sub-resources (style.css, refresh.js, …) stay aggressively cached behind
+    those versioned URLs."""
+    if not _INDEX_RENDERED:
+        return Response(
+            "<!doctype html><meta charset=utf-8><title>busradar</title>service unavailable\n",
+            media_type="text/html; charset=utf-8",
+            status_code=503,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+    return Response(
+        _INDEX_RENDERED,
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/")
+async def serve_root():
+    return await _serve_index()
+
+
+@app.get("/index.html")
+async def serve_index():
+    return await _serve_index()
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
