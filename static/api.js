@@ -79,6 +79,14 @@ export var api = {
       body: JSON.stringify({ selection: selection }),
       credentials: 'same-origin',
     }).then(function(r) {
+      if (r.status === 401 || r.status === 409) {
+        // Broken session — caller should treat as "EventSource will reconnect".
+        // The viewport-POST path in refresh.js does the actual recovery; here
+        // we just signal the failure as an Error so .catch handlers can
+        // diagnose. Don't reload-loop from selectStream itself, the viewport
+        // POST that follows on every map move already triggers the reconnect.
+        throw new Error('HTTP ' + r.status + ' broken_session');
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });

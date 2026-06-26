@@ -229,6 +229,24 @@ export function notifyViewportChange() {
   }, VIEWPORT_DEBOUNCE_MS);
 }
 
+// Detects stream-state mismatch from a sidecar POST response (401
+// missing-cookie or 409 unknown_connection). Either means the EventSource
+// we're holding is no longer paired with a registered subscriber — usually
+// because the server restarted (registry empty) or the cookie expired.
+// The only recovery: close EventSource, reset reconnect counter, reopen.
+// Without this the dot stays offline forever because viewport/select POSTs
+// silently fail and no vehicles events arrive.
+function _recoverIfBrokenSession(resp) {
+  if (resp.status === 401 || resp.status === 409) {
+    if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+    _reconnectAttempt = 0;
+    clearTimeout(_reconnectTimer);
+    startStream();
+    return true;
+  }
+  return false;
+}
+
 function _sendCurrentViewport() {
   if (!state.map) return;
   if (!_es || _es.readyState !== 1) {
@@ -251,6 +269,8 @@ function _sendCurrentViewport() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     credentials: 'same-origin',
+  }).then(function (resp) {
+    _recoverIfBrokenSession(resp);
   }).catch(function () {});
 }
 

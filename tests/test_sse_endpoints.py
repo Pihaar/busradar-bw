@@ -573,29 +573,35 @@ class TestStreamCrossOriginRejection:
 
 
 class TestJidPatternStrictness:
-    """JID_PATTERN must reject pre-fix loose inputs that the old 67-char-class
-    regex accepted (cache-flush attack surface)."""
+    """JID_PATTERN must accept real HAFAS jids while rejecting cache-key
+    fabrication via Unicode-category Nd digits or control chars."""
 
     @pytest.mark.asyncio
-    async def test_short_jid_rejected(self, client, fresh_registry):
+    async def test_real_hafas_jid_accepted(self, client, fresh_registry):
+        """Real wire-format jid is `<digit>|#-separated-fields-with-spaces#`,
+        not the simplified `1|12345|0|80|date` form documented as example."""
         sub = await fresh_registry.subscribe("127.0.0.1")
+        real_jid = "2|#VN#1#ST#1782426904#PI#0#ZI#35566#TA#7#DA#260626#1S#44278343#1T#1605#CA#Bus#ZE#721#ZB#Bus  721#PC#5#"
+        body = '{"selection":{"kind":"journey","jid":"' + real_jid + '"}}'
         resp = await client.post(
             "/api/stream/select",
-            content='{"selection":{"kind":"journey","jid":"1|11"}}',
+            content=body,
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
                 "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             },
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200, f"real HAFAS jid must be accepted, got {resp.text}"
 
     @pytest.mark.asyncio
-    async def test_jid_with_spaces_rejected(self, client, fresh_registry):
+    async def test_control_char_in_jid_rejected(self, client, fresh_registry):
         sub = await fresh_registry.subscribe("127.0.0.1")
+        # NUL byte inside the value — must be rejected by the JID_PATTERN
+        # character class, otherwise it would split on logging or DB writes.
         resp = await client.post(
             "/api/stream/select",
-            content='{"selection":{"kind":"journey","jid":"1|aa aa|0|80|22052026"}}',
+            content='{"selection":{"kind":"journey","jid":"1|abc\\u0000def|0|80|22052026"}}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
@@ -606,14 +612,31 @@ class TestJidPatternStrictness:
 
 
 class TestLidPatternEndAnchored:
-    """LID_PATTERN must end-anchor — trailing garbage after a valid prefix
-    used to slip through and create distinct cache keys."""
+    """LID_PATTERN must end-anchor — trailing control characters slip
+    through a prefix-only pattern and create distinct cache keys."""
+
+    @pytest.mark.asyncio
+    async def test_real_hafas_lid_with_german_stop_name_accepted(self, client, fresh_registry):
+        """Real LIDs include the German stop name (`O=...@`), often with
+        spaces and umlauts. The regex must accept these."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        body = '{"selection":{"kind":"stationboard","lid":"A=1@O=Müllheim Bf@L=6003411@"}}'
+        resp = await client.post(
+            "/api/stream/select",
+            content=body,
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200, f"umlaut LID must be accepted, got {resp.text}"
 
     @pytest.mark.asyncio
     async def test_lid_trailing_garbage_rejected(self, client, fresh_registry):
         sub = await fresh_registry.subscribe("127.0.0.1")
-        # Use a NUL byte that the previous prefix-only pattern would have
-        # ignored after matching the `A=\d+@` prefix.
+        # NUL byte after a valid prefix — must be rejected (NUL isn't in
+        # the alphabet, and the pattern is end-anchored).
         resp = await client.post(
             "/api/stream/select",
             content='{"selection":{"kind":"stationboard","lid":"A=1@\\u0000bad"}}',
