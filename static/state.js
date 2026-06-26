@@ -39,7 +39,7 @@ export var state = {
   _appVersion: null,
   _appVersionFetch: null,
   _lastConnectedClients: undefined,
-  // Iter 2a: SSE connection state. 'connecting' | 'open' | 'reconnecting' | 'failed-terminal'.
+  // SSE connection state. 'connecting' | 'open' | 'reconnecting' | 'failed-terminal'.
   _sseState: 'connecting',
   // One-shot latch for the version-update banner. Once set, stays set for the
   // rest of the session even after dismissal; reload of the page resets it.

@@ -38,9 +38,9 @@ CALIB_BACKOFF_SECONDS = 1800.0
 TICK_POSITIONS_CAP = 1000
 TICK_STATE_FILE = Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / ".tick_state"
 
-# Connected-Clients counter — REMOVED in iter 3 of the SSE migration. The
-# per-IP cap, sliding-window presence tracking, and UUID-bound increment
-# now live in fanout.SubscriberRegistry (one connection = one subscriber).
+# The connected-clients counter and its UUID-bound helpers used to live here.
+# After the SSE migration the counter is one SSE subscriber = one connection,
+# tracked by fanout.SubscriberRegistry.
 
 _TICK_ENABLED = os.environ.get("BUSRADAR_TICK_CALIBRATOR", "on").lower().strip() != "off"
 

@@ -231,14 +231,14 @@ class TestServiceWorker:
 
 
 class TestInputValidation:
-    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
+    @pytest.mark.skip(reason="polling endpoint is 410 Gone; these tests will be removed once the handler itself is deleted")
     @pytest.mark.asyncio
     async def test_vehicles_inverted_bounds(self, client):
         resp = await client.get("/api/vehicles?swLat=50&neLat=49&swLon=8&neLon=9")
         assert resp.status_code == 400
         assert resp.json()["error"] == "invalid_request"
 
-    @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
+    @pytest.mark.skip(reason="polling endpoint is 410 Gone; these tests will be removed once the handler itself is deleted")
     @pytest.mark.asyncio
     async def test_vehicles_out_of_range(self, client):
         resp = await client.get("/api/vehicles?swLat=44&neLat=49&swLon=8&neLon=9")

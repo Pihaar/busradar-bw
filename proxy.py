@@ -461,8 +461,7 @@ async def get_vehicles_legacy(request: Request):
     """Polling endpoint is gone — the client now uses /api/stream/. Returns
     410 with a stable JSON envelope so any stale bookmark/SDK can detect the
     migration without parsing the HTML shell. Hits are audit-logged
-    (rate-limited per IP-hash) so we can see whether anything still polls
-    during the iter 2b 72h evidence-gate."""
+    (rate-limited per IP-hash) so we can see whether anything still polls."""
     ip = request.client.host if request.client else ""
     _audit("legacy-polling-hit", ip)
     return JSONResponse(
@@ -772,7 +771,7 @@ elif _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
 
 
-# === SSE Stream (Iter 1) ===
+# === SSE Stream ===
 
 ALLOWED_ORIGINS = tuple(
     o.strip() for o in os.environ.get(
@@ -1023,6 +1022,29 @@ async def sse_stream(request: Request):
                     else:
                         yield _format_sse("vehicles", snap, event_id)
 
+                # Detail-panel pushes: ship journey or stationboard whenever
+                # the subscriber has one selected. Selection-seq prevents us
+                # from emitting a stale fetch result for a selection the user
+                # has already swapped away from.
+                sel = sub.selection
+                sel_seq_at_start = getattr(sub, "selection_seq", 0)
+                if isinstance(sel, fanout.JourneySelection):
+                    jdata = await _fetch_journey_for_subscriber(request.app, sel.jid)
+                    if getattr(sub, "selection_seq", 0) == sel_seq_at_start and sub.selection is sel:
+                        event_id += 1
+                        if "error" in jdata:
+                            yield _format_sse("error", {"reason": jdata["error"], "selection": "journey"}, event_id)
+                        else:
+                            yield _format_sse("journey", {"jid": sel.jid, "journey": jdata}, event_id)
+                elif isinstance(sel, fanout.StationSelection):
+                    sdata = await _fetch_stationboard_for_subscriber(request.app, sel.lid)
+                    if getattr(sub, "selection_seq", 0) == sel_seq_at_start and sub.selection is sel:
+                        event_id += 1
+                        if "error" in sdata:
+                            yield _format_sse("error", {"reason": sdata["error"], "selection": "stationboard"}, event_id)
+                        else:
+                            yield _format_sse("stationboard", {"lid": sel.lid, "stationboard": sdata}, event_id)
+
                 # Always emit `connected` after a tick (coalesces with any
                 # add/remove that happened during this loop iteration).
                 count = len(fanout.registry)
@@ -1169,10 +1191,76 @@ async def stream_viewport(request: Request):
     return JSONResponse(content={"ok": True})
 
 
+class SelectPayload(BaseModel):
+    """Client tells the server which journey or stationboard the subscriber
+    currently wants pushed on every tick. Mutex enforced via type tag (matches
+    fanout.Selection's tagged union)."""
+    type: str = Field(pattern="^(journey|stationboard|none)$")
+    id: str = Field(default="", max_length=300)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str, info) -> str:
+        t = info.data.get("type")
+        if t == "none":
+            return ""
+        if not v:
+            raise ValueError("id required for journey/stationboard selection")
+        if t == "journey" and not JID_PATTERN.match(v):
+            raise ValueError("invalid jid")
+        if t == "stationboard" and not LID_PATTERN.match(v):
+            raise ValueError("invalid lid")
+        return v
+
+
+async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
+    """Shared HAFAS journey fetch with cache. Mirrors /api/journey's path."""
+    now = time.time()
+    cached = _journey_cache.get(jid)
+    if cached and (now - cached[0]) < _JOURNEY_CACHE_TTL:
+        return cached[1]
+    hafas_req = {"jid": jid, "getPolyline": True}
+    res = await _hafas_call(app, "JourneyDetails", hafas_req)
+    if "error" in res:
+        return {"error": res["error"]}
+    _journey_cache[jid] = (now, res)
+    if len(_journey_cache) > 200:
+        oldest = sorted(_journey_cache, key=lambda k: _journey_cache[k][0])[:100]
+        for k in oldest:
+            del _journey_cache[k]
+    return res
+
+
+async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str) -> dict:
+    """Shared HAFAS stationboard fetch with cache. DEP only for the SSE path
+    (the UI's tab switch will trigger another /select for ARR if needed)."""
+    now = time.time()
+    cache_key = (lid, "DEP", 60)
+    cached = _stationboard_cache.get(cache_key)
+    if cached and (now - cached[0]) < _STATIONBOARD_CACHE_TTL:
+        return cached[1]
+    hafas_req = {
+        "stbLoc": {"lid": lid},
+        "type": "DEP",
+        "dur": 60,
+        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+    }
+    res = await _hafas_call(app, "StationBoard", hafas_req)
+    if "error" in res:
+        return {"error": res["error"]}
+    _stationboard_cache[cache_key] = (now, res)
+    if len(_stationboard_cache) > 500:
+        oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
+        for k in oldest:
+            del _stationboard_cache[k]
+    return res
+
+
 @app.post("/api/stream/select")
 async def stream_select(request: Request):
-    """Stub for iter 4. Validates origin + cookie, returns 501 for now so
-    the contract is testable but no journey/stationboard fetch happens yet."""
+    """Tag a subscriber with a current journey or stationboard. The SSE loop
+    then ships journey/stationboard events on every tick alongside vehicles
+    until the subscriber selects 'none' or disconnects."""
     raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
     if raw is None:
         _audit("body-too-large", _client_ip(request))
@@ -1182,10 +1270,35 @@ async def stream_select(request: Request):
     if err:
         return _err_response(err)
 
-    return JSONResponse(
-        status_code=501,
-        content={"error": "not_implemented", "iter": 4},
-    )
+    try:
+        payload = SelectPayload.model_validate_json(raw)
+    except Exception as e:
+        msg = str(e).lower()
+        if "jid" in msg:
+            _audit("invalid-jid", _client_ip(request))
+        elif "lid" in msg:
+            _audit("invalid-lid", _client_ip(request))
+        return JSONResponse(status_code=422, content={"error": "invalid_payload"})
+
+    if payload.type == "journey":
+        sub.selection = fanout.JourneySelection(jid=payload.id)
+    elif payload.type == "stationboard":
+        sub.selection = fanout.StationSelection(lid=payload.id)
+    else:
+        sub.selection = None
+
+    # Plan: rapid selection switches must cancel any in-flight fetch the
+    # subscriber loop is still running for the previous selection. The loop
+    # itself awaits on the tick condition or the singleflight future, so
+    # cancelling the subscriber's task is heavyweight; instead we tag the
+    # selection with a monotonic counter (Subscriber.selection_seq) and the
+    # loop discards stale fetches at result-emit time. Simpler than killing
+    # tasks mid-flight.
+    sub.selection_seq = (getattr(sub, "selection_seq", 0) or 0) + 1
+    # Wake the loop so the new selection ships on the next tick — same logic
+    # as viewport-POST.
+    await fanout.fire_tick()
+    return JSONResponse(content={"ok": True})
 
 
 @app.get("/sw.js")

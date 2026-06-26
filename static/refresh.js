@@ -119,6 +119,47 @@ export function startStream() {
     _handleVehiclesPayload(data);
   });
 
+  _es.addEventListener('journey', function (ev) {
+    // The server pushes the currently-selected journey on every tick. Drop
+    // the event if the user has since selected a different jid or closed
+    // the panel — the server filters on its end too, but a late-delivered
+    // payload still has to be filtered client-side.
+    let data;
+    try { data = JSON.parse(ev.data); } catch (e) { return; }
+    if (!data || !data.jid) return;
+    if (state.selectedJid !== data.jid) return;
+    const journeyData = data.journey;
+    if (!journeyData) return;
+    state.selectedJourneyData = journeyData;
+    state._currentStopL = (journeyData.journey || {}).stopL || [];
+    try {
+      const sv = state.vehicles.get(state.selectedJid);
+      const jPos = (journeyData.journey || {}).pos || {};
+      const jLat = jPos.y ? jPos.y / 1e6 : null;
+      const jLon = jPos.x ? jPos.x / 1e6 : null;
+      if (sv) {
+        if (jLat && jLon && sv.missedCycles > 0) {
+          sv.data.lat = jLat;
+          sv.data.lon = jLon;
+          sv.marker.setLatLng([jLat, jLon]);
+          sv.missedCycles = 0;
+        }
+        ui.updateJourneyStopDelays(journeyData);
+        ui.drawRoute(journeyData, sv.data);
+      }
+    } catch (e) { console.warn('journey SSE handler:', e); }
+  });
+
+  _es.addEventListener('stationboard', function (ev) {
+    let data;
+    try { data = JSON.parse(ev.data); } catch (e) { return; }
+    if (!data || !data.lid) return;
+    if (!state.selectedStop || state.selectedStop.lid !== data.lid) return;
+    try {
+      ui.refreshStationBoard(state.selectedStop);
+    } catch (e) { console.warn('stationboard SSE handler:', e); }
+  });
+
   _es.addEventListener('error', function (ev) {
     // Server-emitted `error` SSE event (stale-on-upstream-fail). Browser-level
     // network errors do NOT come through addEventListener('error', ...); those

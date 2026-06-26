@@ -1,8 +1,6 @@
 """Tests for fanout.py — SubscriberRegistry + tick fanout primitives.
 
-Includes the 7 named cases mandated by the SSE-migration plan plus general
-unit tests for canonicalisation, queue policy, cap behaviour, and bucket
-counts."""
+Covers canonicalisation, queue policy, cap behaviour, and bucket counts."""
 from __future__ import annotations
 
 import asyncio
