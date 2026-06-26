@@ -352,7 +352,24 @@ export function refresh() {
 // polling here.
 function _handleVehiclesPayload(data) {
   const capturedInteractionSeq = state._userInteractionSeq;
-  const vehicles = data.vehicles || [];
+  let vehicles = data.vehicles || [];
+
+  // HAFAS JourneyGeoPos is a ring query (centre + maxDist), so the SSE
+  // payload includes vehicles that lie outside the four-corner viewport
+  // bbox but inside the ring. Filter to the actually-visible map bounds
+  // here so the counter and the rendered marker set match what the user
+  // sees. Without this, a 1200×800 desktop showed e.g. 53 in the counter
+  // but only ~46 markers within the map rectangle.
+  if (state.map) {
+    const bounds = state.map.getBounds();
+    const swLat = bounds.getSouth();
+    const neLat = bounds.getNorth();
+    const swLon = bounds.getWest();
+    const neLon = bounds.getEast();
+    vehicles = vehicles.filter(function (v) {
+      return v.lat >= swLat && v.lat <= neLat && v.lon >= swLon && v.lon <= neLon;
+    });
+  }
 
   if (data.serverTime) {
     const sh = parseInt(data.serverTime.slice(0, 2), 10);
