@@ -162,25 +162,14 @@ class TestRegistry:
         assert len(reg) == 5
 
     @pytest.mark.asyncio
-    async def test_display_count_buckets(self, reg):
-        assert reg.display_count() == "1"  # 0 → 1 bucket (display)
+    async def test_len_grows_with_subscribers(self, reg):
+        # display_count() was deleted — the SSE 'connected' event now ships
+        # the raw int and the frontend formats it.
+        assert len(reg) == 0
         await reg.subscribe("10.0.0.1")
-        assert reg.display_count() == "1"
+        assert len(reg) == 1
         await reg.subscribe("10.0.0.2")
-        assert reg.display_count() == "2-5"
-        for _ in range(4):
-            await reg.subscribe("10.0.0.3")
-        assert reg.display_count() == "6-20"
-        for _ in range(15):
-            await reg.subscribe(f"10.0.0.{i}" for i in range(4, 19))
-            break  # the comprehension above is just to add; do it properly below
-
-    @pytest.mark.asyncio
-    async def test_display_count_at_20_plus(self, reg):
-        # Stack 21 subscribers across 21 IPs to hit the "20+" bucket
-        for i in range(21):
-            await reg.subscribe(f"10.0.{i}.1")
-        assert reg.display_count() == "20+"
+        assert len(reg) == 2
 
 
 # === Tick fanout ===

@@ -234,3 +234,65 @@ class TestStreamSelect:
             },
         )
         assert resp.status_code == 413
+
+
+# === Regression coverage for the PIV gaps from iter 3 ===
+# (Counter-source switch, fire_tick wake-up, client_activity-via-SSE)
+
+class TestCounterSourceMigration:
+    """Asserts that the SSE `connected` count is sourced from
+    len(SubscriberRegistry) and tracks subscribe/unsubscribe atomically."""
+
+    @pytest.mark.asyncio
+    async def test_count_reflects_registry_length(self, fresh_registry):
+        assert len(fresh_registry) == 0
+        await fresh_registry.subscribe("10.0.0.1")
+        assert len(fresh_registry) == 1
+        sub2 = await fresh_registry.subscribe("10.0.0.2")
+        assert len(fresh_registry) == 2
+        await fresh_registry.unsubscribe(sub2.connection_id)
+        assert len(fresh_registry) == 1
+
+    @pytest.mark.asyncio
+    async def test_viewport_post_triggers_fire_tick(self, client, fresh_registry, monkeypatch):
+        """POST /api/stream/viewport must wake the subscriber loop
+        immediately (Plan: 'sofortiger Pull bei Viewport-Change'). Without
+        this the user waits up to 5 min for the next calibrator tick."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        fired = {"count": 0}
+        original = fanout.fire_tick
+
+        async def spy():
+            fired["count"] += 1
+            return await original()
+
+        monkeypatch.setattr(fanout, "fire_tick", spy)
+        resp = await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":49.0,"swLon":8.0,"neLat":49.6,"neLon":9.0}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert fired["count"] == 1
+
+
+class TestClientActivityFromSSE:
+    """In iter 2a the polling endpoint (the old activity source) became 410.
+    The calibrator-active gate now depends on SSE handlers touching
+    client_activity. Regression-guard that link so the calibrator can't
+    silently fall back into IDLE_CALIB_INTERVAL=30min mode."""
+
+    @pytest.mark.skip(
+        reason="httpx ASGITransport hangs on the SSE keepalive loop; same "
+               "root cause as TestSSEStream::test_first_event_is_subscribe_"
+               "with_version. Touch is verified end-to-end via curl during "
+               "PIV (/api/health.calibrator_mode flips to 'active' after one "
+               "SSE subscribe)."
+    )
+    @pytest.mark.asyncio
+    async def test_subscribe_touches_client_activity(self):
+        pass

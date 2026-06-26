@@ -29,11 +29,13 @@ let _gotFirstSubscribe = false;
 // pans during reconnect/connecting are silently dropped.
 let _pendingViewportSend = false;
 
-function _bucketize(n) {
-  if (n <= 1) return '1';
-  if (n <= 5) return '2-5';
-  if (n <= 20) return '6-20';
-  return '20+';
+function _formatConnectedCount(n) {
+  // Exact count for ≤99 (user preference: precise users beat coarse buckets),
+  // "100+" cap above so the status bar can't grow indefinitely wide on a
+  // hypothetical viral day.
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return null;
+  if (n >= 100) return '100+';
+  return String(n);
 }
 
 function _setSseState(s) {
@@ -106,7 +108,7 @@ export function startStream() {
     try {
       const d = JSON.parse(ev.data);
       if (typeof d.count === 'number') {
-        state._lastConnectedClients = _bucketize(d.count);
+        state._lastConnectedClients = _formatConnectedCount(d.count);
       }
     } catch (e) {}
   });
