@@ -32,19 +32,23 @@ MAX_CONSECUTIVE_FAILURES = 3
 CIRCUIT_BREAKER_COOLDOWN = 30.0
 
 
-# JID format observed from HAFAS: pipe-delimited tuple
-#   "<num>|<alnum>|<num>|<num>|<DDMMYY[YY]>". The earlier 67-char-class regex
-# admitted 300 chars of nearly-arbitrary content, which under the new
-# /select-driven fetch path turned into a cache-flush primitive. Tighten to
-# the actual shape; max_length on the Pydantic field still caps absolute size.
-# Use [0-9] not \d — Python 3 `re` is Unicode-by-default, so `\d` matches
-# Arabic-Indic and other Nd-category digits, producing ~660 distinct cache
-# keys for one logical value (a cache-key-fabrication primitive).
-JID_PATTERN = re.compile(r"^[0-9]{1,3}\|[A-Za-z0-9]{1,32}\|[0-9]+\|[0-9]+\|[0-9]{6,8}$")
-# LID format: "A=<num>@..." with a constrained tail. The previous pattern
-# anchored only the prefix, letting attackers append arbitrary distinct
-# suffixes to fabricate cache keys. End-anchor the tail to a known alphabet.
-LID_PATTERN = re.compile(r"^A=[0-9]+@[A-Za-z0-9=@:_\-. ×|#]{0,180}$")
+# JID/LID patterns:
+# - Use [0-9] explicitly NOT \d, because Python 3 `re` defaults to Unicode
+#   mode where \d matches Arabic-Indic / Devanagari digits — that's the
+#   cache-key-fabrication primitive we want to block.
+# - Stay loose on the alphabet: real HAFAS jids carry hash-structured
+#   payloads like "2|#VN#1#ST#1782426904#PI#0#…#ZB#Bus  721#…" (embedded
+#   spaces, # separators, mixed-case alpha). An earlier tightening tried
+#   to constrain the shape to "<num>|<alnum>|<num>|<num>|<date>" — that's
+#   the documented EXAMPLE format, not the actual production wire format.
+# - End-anchored + length-bounded (Pydantic max_length=300) keeps the
+#   cache-key surface bounded.
+JID_PATTERN = re.compile(r"^[0-9|#A-Za-z@:_\-. ]+$")
+# LID format: real-world looks like `A=1@O=Sandhausen Altes Rathaus@L=6003411@`
+# or with German umlauts in stop names. Keep the prefix tight (`A=<num>@`),
+# end-anchor, but accept the wider alphabet observed in the wild. Length cap
+# (Pydantic max_length=300) bounds the cache-key surface.
+LID_PATTERN = re.compile(r"^A=[0-9]+@[\w#|=.\-: @äöüÄÖÜß×]*$")
 
 
 log = logging.getLogger("busradar")
