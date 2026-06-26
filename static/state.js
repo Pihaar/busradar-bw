@@ -36,11 +36,9 @@ export var state = {
   // increment on user gesture; async handlers compare captured-vs-current to detect interruption
   _userInteractionSeq: 0,
   _nextFreshDataIn: null,
-  _clientId: null,
-  _connectedClientsErrorStreak: 0,
-  _lastConnectedClients: undefined,
   _appVersion: null,
   _appVersionFetch: null,
+  _lastConnectedClients: undefined,
   // Iter 2a: SSE connection state. 'connecting' | 'open' | 'reconnecting' | 'failed-terminal'.
   _sseState: 'connecting',
   // One-shot latch for the version-update banner. Once set, stays set for the

@@ -361,12 +361,14 @@ class TestSecurityHeaders:
 
 @pytest.fixture
 def fresh_connected_clients(monkeypatch):
-    """Frischer ConnectedClients-Counter pro Test (Test-Isolation)."""
-    import proxy
-    from tick import ConnectedClients
-    fresh = ConnectedClients()
-    monkeypatch.setattr(proxy, "connected_clients", fresh)
-    return fresh
+    """Iter 3 stub. ConnectedClients was deleted; tests using this fixture
+    are all @pytest.mark.skip and will be removed in iter 4. The fixture
+    returns a placeholder so collection succeeds without importing removed
+    symbols."""
+    class _Stub:
+        def count(self): return 0
+        def touch(self, *a, **kw): pass
+    return _Stub()
 
 
 @pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")

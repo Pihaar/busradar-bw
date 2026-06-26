@@ -7,30 +7,10 @@ import { startStream, notifyViewportChange, refresh, showError, announce } from 
 
 var SETTINGS_KEY = 'busradar_settings_v1';
 
-// === CLIENT ID ===
-// Iter 3 of the SSE migration will delete this entirely once the
-// ConnectedClients UUID-header counter is gone. For now it stays so the
-// (deprecated 410-Gone) /api/vehicles endpoint and any other legacy fetch
-// path see a stable identifier.
-function _generateClientId() {
-  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-    try { return window.crypto.randomUUID(); } catch (e) { /* fallthrough */ }
-  }
-  if (window.crypto && window.crypto.getRandomValues) {
-    try {
-      var b = new Uint8Array(16);
-      window.crypto.getRandomValues(b);
-      b[6] = (b[6] & 0x0f) | 0x40;  // version 4
-      b[8] = (b[8] & 0x3f) | 0x80;  // variant 10
-      var hex = Array.prototype.map.call(b, function(x) { return ('0' + x.toString(16)).slice(-2); }).join('');
-      return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20, 32);
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
-}
-state._clientId = _generateClientId();
+// Iter 3 of the SSE migration removed the tab-local UUID client-id mechanism.
+// The connected-clients counter is now driven by fanout.SubscriberRegistry on
+// the server, identified by the SSE connection itself (HttpOnly cookie). No
+// fetch from the browser carries X-Client-Id anymore.
 
 // === SETTINGS UI BINDING ===
 settings._bindUI = function() {
