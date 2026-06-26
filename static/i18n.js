@@ -241,6 +241,9 @@
   de.connection_lost_terminal = 'Verbindung zum Server verloren.';
   en.connection_lost_terminal = 'Connection to server lost.';
 
+  de.connection_lost = 'Verbindung unterbrochen — versuche neu zu verbinden …';
+  en.connection_lost = 'Connection lost — reconnecting …';
+
   de.connection_stale = 'Daten sind nicht aktuell — Server-Probleme.';
   en.connection_stale = 'Data is stale — upstream problems.';
 

@@ -425,8 +425,8 @@ class TestSelectRateLimit:
     async def test_per_ip_rate_limit_closes_cookie_rotation_bypass(self, client, fresh_registry):
         """Same IP spawns N subscribers, each with a fresh burst-3 bucket.
         Without a per-IP cap an attacker could fire 60 POSTs (3 × 20 subs).
-        The per-IP bucket (burst 10) caps the cross-subscriber total."""
-        subs = [await fresh_registry.subscribe("127.0.0.1") for _ in range(5)]
+        The per-IP bucket caps the cross-subscriber total."""
+        subs = [await fresh_registry.subscribe("127.0.0.1") for _ in range(15)]
         body = '{"selection":null}'
         accepted = 0
         for sub in subs:
@@ -439,9 +439,11 @@ class TestSelectRateLimit:
                 r = await client.post("/api/stream/select", content=body, headers=headers)
                 if r.status_code == 200:
                     accepted += 1
-        # With per-IP burst 10, total accepted is capped near 10 (some refill
-        # may happen mid-test, so we allow a small margin).
-        assert accepted <= 12, f"per-IP cap should limit total POSTs, got {accepted}"
+        # With per-IP burst 30, total accepted is capped near 30. Without
+        # the per-IP cap an attacker would land 45 (15 × 3); the cap closes
+        # that bypass. Small margin for refill mid-test.
+        assert accepted <= 35, f"per-IP cap should limit total POSTs, got {accepted}"
+        assert accepted < 45, "without per-IP cap all 45 would have landed"
 
 
 class TestSelectNoFireTickAmplification:
@@ -633,6 +635,108 @@ class TestLidPatternEndAnchored:
         assert resp.status_code == 200, f"umlaut LID must be accepted, got {resp.text}"
 
     @pytest.mark.asyncio
+    async def test_real_hafas_full_qualified_lid_accepted(self, client, fresh_registry):
+        """Real-world fully-qualified LID from a production click — must
+        accept the comma in the provider metadata and the long form with
+        X/Y/U/i fields. An earlier tightening dropped the comma and broke
+        every Wiesloch-Walldorf stop click in production (422 on the
+        legacy POST too)."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        full = "A=1@O=Wiesloch-Walldorf Bahnhof@X=8664801@Y=49291306@U=80@L=44278341@i=A×de:08226:4252:1:A,b×BRN_304521@"
+        # Wire JSON: pass the raw string; httpx will escape it properly.
+        import json
+        body = json.dumps({"selection": {"kind": "stationboard", "lid": full}})
+        resp = await client.post(
+            "/api/stream/select",
+            content=body,
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200, f"full-form LID must be accepted, got {resp.text}"
+
+    @pytest.mark.asyncio
+    async def test_lid_trailing_newline_rejected(self, client, fresh_registry):
+        # In Python, `$` matches before a trailing `\n` even without
+        # MULTILINE. Use \\Z to anchor at true end of string or this LID
+        # slips through and reaches HAFAS with an injected newline.
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@\\n"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_lid_trailing_cr_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@\\r"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_lid_trailing_crlf_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@\\r\\n"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_jid_trailing_newline_rejected(self, client, fresh_registry):
+        # JID_PATTERN uses \\A...\\Z for the same reason as LID — `$` lets
+        # a trailing newline through in default mode.
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"journey","jid":"1|abc|0|80|22052026\\n"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_lid_with_parentheses_accepted(self, client, fresh_registry):
+        # Station names with parens like `Köln(Hbf)` or `Frankfurt(Main)Hbf`
+        # exist in HAFAS. The hotfix widened LID_PATTERN; lock that in.
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        import json
+        body = json.dumps({"selection": {"kind": "stationboard", "lid": "A=1@O=Köln(Hbf)@L=8000207@"}})
+        resp = await client.post(
+            "/api/stream/select",
+            content=body,
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
     async def test_lid_trailing_garbage_rejected(self, client, fresh_registry):
         sub = await fresh_registry.subscribe("127.0.0.1")
         # NUL byte after a valid prefix — must be rejected (NUL isn't in
@@ -797,6 +901,156 @@ class TestSelectEdgeCases:
             },
         )
         assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_zero_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":0}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_negative_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":-60}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_1440_accepted_upper_bound(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":1440}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection.dur == 1440
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_string_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":"60"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        # Pydantic v2 with no strict mode actually coerces "60" → 60. The
+        # value is then in range and a multiple of 60, so 200 is fine.
+        # Locking the current behaviour so a future model_config change
+        # to strict=True surfaces visibly.
+        assert resp.status_code == 200
+        assert sub.selection.dur == 60
+
+    @pytest.mark.asyncio
+    async def test_stationboard_default_dur_60(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@"}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection.dur == 60
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_300_accepted(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":300}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection.dur == 300
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_below_60_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":30}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_above_1440_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":2000}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_dur_non_multiple_rejected(self, client, fresh_registry):
+        # Non-multiples of 60 are 422'd — silent normalisation would have
+        # let a confused client inherit a narrower window than it rendered
+        # for and trip the midnight-wrap regression that motivated the
+        # dur field in the first place.
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"selection":{"kind":"stationboard","lid":"A=1@L=6003411@","dur":75}}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_stationboard_cache_key_includes_dur(self):
+        # Two selections at the same lid but different dur produce distinct
+        # cache keys — otherwise a dur=300 subscriber would get served the
+        # dur=60 cache hit and lose the midnight-wrap entries it expanded
+        # to see.
+        sel_60 = fanout.StationSelection(lid="A=1@L=6003411@", dur=60)
+        sel_300 = fanout.StationSelection(lid="A=1@L=6003411@", dur=300)
+        assert sel_60.cache_key() != sel_300.cache_key()
+        assert sel_60.cache_key()[2] == 60
+        assert sel_300.cache_key()[2] == 300
 
 
 class TestUnicodeDigitRejection:

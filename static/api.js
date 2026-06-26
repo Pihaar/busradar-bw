@@ -60,16 +60,24 @@ export var api = {
   // over the stream rather than per-tick polls.
   //
   // Wire format is a Pydantic discriminated union on the server side:
-  //   selectStream('journey', jid)               → {"selection":{"kind":"journey","jid":...}}
-  //   selectStream('stationboard', lid, 'DEP')   → {"selection":{"kind":"stationboard","lid":...,"board_type":"DEP"}}
-  //   selectStream('stationboard', lid, 'ARR')   → {"selection":{"kind":"stationboard","lid":...,"board_type":"ARR"}}
-  //   selectStream('none')                       → {"selection":null}
-  selectStream: function(type, id, boardType) {
+  //   selectStream('journey', jid)                     → {"selection":{"kind":"journey","jid":...}}
+  //   selectStream('stationboard', lid, 'DEP', 60)     → {"selection":{"kind":"stationboard","lid":...,"board_type":"DEP","dur":60}}
+  //   selectStream('stationboard', lid, 'ARR', 300)    → {"selection":{"kind":"stationboard","lid":...,"board_type":"ARR","dur":300}}
+  //   selectStream('none')                             → {"selection":null}
+  //
+  // The `dur` value must match the window the client is currently rendering
+  // (auto-expand walks 60→120→…→1440 until results appear). Pushing the
+  // wrong dur shrinks the displayed list on every tick.
+  selectStream: function(type, id, boardType, dur) {
     var selection;
     if (type === 'journey') {
       selection = { kind: 'journey', jid: id };
     } else if (type === 'stationboard') {
-      selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP' };
+      var d = parseInt(dur, 10);
+      if (!isFinite(d) || d < 60) d = 60;
+      if (d > 1440) d = 1440;
+      if (d % 60 !== 0) d = 60;
+      selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP', dur: d };
     } else {
       selection = null;
     }

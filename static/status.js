@@ -37,7 +37,21 @@ export function formatStatusText(count, users, timeStr) {
 }
 
 export function updateStatus(count, dataAge, users) {
-  if (state._errorUntil && Date.now() < state._errorUntil) { state._lastBusCount = count; return; }
+  // A fresh vehicles event is itself the recovery signal: clear any
+  // persistent error (stale-flag, connection-lost banner) before painting
+  // the live state. Without this, the 45s stale-timer setting
+  // _errorUntil=Infinity wedges the dot red forever even after data
+  // resumes (the `online` window event can clear it too, but only when
+  // navigator.onLine actually flips — proxy stalls don't trigger that).
+  // Transient `showError` calls (5s window) still suppress updates as
+  // before — only the Infinity persistent state gets short-circuited.
+  if (state._errorUntil === Infinity) {
+    state._errorUntil = 0;
+    state.consecutiveErrors = 0;
+  } else if (state._errorUntil && Date.now() < state._errorUntil) {
+    state._lastBusCount = count;
+    return;
+  }
   var dot = document.querySelector('.status-dot');
   var text = document.getElementById('status-text');
   dot.className = 'status-dot status-dot--live';

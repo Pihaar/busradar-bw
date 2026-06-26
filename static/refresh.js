@@ -45,6 +45,21 @@ function _formatConnectedCount(n) {
 function _setSseState(s) {
   state._sseState = s;
   if (ui && typeof ui.updateSseState === 'function') ui.updateSseState(s);
+  // The visible status-dot lives in status.js and is only ever flipped to
+  // `--live` from `updateStatus()` on a successful vehicles event. Without
+  // these explicit transitions the dot stayed `--live` indefinitely while
+  // the SSE stream was reconnecting or terminally dead — the e2e
+  // TestOffline regression. Mirror the SSE state onto the dot:
+  //   reconnecting / failed-terminal → showPersistentError → --offline or --error
+  //   open                            → clearPersistentError (let next vehicles tick paint --live)
+  if (s === 'reconnecting' || s === 'failed-terminal') {
+    state.consecutiveErrors = (state.consecutiveErrors || 0) + 1;
+    showPersistentError(
+      s === 'failed-terminal' ? t('connection_lost_terminal') : t('connection_lost')
+    );
+  } else if (s === 'open') {
+    clearPersistentError();
+  }
 }
 
 function _maybeUpdateAppVersion(v) {
@@ -205,6 +220,43 @@ document.addEventListener('visibilitychange', function () {
 });
 
 // 1s status ticker — independent of network. Same behaviour as before.
+// HAFAS pushes vehicles every ~30s tick. If we don't see one for this long
+// the stream is effectively dead even when the underlying TCP/EventSource
+// thinks it's open — happens when an intermediary (nginx, mobile proxy,
+// page.route abort in tests) drops new outgoing fetches but lets the
+// existing SSE socket idle. Flip the dot to --offline so the user sees it.
+//
+// 45s is a generous floor: HAFAS ticks ~30s, and the first tick on a fresh
+// stream can be up to one tick away (so worst-case 30s + slack). At 45s we
+// flag a stale stream without flapping on normal tick-to-tick latency.
+const STALE_THRESHOLD_MS = 45000;
+
+// Network-loss signal independent of the SSE stream. The browser's offline
+// event fires when navigator.onLine flips false (radio off, no carrier),
+// which we surface immediately rather than waiting for the SSE socket to
+// notice it. The E2E offline-indicator test relies on this signal — for
+// the test we synthesize an offline state via a probe further down.
+window.addEventListener('offline', function () {
+  showPersistentError(t('connection_lost'));
+});
+window.addEventListener('online', function () {
+  // Don't auto-clear; let the next vehicles event paint --live so the user
+  // sees data arriving before the indicator goes green.
+  if (_es && _es.readyState === 2) {
+    _reconnectAttempt = 0;
+    clearTimeout(_reconnectTimer);
+    startStream();
+  } else if (_es && _es.readyState === 1) {
+    // Socket survived the offline blip — clear the persistent error
+    // banner here so the next vehicles tick can paint --live again.
+    // Without this clear, the showPersistentError set on `offline` leaves
+    // _errorUntil=Infinity, and updateStatus wedges into early-return on
+    // every tick (status.js has a matching safety net for the proxy-stall
+    // case where this `online` event never fires).
+    clearPersistentError();
+  }
+});
+
 setInterval(function () {
   if (state._currentStopL && state.selectedJid) {
     ui.updateStopProgress(state._currentStopL);
@@ -212,6 +264,19 @@ setInterval(function () {
   if (state.serverTimeStamp && state._lastBusCount !== undefined && !(state._errorUntil && Date.now() < state._errorUntil)) {
     const textEl = document.getElementById('status-text');
     if (textEl) textEl.textContent = formatStatusText(state._lastBusCount, state._lastConnectedClients, getServerTimeStr());
+  }
+  // Stale-stream guard. lastUpdate is bumped by every vehicles event;
+  // when it ages past STALE_THRESHOLD_MS we transition the dot to
+  // --offline and let the next event clear it. Also reacts to the
+  // navigator.onLine flag for instant offline feedback (test scaffold +
+  // real-world radio-off scenarios where SSE doesn't immediately error).
+  var staleByTime = state.lastUpdate && Date.now() - state.lastUpdate > STALE_THRESHOLD_MS;
+  var offlineByNavigator = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (staleByTime || offlineByNavigator) {
+    var dot = document.querySelector('.status-dot');
+    if (dot && !dot.classList.contains('status-dot--offline') && !dot.classList.contains('status-dot--error')) {
+      showPersistentError(t('connection_stale'));
+    }
   }
 }, 1000);
 
