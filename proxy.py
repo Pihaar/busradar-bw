@@ -31,8 +31,8 @@ from pydantic import BaseModel, Field, field_validator
 
 import fanout
 from tick import (
-    TickTracker, ClientActivity, ConnectedClients, inject_tick_hints, tick_calibrator,
-    is_valid_client_id, _TICK_ENABLED, TICK_MAX_AGE,
+    TickTracker, ClientActivity, tick_calibrator,
+    _TICK_ENABLED, TICK_MAX_AGE,
 )
 
 HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
@@ -203,7 +203,6 @@ cache = _Cache(ttl=CACHE_TTL)
 stops_cache = _Cache(daily_reset_hour=3)
 breaker = _CircuitBreaker()
 client_activity = ClientActivity()
-connected_clients = ConnectedClients()
 tick_tracker = TickTracker()
 _inflight: dict[tuple, asyncio.Future] = {}
 
@@ -215,8 +214,11 @@ async def lifespan(app: FastAPI):
     # set up before that fires, fail loud rather than silently miss ticks.
     if not hasattr(fanout, "tick_condition") or not hasattr(fanout, "registry"):
         raise RuntimeError("fanout module not initialized before lifespan")
-    # Single-Worker-Annahme für ConnectedClients-Counter: jeder Worker hat eigene Map.
-    # Bei N Workern würde der Counter durch N geteilt erscheinen.
+    # Single-worker assumption for the SubscriberRegistry: each uvicorn worker
+    # has its own in-memory registry. With N workers the connected-clients
+    # count would appear divided by N and viewport-POST cookies could route
+    # to the wrong worker. The SSE migration plan documents this as the
+    # explicit out-of-scope limit; revisit if multi-worker is needed.
     try:
         wc = int(os.environ.get("WEB_CONCURRENCY", "1"))
         if wc > 1:
@@ -452,16 +454,6 @@ def _flatten_vehicles(res: dict) -> list[dict]:
         })
 
     return vehicles
-
-
-def _inject_tick_hints(result: dict) -> dict:
-    return inject_tick_hints(result, tick_tracker, connected_clients.display_count(), _VERSION)
-
-
-def _inject_tick_hints_no_count(result: dict) -> dict:
-    """Used on stale/error paths to suppress the counter so the bucket isn't
-    leaked as a recon surface during HAFAS outages; the frontend guards this."""
-    return inject_tick_hints(result, tick_tracker, None, _VERSION)
 
 
 @app.get("/api/vehicles")
