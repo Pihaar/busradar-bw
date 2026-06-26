@@ -49,7 +49,10 @@ INFLECTION_VIEWPORTS = 50
 BBOX_QUANTIZE_DEG = 0.01          # ~1.1 km grid; viewports <1.1km collapse on purpose
 
 
-# === Selection Tagged Union (used by iter 4, defined now so Subscriber is final) ===
+# === Selection Tagged Union ===
+# Mutually exclusive subscriber state: either a selected journey, a selected
+# stationboard, or neither. The type tag enforces the mutex at parse time
+# (Pydantic), saving us from defending the invariant in code.
 
 @dataclass(frozen=True)
 class JourneySelection:
@@ -68,7 +71,9 @@ Selection = Union[None, JourneySelection, StationSelection]
 
 @dataclass
 class Subscriber:
-    """All fields final in iter 1. Iter 4 only adds behavior, not schema."""
+    """Open EventSource. Fields are populated incrementally as the client
+    sends viewport / selection POSTs; defaults mean the loop emits nothing
+    useful until the client tells the server what it cares about."""
     connection_id: str
     ip: str                                    # canonicalized (IPv4 /32 or IPv6 /64)
     viewport: tuple[float, float, float, float] | None = None  # (swLat, swLon, neLat, neLon)
@@ -160,8 +165,8 @@ class CapExceeded(Exception):
     """Raised when subscribe would exceed an IP- or global-cap.
 
     The `scope` ("ip" or "global") is surfaced in the 429-body so the
-    frontend can show a differentiated banner. Recon trade-off was made
-    explicitly in favor of UX during the SSE plan review."""
+    frontend can show a differentiated banner. The recon trade-off (a
+    scanner can probe which cap fired) is accepted in favor of UX."""
     def __init__(self, scope: str, limit: int) -> None:
         self.scope = scope
         self.limit = limit

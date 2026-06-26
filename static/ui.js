@@ -351,6 +351,9 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    // Tell the SSE stream we no longer have a selection, so the
+    // server stops shipping journey/stationboard events for this subscriber.
+    api.selectStream('none').catch(function () {});
     if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
     markers.highlightSelected(null);
     this.clearRoute();
@@ -406,6 +409,10 @@ export var ui = {
       state.selectedJourneyData = data;
       ui.renderJourneyStops(data, vehicle);
       ui.drawRoute(data, vehicle);
+      // Subscribe the SSE stream to push journey updates every tick. The
+      // one-off getJourney above is still needed so the panel renders
+      // synchronously on click; SSE then drives every subsequent refresh.
+      api.selectStream('journey', vehicle.jid).catch(function () {});
       announce(t('route_loaded', {line: vehicle.line}));
     }).catch(function(err) {
       if (err.name === 'AbortError') return;
@@ -1086,6 +1093,12 @@ export var ui = {
 
     ui.loadDepartures(loc, stopExtId, 60, true);
     ui.loadArrivals(loc, stopExtId, 60, true);
+    // Subscribe the SSE stream so the departure list refreshes on every
+    // tick. ARR is still loaded explicitly when the user switches tab;
+    // SSE only pushes DEP.
+    if (loc && loc.lid) {
+      api.selectStream('stationboard', loc.lid).catch(function () {});
+    }
   },
 
   loadDepartures: function(loc, stopExtId, dur, autoExpand) {

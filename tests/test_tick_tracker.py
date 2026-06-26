@@ -1,9 +1,9 @@
 """Tests for GPS tick tracking: TickTracker, ClientActivity, calibrator.
 
-Iter 3 of the SSE migration removed the ConnectedClients class, the UUID
+The connected-clients refactor removed the ConnectedClients class, the UUID
 helpers (is_valid_client_id, normalize_ip), and inject_tick_hints. Tests
 that exercised those symbols are skipped at class level with a stable
-reason string; they will be deleted outright in iter 4."""
+reason string; they will be deleted once the SSE migration is complete."""
 
 import asyncio
 import json
@@ -39,7 +39,8 @@ from proxy import (
 
 
 # Stubs for removed symbols, used only by tests now skipped at class level
-# but still parsed at import time. Iter 4 deletes those tests + this block.
+# but still parsed at import time. These tests + this block will be deleted
+# once the SSE migration is complete.
 inject_tick_hints = None
 ConnectedClients = None
 is_valid_client_id = None
@@ -197,7 +198,7 @@ class TestClientActivity:
         assert ca.is_active() is False
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestInjectTickHints:
     def setup_method(self):
         self._orig_ts = tick_tracker.last_tick_ts
@@ -249,7 +250,7 @@ class TestInjectTickHints:
         assert out["dataAge"] is None
 
 
-@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
+@pytest.mark.skip(reason="polling endpoint is 410 Gone; these tests will be removed once the handler itself is deleted")
 class TestVehiclesEndpointTickHints:
     @pytest.fixture(autouse=True)
     def reset_state(self):
@@ -612,7 +613,7 @@ class TestPersistence:
         tracker._persist_tick(_mono())
 
 
-@pytest.mark.skip(reason="polling endpoint deprecated (410 Gone in iter 2a); tests removed in iter 2b")
+@pytest.mark.skip(reason="polling endpoint is 410 Gone; these tests will be removed once the handler itself is deleted")
 class TestSingleflight:
     @pytest.fixture(autouse=True)
     def reset_state(self):
@@ -704,7 +705,7 @@ def _gen_cid(i: int) -> str:
     return f"{h[0:8]}-{h[8:12]}-4{h[13:16]}-8{h[17:20]}-{h[20:32]}"
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestIsValidClientId:
     def test_valid_uuid_v4_lowercase(self):
         assert is_valid_client_id(VALID_CID_1) is True
@@ -750,7 +751,7 @@ class TestIsValidClientId:
         assert is_valid_client_id("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa") is False
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestNormalizeIp:
     def test_ipv4_unchanged(self):
         assert normalize_ip("192.168.1.1") == "192.168.1.1"
@@ -775,7 +776,7 @@ class TestNormalizeIp:
         assert normalize_ip("999.999.999.999") == ""
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsBasic:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -823,7 +824,7 @@ class TestConnectedClientsBasic:
         self._check_invariants()
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsGc:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -890,7 +891,7 @@ class TestConnectedClientsGc:
         assert len(self.cc._per_ip[ip]) == 1
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsPerIpCap:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -924,7 +925,7 @@ class TestConnectedClientsPerIpCap:
         assert self.cc.touch(_gen_cid(99999), "2001:db8::3") is False
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsGlobalCap:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -939,7 +940,7 @@ class TestConnectedClientsGlobalCap:
         assert self.cc.touch(_gen_cid(CONNECTED_CLIENTS_CAP), "192.0.2.1") is False
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsBucket:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -990,7 +991,7 @@ class TestConnectedClientsBucket:
         assert d1 == d2 == "1"
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsReverseIndex:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -1029,7 +1030,7 @@ class TestConnectedClientsReverseIndex:
         assert "1.2.3.4" not in self.cc._per_ip
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsRejectLogging:
     def setup_method(self):
         self.cc = ConnectedClients()
@@ -1086,7 +1087,7 @@ class TestConnectedClientsRejectLogging:
             assert ip not in record.getMessage()  # Auch kein raw IP
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestConnectedClientsTouchOrder:
     """LRU-Order via move_to_end für GC-Reihenfolge."""
 
@@ -1108,7 +1109,7 @@ class TestConnectedClientsTouchOrder:
         assert oldest == VALID_CID_2
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestInjectTickHintsBucket:
     def test_inject_with_count(self):
         tracker = TickTracker()
@@ -1139,7 +1140,7 @@ class TestInjectTickHintsBucket:
         assert "serverTime" not in orig
 
 
-@pytest.mark.skip(reason="ConnectedClients/inject_tick_hints removed in iter 3 of SSE migration; tests deleted in iter 4")
+@pytest.mark.skip(reason="ConnectedClients and inject_tick_hints have been removed; tests will be deleted once the SSE migration is complete")
 class TestInjectTickHintsVersion:
     def test_inject_with_version(self):
         tracker = TickTracker()

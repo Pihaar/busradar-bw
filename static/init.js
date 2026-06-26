@@ -7,10 +7,10 @@ import { startStream, notifyViewportChange, refresh, showError, announce } from 
 
 var SETTINGS_KEY = 'busradar_settings_v1';
 
-// Iter 3 of the SSE migration removed the tab-local UUID client-id mechanism.
-// The connected-clients counter is now driven by fanout.SubscriberRegistry on
-// the server, identified by the SSE connection itself (HttpOnly cookie). No
-// fetch from the browser carries X-Client-Id anymore.
+// The tab-local UUID client-id mechanism is gone. The connected-clients
+// counter is now driven by the SSE subscriber registry on the server,
+// identified by the SSE connection itself (HttpOnly cookie). No fetch from
+// the browser carries X-Client-Id anymore.
 
 // === SETTINGS UI BINDING ===
 settings._bindUI = function() {
@@ -32,9 +32,9 @@ settings._bindUI = function() {
       self._userRefreshInterval = self.current.refreshInterval;
       self._save();
       state.currentInterval = self.current.refreshInterval;
-      // Iter 2a: the SSE stream pushes data at the HAFAS-tick cadence;
-      // there is no setTimeout poll loop to nudge. Refresh-Intervall setting
-      // is kept only for the 1s status ticker / status text formatting.
+      // The SSE stream pushes data at the HAFAS-tick cadence; there is no
+      // setTimeout poll loop to nudge. Refresh-interval setting is kept
+      // only for the 1s status ticker / status text formatting.
       notifyViewportChange();
       self._updateGroup('setting-refresh', opt.dataset.value);
       announce(t('announce_refresh', {n: self.current.refreshInterval / 1000}));

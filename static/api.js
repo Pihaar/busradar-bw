@@ -53,6 +53,22 @@ export var api = {
       return r.json();
     });
   },
+
+  // Tag the SSE subscriber with a current journey or stationboard. The server
+  // then ships matching SSE events on every tick. Used alongside the one-off
+  // getJourney/getStationBoard fetches above so detail-panel updates flow
+  // over the stream rather than per-tick polls.
+  selectStream: function(type, id) {
+    return window.fetch(CONFIG.apiBase + '/stream/select', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: type, id: id || ''}),
+      credentials: 'same-origin',
+    }).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  },
 };
 
 // === URL STATE ===

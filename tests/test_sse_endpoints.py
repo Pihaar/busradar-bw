@@ -1,8 +1,8 @@
 """Integration tests for the SSE endpoints in proxy.py.
 
-Covers the contracts of /api/stream/, /api/stream/viewport, /api/stream/select
-that the SSE-migration plan declared in Iter 1. Pure unit-level (no real
-HAFAS), uses FastAPI TestClient via httpx.AsyncClient + an asgi-transport."""
+Covers the contracts of /api/stream/, /api/stream/viewport, /api/stream/select.
+Pure unit-level (no real HAFAS), uses FastAPI TestClient via httpx.AsyncClient
++ an asgi-transport."""
 from __future__ import annotations
 
 import json
@@ -48,7 +48,7 @@ class TestSSEStream:
     @pytest.mark.skip(reason="SSE stream test hangs under httpx-asgi; verified via curl smoke")
     @pytest.mark.asyncio
     async def test_first_event_is_subscribe_with_version(self, client, fresh_registry):
-        # Headers + first SSE frames are smoke-tested live with curl during PIV.
+        # Headers + first SSE frames are smoke-tested live with curl.
         # httpx ASGITransport doesn't cleanly close streaming responses against
         # an async generator that never returns (keepalive loop), so this is
         # parked. Live coverage:
@@ -195,21 +195,104 @@ class TestStreamViewport:
 
 class TestStreamSelect:
     @pytest.mark.asyncio
-    async def test_select_stub_returns_501(self, client, fresh_registry):
+    async def test_select_journey_happy_path(self, client, fresh_registry):
+        """Valid journey selection stores it on the subscriber and
+        wakes the loop (fire_tick)."""
         sub = await fresh_registry.subscribe("127.0.0.1")
         resp = await client.post(
             "/api/stream/select",
-            content='{"type":"journey","id":"abc"}',
+            content='{"type":"journey","id":"1|12345|0|80|22052026"}',
             headers={
                 "Origin": "http://localhost:8000",
                 "Content-Type": "application/json",
                 "Cookie": f"busradar_sse={sub.connection_id}",
             },
         )
-        assert resp.status_code == 501
-        body = resp.json()
-        assert body["error"] == "not_implemented"
-        assert body["iter"] == 4
+        assert resp.status_code == 200
+        assert isinstance(sub.selection, fanout.JourneySelection)
+        assert sub.selection.jid == "1|12345|0|80|22052026"
+
+    @pytest.mark.asyncio
+    async def test_select_stationboard_happy_path(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"type":"stationboard","id":"A=1@L=6003411@"}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert isinstance(sub.selection, fanout.StationSelection)
+        assert sub.selection.lid == "A=1@L=6003411@"
+
+    @pytest.mark.asyncio
+    async def test_select_none_clears(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        sub.selection = fanout.JourneySelection(jid="prev")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"type":"none","id":""}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 200
+        assert sub.selection is None
+
+    @pytest.mark.asyncio
+    async def test_select_invalid_jid_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"type":"journey","id":"<script>alert(1)</script>"}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_select_invalid_lid_rejected(self, client, fresh_registry):
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        resp = await client.post(
+            "/api/stream/select",
+            content='{"type":"stationboard","id":"not-a-lid"}',
+            headers={
+                "Origin": "http://localhost:8000",
+                "Content-Type": "application/json",
+                "Cookie": f"busradar_sse={sub.connection_id}",
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_select_rapid_switch_bumps_selection_seq(self, client, fresh_registry):
+        """Rapid journey→stationboard→journey switches must monotonically
+        increment selection_seq so the SSE loop discards stale results."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        seq_initial = getattr(sub, "selection_seq", 0)
+        for body in [
+            '{"type":"journey","id":"1|11"}',
+            '{"type":"stationboard","id":"A=1@L=6003411@"}',
+            '{"type":"journey","id":"1|22"}',
+        ]:
+            await client.post(
+                "/api/stream/select",
+                content=body,
+                headers={
+                    "Origin": "http://localhost:8000",
+                    "Content-Type": "application/json",
+                    "Cookie": f"busradar_sse={sub.connection_id}",
+                },
+            )
+        assert sub.selection_seq == seq_initial + 3
 
     @pytest.mark.asyncio
     async def test_select_enforces_origin_first(self, client, fresh_registry):
@@ -236,7 +319,7 @@ class TestStreamSelect:
         assert resp.status_code == 413
 
 
-# === Regression coverage for the PIV gaps from iter 3 ===
+# === Regression coverage for the connected-clients refactor ===
 # (Counter-source switch, fire_tick wake-up, client_activity-via-SSE)
 
 class TestCounterSourceMigration:
@@ -281,16 +364,16 @@ class TestCounterSourceMigration:
 
 
 class TestClientActivityFromSSE:
-    """In iter 2a the polling endpoint (the old activity source) became 410.
-    The calibrator-active gate now depends on SSE handlers touching
+    """When the polling endpoint (the old activity source) became 410, the
+    calibrator-active gate started depending on SSE handlers touching
     client_activity. Regression-guard that link so the calibrator can't
     silently fall back into IDLE_CALIB_INTERVAL=30min mode."""
 
     @pytest.mark.skip(
         reason="httpx ASGITransport hangs on the SSE keepalive loop; same "
                "root cause as TestSSEStream::test_first_event_is_subscribe_"
-               "with_version. Touch is verified end-to-end via curl during "
-               "PIV (/api/health.calibrator_mode flips to 'active' after one "
+               "with_version. Touch is verified end-to-end via curl smoke "
+               "test (/api/health.calibrator_mode flips to 'active' after one "
                "SSE subscribe)."
     )
     @pytest.mark.asyncio
