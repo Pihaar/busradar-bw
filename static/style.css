@@ -1135,12 +1135,14 @@ html, body {
   padding: 12px 0 4px;
   border-top: 1px solid var(--border-subtle);
   margin-top: 10px;
-  /* Tall enough to fit every setting + the longest contextual hint
-     (currently the "Animation deaktiviert" / GPS-only hint that drops
-     in below the position-mode group) without an inner scrollbar.
-     scrollHeight measured at ~462px in that worst case, so 500px gives
-     a safe margin while staying short enough for mobile-portrait. */
-  max-height: 500px;
+  /* Auto-size to the actual content, fall back to scroll only when the
+     viewport itself is shorter than the menu (landscape phones, small
+     pop-up windows). 100dvh follows the mobile address-bar collapse so
+     we don't lose visible rows when it slides in. The 180px reserve
+     covers panel-header (title + settings icon + status-bar + search
+     input + tabs row, when present) plus safe-area top/bottom; if it
+     gets tight on a particular layout the overflow:auto kicks in. */
+  max-height: calc(100dvh - 180px);
   overflow-y: auto;
 }
 .settings-hint {
