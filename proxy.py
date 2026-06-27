@@ -206,15 +206,23 @@ async def lifespan(app: FastAPI):
     )
     log.info("httpx client started")
 
-    from stops_builder import load_stops_cache
+    from stops_builder import load_stops_cache, is_stops_cache_stale
     cached = load_stops_cache()
+    stale = is_stops_cache_stale()
     if cached:
         app.state.stops_data = cached
-        log.info("Stops cache loaded: %d stops", cached["count"])
+        log.info("Stops cache loaded: %d stops (stale=%s)", cached["count"], stale)
+        if stale and os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") != "1":
+            # The cache file is from before today's 3am cutoff; daily scheduler
+            # may have missed it (server down at 3am, or first start of the day).
+            # Keep serving the stale data while the rebuild runs in background.
+            log.info("Stops cache is stale, refreshing in background")
+            asyncio.create_task(_build_stops_on_startup(app))
     else:
-        log.info("Stops cache stale or missing, building in background...")
+        log.info("Stops cache missing, building in background...")
         app.state.stops_data = {"stops": [], "count": 0}
-        asyncio.create_task(_build_stops_on_startup(app))
+        if os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") != "1":
+            asyncio.create_task(_build_stops_on_startup(app))
 
     asyncio.create_task(schedule_daily_rebuild_wrapper(app))
 

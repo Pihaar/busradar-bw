@@ -344,18 +344,39 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
 
 
 def load_stops_cache() -> dict | None:
+    """Load whatever stops cache exists. The "stale after 3am" cutoff that
+    used to live here forced a synchronous-feeling startup rebuild every
+    time the server restarted after 3am — which fans out hundreds of
+    queued HAFAS coroutines through `build_stops_cache` and starves the
+    event loop for several seconds, making /api/health and the SSE
+    handshake time out. Serving yesterday's stops while the background
+    refresh runs is strictly better than serving nothing; the daily 3am
+    scheduler still keeps the file genuinely fresh on long-running
+    deploys. Callers that want to know whether a refresh is due call
+    is_stops_cache_stale() separately."""
     if not CACHE_FILE.exists():
         return None
+    try:
+        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def is_stops_cache_stale() -> bool:
+    """True iff the cache exists but was built before the most recent
+    3am tick. Callers use this to decide whether to kick a background
+    rebuild on startup; the file itself stays available to serve traffic
+    while the rebuild runs."""
+    if not CACHE_FILE.exists():
+        return True
     try:
         data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
         built_at = datetime.fromisoformat(data.get("built_at", "2000-01-01"))
         now = datetime.now()
         reset_today = now.replace(hour=3, minute=0, second=0, microsecond=0)
-        if now >= reset_today and built_at < reset_today:
-            return None
-        return data
+        return now >= reset_today and built_at < reset_today
     except Exception:
-        return None
+        return True
 
 
 async def schedule_daily_rebuild():

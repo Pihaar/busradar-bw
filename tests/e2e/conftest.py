@@ -11,13 +11,21 @@ import pytest
 def server():
     """Start uvicorn server for E2E tests.
 
-    Two env-vars are critical for the cookie/origin flow over plain HTTP:
+    Env-vars that keep the test server quiet enough for parallel browser
+    contexts:
       - BUSRADAR_COOKIE_SECURE=0 drops the Secure attribute on the SSE
         cookie and falls back to the plain `busradar_sse` name. Without
         this, the browser refuses Secure cookies over plain HTTP and every
         viewport POST returns 401, status dot stays offline forever.
       - BUSRADAR_ALLOWED_ORIGINS adds the test origin so the POST handlers
         pass the Origin / Sec-Fetch-Site gate.
+      - BUSRADAR_SKIP_STOPS_REBUILD=1 keeps the on-startup stops cache
+        rebuild from firing. The rebuild fans out hundreds of HAFAS POSTs
+        through the shared httpx client and starves the event loop for
+        long enough that a second Playwright BrowserContext.goto() times
+        out at the navigation-complete event. Production keeps the
+        nightly rebuild via the daily scheduler; for tests the on-disk
+        cache is fresh enough.
     """
     test_origin = "http://127.0.0.1:8111"
     env = {
@@ -27,6 +35,7 @@ def server():
             "https://busradar.pihaar.de,http://localhost:8000,"
             "http://127.0.0.1:8000," + test_origin
         ),
+        "BUSRADAR_SKIP_STOPS_REBUILD": "1",
     }
     proc = subprocess.Popen(
         ["python3", "-m", "uvicorn", "proxy:app", "--host", "127.0.0.1", "--port", "8111"],
