@@ -105,7 +105,7 @@ class TestLoadStopsCache:
     def test_stale_cache_still_returns_data(self, tmp_path, monkeypatch):
         """load_stops_cache no longer force-invalidates on the 3am cutoff;
         callers serve stale data while a background rebuild runs. The
-        staleness signal moved to is_stops_cache_stale()."""
+        staleness signal moved to is_stops_cache_stale(cached)."""
         cache_file = tmp_path / "stops_cache.json"
         cache_file.write_text(json.dumps({
             "stops": [{"name": "old"}],
@@ -120,7 +120,7 @@ class TestLoadStopsCache:
         data = load_stops_cache()
         assert data is not None
         assert data["stops"] == [{"name": "old"}]
-        assert stops_builder.is_stops_cache_stale() is True
+        assert stops_builder.is_stops_cache_stale(data) is True
 
     def test_fresh_cache_not_stale(self, tmp_path, monkeypatch):
         cache_file = tmp_path / "stops_cache.json"
@@ -134,11 +134,26 @@ class TestLoadStopsCache:
             "now": staticmethod(lambda: fake_now),
             "fromisoformat": datetime.fromisoformat,
         }))
-        assert stops_builder.is_stops_cache_stale() is False
+        cached = load_stops_cache()
+        assert stops_builder.is_stops_cache_stale(cached) is False
 
     def test_missing_file_is_stale(self, tmp_path, monkeypatch):
         monkeypatch.setattr(stops_builder, "CACHE_FILE", tmp_path / "no.json")
+        assert stops_builder.is_stops_cache_stale(None) is True
+        # Backwards-compat: calling without an argument falls back to reading
+        # the file directly. Kept so external scripts that imported the
+        # old no-arg signature keep working.
         assert stops_builder.is_stops_cache_stale() is True
+
+    def test_corrupt_cache_is_stale_and_load_returns_none(self, tmp_path, monkeypatch, caplog):
+        cache_file = tmp_path / "stops_cache.json"
+        cache_file.write_text("not valid json {{{")
+        monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
+        with caplog.at_level("WARNING", logger="stops_builder"):
+            assert load_stops_cache() is None
+        # A corrupted file should now leave a log line so operators can
+        # distinguish "never built" from "broken file".
+        assert any("unreadable" in r.message for r in caplog.records)
 
     def test_fresh_cache_returns_data(self, tmp_path, monkeypatch):
         cache_file = tmp_path / "stops_cache.json"

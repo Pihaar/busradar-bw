@@ -112,6 +112,55 @@ describe('api.getStationBoard', () => {
   });
 });
 
+describe('api.selectStream (debounced)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    window.fetch = vi.fn();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete window.fetch;
+  });
+
+  it('coalesces rapid calls into a single POST with the last selection', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    const p1 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60);
+    const p2 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 120);
+    const p3 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 300);
+    // Before the debounce window elapses, no POST has gone out.
+    expect(window.fetch).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(260);
+    // Exactly one POST, with the LAST selection's dur.
+    expect(window.fetch).toHaveBeenCalledOnce();
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection.dur).toBe(300);
+    // All three promises resolve (with the same response object).
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+    expect(r1).toEqual({ ok: true });
+    expect(r2).toEqual({ ok: true });
+    expect(r3).toEqual({ ok: true });
+  });
+
+  it('rejects all queued callers when the coalesced POST fails', async () => {
+    window.fetch.mockResolvedValue({ ok: false, status: 500 });
+    const p1 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch(e => e);
+    const p2 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 120).catch(e => e);
+    await vi.advanceTimersByTimeAsync(260);
+    const [e1, e2] = await Promise.all([p1, p2]);
+    expect(e1).toBeInstanceOf(Error);
+    expect(e2).toBeInstanceOf(Error);
+    expect(e1.message).toMatch(/HTTP 500/);
+  });
+
+  it('clamps non-multiple-of-60 dur to 60 client-side', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 75);
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection.dur).toBe(60);
+  });
+});
+
 describe('urlState.saveMapPosition', () => {
   beforeEach(() => {
     state.map = {

@@ -28,10 +28,6 @@ let _reconnectAttempt = 0;
 let _reconnectTimer = null;
 let _viewportTimer = null;
 let _gotFirstSubscribe = false;
-// True if the user moved/zoomed the map while the stream was not yet OPEN.
-// The next `subscribe` event will flush a viewport POST; without this flag,
-// pans during reconnect/connecting are silently dropped.
-let _pendingViewportSend = false;
 
 function _formatConnectedCount(n) {
   // Exact count for ≤99 (user preference: precise users beat coarse buckets),
@@ -285,9 +281,10 @@ export function notifyViewportChange() {
   clearTimeout(_viewportTimer);
   _viewportTimer = setTimeout(function () {
     if (!_es || _es.readyState !== 1) {
-      // Stream not OPEN yet (connecting/reconnecting). Remember that the
-      // viewport changed; the next `subscribe` event will flush it.
-      _pendingViewportSend = true;
+      // Stream not OPEN yet (connecting/reconnecting). Skip the POST; the
+      // next `subscribe` handler unconditionally calls
+      // _sendCurrentViewport() so the freshest bounds reach the server
+      // once the stream comes up.
       return;
     }
     _sendCurrentViewport();
@@ -315,10 +312,10 @@ function _recoverIfBrokenSession(resp) {
 function _sendCurrentViewport() {
   if (!state.map) return;
   if (!_es || _es.readyState !== 1) {
-    _pendingViewportSend = true;
+    // Stream not OPEN — skip. The `subscribe` handler calls us again
+    // once the stream comes up, picking up the latest map.getBounds().
     return;
   }
-  _pendingViewportSend = false;
   const b = state.map.getBounds();
   const sw = b.getSouthWest();
   const ne = b.getNorthEast();

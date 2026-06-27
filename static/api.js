@@ -148,6 +148,14 @@ export var api = {
   // click and hit the per-subscriber burst=3 rate-limit on /api/stream/
   // select. Coalescing to the last call keeps the user-visible action
   // (display the new window) correct while collapsing the wire traffic.
+  //
+  // **Debounce contract:** every caller queued inside the 250 ms window
+  // receives the SAME response — specifically the one returned for the
+  // LAST selection pushed during the window. The promise returned by an
+  // earlier call does NOT track that call's selection. All current
+  // callers use `.catch(...)` and ignore the resolved value, so this is
+  // invisible in practice; any future caller that consumes the resolved
+  // payload must account for the last-writer-wins semantic.
   selectStream: function(type, id, boardType, dur) {
     return _selectStreamImpl(type, id, boardType, dur);
   },

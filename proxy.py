@@ -208,20 +208,23 @@ async def lifespan(app: FastAPI):
 
     from stops_builder import load_stops_cache, is_stops_cache_stale
     cached = load_stops_cache()
-    stale = is_stops_cache_stale()
+    stale = is_stops_cache_stale(cached)
+    skip_rebuild = os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") == "1"
+    if skip_rebuild:
+        log.warning("BUSRADAR_SKIP_STOPS_REBUILD=1 set — skipping startup stops rebuild")
     if cached:
         app.state.stops_data = cached
         log.info("Stops cache loaded: %d stops (stale=%s)", cached["count"], stale)
-        if stale and os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") != "1":
+        if stale and not skip_rebuild:
             # The cache file is from before today's 3am cutoff; daily scheduler
             # may have missed it (server down at 3am, or first start of the day).
             # Keep serving the stale data while the rebuild runs in background.
             log.info("Stops cache is stale, refreshing in background")
             asyncio.create_task(_build_stops_on_startup(app))
     else:
-        log.info("Stops cache missing, building in background...")
+        log.info("Stops cache missing or unreadable, building in background...")
         app.state.stops_data = {"stops": [], "count": 0}
-        if os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") != "1":
+        if not skip_rebuild:
             asyncio.create_task(_build_stops_on_startup(app))
 
     asyncio.create_task(schedule_daily_rebuild_wrapper(app))
@@ -711,17 +714,27 @@ _SW_PLACEHOLDER = "__APP_VERSION__"
 
 
 def _render_sw(template: str, version: str) -> str:
-    """Substitute the version placeholder in the SW source. Falls back to a
-    stable name when version is "unknown" so that a misconfigured deploy still
-    yields a parseable JS file (cache simply won't rotate)."""
+    """Substitute `__APP_VERSION__` in a template string. Originally written
+    for sw.js (hence the name), now also used for index.html (the style.css
+    cache-bust path). Kept under the historical name so the test surface and
+    callers don't need a churn-only rename; `_render_template_version` is a
+    clearer alias if you'd rather use it at new call sites.
+
+    Falls back to "unknown" when version is missing so a misconfigured deploy
+    still yields parseable output (the cache simply won't rotate)."""
     if not template:
         return ""
     if version == _SW_PLACEHOLDER:
         # Defensive: a VERSION file that literally contains the placeholder
-        # would no-op the substitution and serve invalid JS.
-        log.error("[startup] _VERSION equals the SW placeholder; refusing to render")
+        # would no-op the substitution and serve invalid output.
+        log.error("[startup] _VERSION equals the placeholder; refusing to render")
         return ""
     return template.replace(_SW_PLACEHOLDER, version or "unknown")
+
+
+# Clearer name for new call sites; both names point at the same function so
+# existing tests that import `_render_sw` keep working.
+_render_template_version = _render_sw
 
 
 _SW_RENDERED = _render_sw(_SW_TEMPLATE, _VERSION)
@@ -730,7 +743,7 @@ if _SW_TEMPLATE and not _SW_RENDERED:
 elif _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
 
-_INDEX_RENDERED = _render_sw(_INDEX_TEMPLATE, _VERSION) if _INDEX_TEMPLATE else ""
+_INDEX_RENDERED = _render_template_version(_INDEX_TEMPLATE, _VERSION) if _INDEX_TEMPLATE else ""
 
 
 @app.get("/api/stream/")
@@ -800,4 +813,9 @@ async def serve_index():
     return await _serve_index()
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# html=False — the explicit @app.get("/") and @app.get("/index.html") routes
+# above own the index template (with __APP_VERSION__ substituted into the
+# style.css URL). Leaving html=True here would let StaticFiles fall back to
+# serving the raw template (placeholder intact) on any quirk that bypassed
+# the explicit routes, silently breaking the cache-bust mechanism.
+app.mount("/", StaticFiles(directory="static", html=False), name="static")

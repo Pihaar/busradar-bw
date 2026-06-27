@@ -353,25 +353,31 @@ def load_stops_cache() -> dict | None:
     refresh runs is strictly better than serving nothing; the daily 3am
     scheduler still keeps the file genuinely fresh on long-running
     deploys. Callers that want to know whether a refresh is due call
-    is_stops_cache_stale() separately."""
+    is_stops_cache_stale(cached) on the SAME dict so the read-twice
+    TOCTOU window between load + staleness check disappears."""
     if not CACHE_FILE.exists():
         return None
     try:
         return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        LOG.warning("stops_cache.json unreadable, treating as missing: %s", e)
         return None
 
 
-def is_stops_cache_stale() -> bool:
-    """True iff the cache exists but was built before the most recent
-    3am tick. Callers use this to decide whether to kick a background
-    rebuild on startup; the file itself stays available to serve traffic
-    while the rebuild runs."""
-    if not CACHE_FILE.exists():
-        return True
+def is_stops_cache_stale(cached: dict | None = None) -> bool:
+    """True iff the cache was built before the most recent 3am tick (or is
+    missing entirely). Pass the dict returned by load_stops_cache() to
+    avoid a second file read (and the TOCTOU window where the daily
+    rebuild could swap the file between the two reads)."""
+    if cached is None:
+        if not CACHE_FILE.exists():
+            return True
+        try:
+            cached = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return True
     try:
-        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-        built_at = datetime.fromisoformat(data.get("built_at", "2000-01-01"))
+        built_at = datetime.fromisoformat(cached.get("built_at", "2000-01-01"))
         now = datetime.now()
         reset_today = now.replace(hour=3, minute=0, second=0, microsecond=0)
         return now >= reset_today and built_at < reset_today
