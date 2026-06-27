@@ -180,7 +180,29 @@ export function parseZoom(val) {
 }
 
 // === HAFAS MESSAGES ===
-var HAFAS_IGNORE_CODES = ['ae','au','az','ai','ac','ib','ic'];
+// HAFAS reuses two-letter codes for vehicle/fleet annotations, but the
+// mapping isn't stable — what was `ae` last year is `ad` this year, and
+// the technical-spec codes (`ib`/`ic` ↔ `ii`/`ij`) rotate similarly. The
+// memory note says: "Codes are NOT standardised — gleicher Code hat
+// verschiedene Bedeutung je nach HAFAS-Installation." So match on the
+// txtN payload instead: internal fleet/vehicle annotations always start
+// with "Fahrtart " (classification) or contain "in mm" (dimension specs)
+// or end in measurement units we don't want users to see. The list of
+// codes stays here as a fast-path fallback for legacy categories we
+// already know about.
+var HAFAS_IGNORE_CODES = ['ae','au','az','ai','ac','ib','ic','ad','ii','ij'];
+var HAFAS_IGNORE_TEXT_PATTERNS = [
+  /^Fahrtart\s/i,                // Internal classification codes (L, X, LS, LM, …)
+  /\bin\s*mm\b/i,                // Vehicle dimensions in millimetres
+  /^Ohne\s+Einstiegshilfe\b/i,   // Negative accessibility info — DB itself hides this
+];
+
+function _hafasShouldIgnoreText(text) {
+  for (var i = 0; i < HAFAS_IGNORE_TEXT_PATTERNS.length; i++) {
+    if (HAFAS_IGNORE_TEXT_PATTERNS[i].test(text)) return true;
+  }
+  return false;
+}
 
 export function extractHafasMessages(common, msgL, stopL) {
   var remL = (common && common.remL) || [];
@@ -202,6 +224,7 @@ export function extractHafasMessages(common, msgL, stopL) {
       var code = (rem.code || '').trim().toLowerCase();
       if (HAFAS_IGNORE_CODES.indexOf(code) >= 0) continue;
       text = String(rem.txtN).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
+      if (_hafasShouldIgnoreText(text)) continue;
     } else if (msg.type === 'HIM') {
       var himL = (common && common.himL) || [];
       var him = himL[msg.himX];

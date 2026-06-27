@@ -118,69 +118,90 @@ class TestUrlRestore:
 
 
 class TestHafasMessages:
-    def _find_bus_with_messages(self, page, server):
-        """Find a currently active bus that has journey-level messages.
+    @pytest.fixture(scope="class")
+    def bus_with_messages_jid(self, server):
+        """Find one jid that carries renderable journey-level messages.
 
-        Uses /api/line_search to seed jids (no /api/vehicles since the
-        polling endpoint is gone — SSE is the live channel and we can't
-        easily snapshot it via page.request)."""
+        Cached at class scope so both message tests share one upstream walk
+        instead of replaying the same HAFAS scan against the per-IP REST
+        rate limit. Uses urllib so the page fixture (function-scoped) isn't
+        forced to spin up just to do the discovery."""
         import json
-        resp = page.request.get(server + "/api/line_search?q=725")
-        if resp.status != 200:
-            return None
-        results = resp.json().get("results", [])
-        for entry in results[:30]:
-            jid = entry.get("jid", "")
-            if not jid:
+        import urllib.request
+        candidate_lines = ["725", "719", "758", "723", "713", "754", "732"]
+        for line in candidate_lines:
+            try:
+                resp = urllib.request.urlopen(
+                    server + "/api/line_search?q=" + line, timeout=15,
+                )
+                data = json.loads(resp.read())
+            except Exception:
                 continue
-            jr = page.request.post(server + "/api/journey", data=json.dumps({"jid": jid}),
-                                   headers={"Content-Type": "application/json"})
-            if jr.status != 200:
-                continue
-            jdata = jr.json()
-            journey = jdata.get("journey", {})
-            msg_l = journey.get("msgL", [])
-            if not msg_l:
-                continue
-            common = jdata.get("common", {})
-            rem_l = common.get("remL", [])
-            ignore = {'ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic'}
-            for msg in msg_l:
-                if msg.get("type") == "REM":
-                    rem = rem_l[msg.get("remX", -1)] if 0 <= msg.get("remX", -1) < len(rem_l) else None
-                    if rem and rem.get("txtN") and (rem.get("code", "") or "").strip().lower() not in ignore:
-                        return jid
-                elif msg.get("type") == "HIM":
-                    him_l = common.get("himL", [])
-                    him = him_l[msg.get("himX", -1)] if 0 <= msg.get("himX", -1) < len(him_l) else None
-                    if him and him.get("head"):
-                        return jid
+            vehicles = data.get("vehicles", [])
+            for entry in vehicles[:30]:
+                jid = entry.get("jid", "")
+                if not jid:
+                    continue
+                try:
+                    req = urllib.request.Request(
+                        server + "/api/journey",
+                        data=json.dumps({"jid": jid}).encode(),
+                        headers={"Content-Type": "application/json"},
+                    )
+                    jdata = json.loads(urllib.request.urlopen(req, timeout=15).read())
+                except Exception:
+                    continue
+                journey = jdata.get("journey", {})
+                msg_l = journey.get("msgL", [])
+                if not msg_l:
+                    continue
+                common = jdata.get("common", {})
+                rem_l = common.get("remL", [])
+                ignore = {'ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic'}
+                for msg in msg_l:
+                    if msg.get("type") == "REM":
+                        rem = rem_l[msg.get("remX", -1)] if 0 <= msg.get("remX", -1) < len(rem_l) else None
+                        if rem and rem.get("txtN") and (rem.get("code", "") or "").strip().lower() not in ignore:
+                            return jid
+                    elif msg.get("type") == "HIM":
+                        him_l = common.get("himL", [])
+                        him = him_l[msg.get("himX", -1)] if 0 <= msg.get("himX", -1) < len(him_l) else None
+                        if him and him.get("head"):
+                            return jid
         return None
 
-    def test_journey_banner_visible(self, server, page):
-        """Bus with messages shows journey-level banner."""
-        jid = self._find_bus_with_messages(page, server)
-        if not jid:
-            pytest.skip("No bus with visible messages currently active")
-        from urllib.parse import quote
-        page.goto(server + "/#jid=" + quote(jid, safe=''))
-        page.wait_for_timeout(5000)
-        banners = page.locator(".journey-msg-banner")
-        assert banners.count() > 0
-        first_text = banners.first.text_content()
-        assert "Fahrtart" not in first_text
+    def test_journey_banner_visible(self, server, page, bus_with_messages_jid):
+        """Bus with messages shows the journey-level banner AND filters
+        internal HAFAS codes ('Fahrtart L/X', vehicle dimensions, etc.).
 
-    def test_internal_codes_filtered(self, server, page):
-        """Internal codes (ae, au, etc.) are NOT shown as banner text."""
-        jid = self._find_bus_with_messages(page, server)
-        if not jid:
+        Both assertions live on the same page load because the page-level
+        SSE subscription is the expensive part — repeating the goto for a
+        second assertion against the same jid would idle a second
+        subscriber on the test server with no payoff."""
+        if not bus_with_messages_jid:
             pytest.skip("No bus with visible messages currently active")
         from urllib.parse import quote
-        page.goto(server + "/#jid=" + quote(jid, safe=''))
+        page.goto(server + "/#jid=" + quote(bus_with_messages_jid, safe=''),
+                  wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
+
+        banners = page.locator(".journey-msg-banner")
+        assert banners.count() > 0, "no journey-msg-banner rendered"
+        first_text = banners.first.text_content()
+        assert "Fahrtart" not in first_text, (
+            f"top banner should not be an internal Fahrtart code, got: {first_text!r}"
+        )
+
         page_text = page.locator("#detail-content").text_content()
-        assert "Fahrtart L" not in page_text
-        assert "Fahrtart X" not in page_text
+        # HAFAS rotates the two-letter codes for vehicle/fleet classification
+        # (ae → ad, etc.); we filter by txtN pattern so the UI never surfaces
+        # "Fahrtart L" / "Fahrtart X" no matter which code carries them.
+        assert "Fahrtart L" not in page_text, (
+            "internal Fahrtart-L code leaked into the rendered page"
+        )
+        assert "Fahrtart X" not in page_text, (
+            "internal Fahrtart-X code leaked into the rendered page"
+        )
 
 
 class TestOffline:

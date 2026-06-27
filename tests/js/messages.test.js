@@ -16,10 +16,41 @@ describe('extractHafasMessages', () => {
     expect(extractHafasMessages({}, [], [])).toEqual({ journeyLevel: [], perStopByLocX: {} });
   });
 
-  it('filters IGNORE_CODES (ae, au, az, ai, ac, ib, ic) case-insensitive', () => {
-    var codes = ['ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic', 'AE', 'Au', 'IB'];
+  it('filters IGNORE_CODES (ae, au, az, ai, ac, ib, ic, ad, ii, ij) case-insensitive', () => {
+    var codes = ['ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic', 'ad', 'ii', 'ij', 'AE', 'Au', 'IB', 'AD', 'II'];
     var remL = codes.map(function(c) { return { code: c, txtN: 'text for ' + c }; });
     var msgL = codes.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var result = extractHafasMessages(makeCommon(remL), msgL, []);
+    expect(result.journeyLevel).toHaveLength(0);
+  });
+
+  it('filters Fahrtart-classification text regardless of code', () => {
+    // HAFAS rotates the code letters (ae → ad → …); guard by txtN pattern.
+    var remL = [
+      { code: 'xx', txtN: 'Fahrtart L' },
+      { code: 'yy', txtN: 'Fahrtart X' },
+      { code: 'zz', txtN: 'Fahrtart LS' },
+      { code: 'qq', txtN: 'fahrtart LM' },  // case-insensitive
+    ];
+    var msgL = remL.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var result = extractHafasMessages(makeCommon(remL), msgL, []);
+    expect(result.journeyLevel).toHaveLength(0);
+  });
+
+  it('filters vehicle-dimension text regardless of code', () => {
+    var remL = [
+      { code: 'xx', txtN: 'Türbreite des Fahrzeugs in mm 1350' },
+      { code: 'yy', txtN: 'Fahrzeugbreite in mm 2500' },
+      { code: 'zz', txtN: 'Fahrzeuglänge IN MM 12000' },
+    ];
+    var msgL = remL.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var result = extractHafasMessages(makeCommon(remL), msgL, []);
+    expect(result.journeyLevel).toHaveLength(0);
+  });
+
+  it('filters "Ohne Einstiegshilfe" negative-accessibility text', () => {
+    var remL = [{ code: 'xx', txtN: 'Ohne Einstiegshilfe' }];
+    var msgL = [makeMsg('REM', { remX: 0 })];
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(0);
   });
