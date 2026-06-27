@@ -187,10 +187,11 @@ export function parseZoom(val) {
 // verschiedene Bedeutung je nach HAFAS-Installation." So match on the
 // txtN payload instead: internal fleet/vehicle annotations always start
 // with "Fahrtart " (classification) or contain "in mm" (dimension specs)
-// or end in measurement units we don't want users to see. The list of
+// or end in measurement units we don't want users to see. The set of
 // codes stays here as a fast-path fallback for legacy categories we
-// already know about.
-var HAFAS_IGNORE_CODES = ['ae','au','az','ai','ac','ib','ic','ad','ii','ij'];
+// already know about — `Set` for O(1) lookup so the list can grow with
+// future HAFAS rotations without slowing the per-message check.
+var HAFAS_IGNORE_CODES = new Set(['ae','au','az','ai','ac','ib','ic','ad','ii','ij']);
 var HAFAS_IGNORE_TEXT_PATTERNS = [
   /^Fahrtart\s/i,                // Internal classification codes (L, X, LS, LM, …)
   /\bin\s*mm\b/i,                // Vehicle dimensions in millimetres
@@ -222,7 +223,7 @@ export function extractHafasMessages(common, msgL, stopL) {
     if (msg.type === 'REM' && rem) {
       if (!rem.txtN) continue;
       var code = (rem.code || '').trim().toLowerCase();
-      if (HAFAS_IGNORE_CODES.indexOf(code) >= 0) continue;
+      if (HAFAS_IGNORE_CODES.has(code)) continue;
       text = String(rem.txtN).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
       if (_hafasShouldIgnoreText(text)) continue;
     } else if (msg.type === 'HIM') {

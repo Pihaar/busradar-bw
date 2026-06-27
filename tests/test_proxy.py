@@ -229,6 +229,38 @@ class TestServiceWorker:
         assert resp.status_code == 503
         assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
+    @pytest.mark.asyncio
+    async def test_root_substitutes_style_css_version(self, client):
+        """GET / serves the rendered index.html with the style.css cache-bust
+        query baked in. Catches a route-ordering regression where the
+        StaticFiles mount silently took over and served the raw template
+        (with the literal __APP_VERSION__ placeholder)."""
+        from proxy import _VERSION
+        resp = await client.get("/")
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+        body = resp.text
+        assert "__APP_VERSION__" not in body, "placeholder leaked into served HTML"
+        assert f'style.css?v={_VERSION}' in body or 'style.css?v=' in body
+
+    @pytest.mark.asyncio
+    async def test_index_html_substitutes_style_css_version(self, client):
+        from proxy import _VERSION
+        resp = await client.get("/index.html")
+        assert resp.status_code == 200
+        assert "__APP_VERSION__" not in resp.text
+        assert f'style.css?v={_VERSION}' in resp.text or 'style.css?v=' in resp.text
+
+    @pytest.mark.asyncio
+    async def test_root_is_idempotent_across_two_fetches(self, client):
+        """Serving / twice produces byte-identical output — guards against
+        accidental in-place mutation of the template string on each render."""
+        a = (await client.get("/")).text
+        b = (await client.get("/")).text
+        assert a == b
+        # Specifically: no double-substitution like style.css?v=X?v=X
+        assert a.count("style.css?v=") == 1
+
 
 class TestInputValidation:
     @pytest.mark.asyncio
