@@ -102,20 +102,43 @@ class TestLoadStopsCache:
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
         assert load_stops_cache() is None
 
-    def test_stale_cache_returns_none(self, tmp_path, monkeypatch):
+    def test_stale_cache_still_returns_data(self, tmp_path, monkeypatch):
+        """load_stops_cache no longer force-invalidates on the 3am cutoff;
+        callers serve stale data while a background rebuild runs. The
+        staleness signal moved to is_stops_cache_stale()."""
         cache_file = tmp_path / "stops_cache.json"
         cache_file.write_text(json.dumps({
-            "stops": [],
+            "stops": [{"name": "old"}],
             "built_at": "2026-05-22T02:00:00",
         }))
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
-        # now is after 3:00, built_at is before 3:00 → stale
         fake_now = datetime(2026, 5, 23, 10, 0, 0)
         monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
             "now": staticmethod(lambda: fake_now),
             "fromisoformat": datetime.fromisoformat,
         }))
-        assert load_stops_cache() is None
+        data = load_stops_cache()
+        assert data is not None
+        assert data["stops"] == [{"name": "old"}]
+        assert stops_builder.is_stops_cache_stale() is True
+
+    def test_fresh_cache_not_stale(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "stops_cache.json"
+        cache_file.write_text(json.dumps({
+            "stops": [],
+            "built_at": "2026-05-23T04:00:00",
+        }))
+        monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
+        fake_now = datetime(2026, 5, 23, 10, 0, 0)
+        monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
+            "now": staticmethod(lambda: fake_now),
+            "fromisoformat": datetime.fromisoformat,
+        }))
+        assert stops_builder.is_stops_cache_stale() is False
+
+    def test_missing_file_is_stale(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(stops_builder, "CACHE_FILE", tmp_path / "no.json")
+        assert stops_builder.is_stops_cache_stale() is True
 
     def test_fresh_cache_returns_data(self, tmp_path, monkeypatch):
         cache_file = tmp_path / "stops_cache.json"
