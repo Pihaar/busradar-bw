@@ -60,9 +60,18 @@ function _selectStreamImpl(type, id, boardType, dur) {
     selection = { kind: 'journey', jid: id };
   } else if (type === 'stationboard') {
     var d = parseInt(dur, 10);
+    // NaN / undefined / negative → 60. These are defensive against
+    // legitimate edge cases (a caller passing an uninitialised setting).
     if (!isFinite(d) || d < 60) d = 60;
+    // Above the server's upper bound: clamp so the request still has a
+    // chance of succeeding rather than 422ing for a one-off overshoot.
     if (d > 1440) d = 1440;
-    if (d % 60 !== 0) d = 60;
+    // No silent multiple-of-60 clamp here on purpose. The server-side
+    // Pydantic validator rejects non-multiples with 422; a caller that
+    // sends `dur=75` has a bug, and we want that bug visible in the
+    // network tab and the console, not papered over with a silent
+    // rewrite to 60 (which would shrink the rendered list and confuse
+    // the user instead of confusing the developer).
     selection = { kind: 'stationboard', lid: id, board_type: boardType || 'DEP', dur: d };
   } else {
     selection = null;

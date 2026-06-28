@@ -296,7 +296,10 @@ _post_rate_per_ip: dict[str, tuple[float, float]] = {}  # ip → (tokens, last_r
 # fire ~24 cascading POSTs in a couple of seconds against /api/stationboard.
 # Refill stays at 1 token/s so sustained rate is unchanged; the burst just
 # pushes the cliff out far enough that the cascade fits.
-_POST_RATE_PER_IP_BURST = 30.0
+# Env override (BUSRADAR_POST_RATE_BURST) is for the E2E suite, which
+# replays ~20 pages from the same 127.0.0.1 in two minutes and would
+# otherwise leave subsequent tests competing for an exhausted bucket.
+_POST_RATE_PER_IP_BURST = float(os.environ.get("BUSRADAR_POST_RATE_BURST", "30"))
 _POST_RATE_PER_IP_MAX_KEYS = 4096
 
 

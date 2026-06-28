@@ -152,12 +152,31 @@ describe('api.selectStream (debounced)', () => {
     expect(e1.message).toMatch(/HTTP 500/);
   });
 
-  it('clamps non-multiple-of-60 dur to 60 client-side', async () => {
+  it('passes non-multiple-of-60 dur through unchanged so the server 422s', async () => {
+    // No silent client-side clamp: a caller bug producing dur=75 must
+    // surface as a server-side 422, not get rewritten to 60. The test
+    // checks the wire payload, not the response (mock returns ok).
     window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
     api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 75);
     await vi.advanceTimersByTimeAsync(260);
     const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection.dur).toBe(75);
+  });
+
+  it('still clamps NaN/undefined dur to 60 (legitimate defensive default)', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('stationboard', 'A=1@L=1@', 'DEP', undefined);
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
     expect(body.selection.dur).toBe(60);
+  });
+
+  it('clamps above-1440 dur to 1440 (upper-bound defensive default)', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 9999);
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection.dur).toBe(1440);
   });
 });
 

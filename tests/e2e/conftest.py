@@ -36,6 +36,14 @@ def server():
             "http://127.0.0.1:8000," + test_origin
         ),
         "BUSRADAR_SKIP_STOPS_REBUILD": "1",
+        # The whole suite drives one IP (127.0.0.1) through ~20 page loads
+        # in two minutes; the production-default burst of 30 tokens / 1 token-
+        # per-second refill leaves the bucket empty by the time the last few
+        # tests run, which silently turns load-more clicks into 429s and
+        # makes the +1d badge test in test_special_stops.py flaky. The
+        # bucket is per-IP only in production; the env override is what
+        # the conftest uses to keep the E2E run deterministic.
+        "BUSRADAR_POST_RATE_BURST": "500",
     }
     proc = subprocess.Popen(
         ["python3", "-m", "uvicorn", "proxy:app", "--host", "127.0.0.1", "--port", "8111"],
