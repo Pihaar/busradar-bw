@@ -174,6 +174,53 @@ class TestClientActivity:
         ca.last_ts = _mono() - ACTIVE_CLIENT_WINDOW
         assert ca.is_active() is False
 
+    def test_subscriber_count_keeps_active_past_window(self):
+        """The deadlock fix: an open SSE subscriber must count as active
+        regardless of how long ago the last tick was detected. Without
+        this the calibrator dropped to IDLE_CALIB_INTERVAL during long
+        no-tick stretches (HAFAS standstill) and stopped probing for up
+        to 30 minutes."""
+        ca = ClientActivity()
+        ca.subscriber_joined()
+        ca.last_ts = _mono() - ACTIVE_CLIENT_WINDOW - 60  # tick-clock stale
+        assert ca.is_active() is True
+        ca.subscriber_left()
+        assert ca.is_active() is False
+
+    def test_subscriber_count_never_negative(self):
+        ca = ClientActivity()
+        ca.subscriber_left()  # spurious leave before any join
+        ca.subscriber_left()
+        ca.subscriber_joined()
+        assert ca.is_active() is True
+        ca.subscriber_left()
+        assert ca._subscribers == 0
+
+    @pytest.mark.asyncio
+    async def test_wait_for_wakeup_returns_true_on_subscribe(self):
+        """The calibrator's idle-sleep should be interrupted as soon as
+        a fresh subscriber joins, not wait for the 30-min IDLE interval."""
+        import asyncio
+        ca = ClientActivity()
+        # Arm the wakeup primitive on the same event loop the wait runs on.
+        ca._ensure_event()
+
+        async def join_after_short_delay():
+            await asyncio.sleep(0.05)
+            ca.subscriber_joined()
+
+        asyncio.create_task(join_after_short_delay())
+        woke = await ca.wait_for_wakeup(timeout=2.0)
+        assert woke is True
+        assert ca.is_active() is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_wakeup_returns_false_on_timeout(self):
+        ca = ClientActivity()
+        ca._ensure_event()
+        woke = await ca.wait_for_wakeup(timeout=0.05)
+        assert woke is False
+
 
 class TestCalibration:
     @pytest.fixture(autouse=True)

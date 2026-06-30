@@ -52,14 +52,74 @@ _mono = time.monotonic
 # --- Classes ---
 
 class ClientActivity:
+    """Tracks whether the calibrator should keep probing HAFAS at the
+    ACTIVE_CALIB_INTERVAL rate.
+
+    The original design touched only on tick-detect, which deadlocked
+    when HAFAS positions didn't change (rush-hour standstill, network
+    blip, depot evening) — no tick → no touch → activity goes idle
+    after ACTIVE_CLIENT_WINDOW seconds → calibrator drops to
+    IDLE_CALIB_INTERVAL (30 min) → SSE subscribers wait on a
+    tick_condition that won't fire again for half an hour even though
+    HAFAS is back to normal.
+
+    Now: keep an explicit subscriber count. Any open SSE stream counts
+    as activity, regardless of whether ticks are being detected. A
+    transition from 0 → 1 subscriber sets `wakeup_event`; the
+    calibrator's idle sleep waits on this event and aborts immediately
+    when a subscriber joins, so the live view doesn't have to wait 30
+    minutes for the next probe.
+
+    The legacy timestamp is kept as a fallback for the brief window
+    between subscriber unsubscribe and next subscribe.
+    """
+
     def __init__(self):
         self.last_ts: float = 0.0
+        self._subscribers: int = 0
+        # Lazily created so the class can be instantiated outside an
+        # asyncio loop (tests import it without a running loop).
+        self.wakeup_event: asyncio.Event | None = None
+
+    def _ensure_event(self):
+        if self.wakeup_event is None:
+            self.wakeup_event = asyncio.Event()
 
     def touch(self):
         self.last_ts = _mono()
 
+    def subscriber_joined(self):
+        was_zero = self._subscribers == 0
+        self._subscribers += 1
+        self.last_ts = _mono()
+        if was_zero:
+            # 0 → 1 transition. If the calibrator is idle-sleeping, this
+            # cuts the sleep short so the first vehicles event for the
+            # fresh subscriber lands within a tick window, not 30 min.
+            self._ensure_event()
+            self.wakeup_event.set()
+
+    def subscriber_left(self):
+        # Defensive against double-unsubscribe; never go negative.
+        if self._subscribers > 0:
+            self._subscribers -= 1
+
     def is_active(self) -> bool:
+        if self._subscribers > 0:
+            return True
         return _mono() - self.last_ts < ACTIVE_CLIENT_WINDOW
+
+    async def wait_for_wakeup(self, timeout: float) -> bool:
+        """Sleep up to `timeout` seconds, returning early if a
+        0→1 subscriber transition fires the wakeup event. Returns True
+        if the event fired, False on plain timeout."""
+        self._ensure_event()
+        self.wakeup_event.clear()
+        try:
+            await asyncio.wait_for(self.wakeup_event.wait(), timeout=timeout)
+            return True
+        except (asyncio.TimeoutError, TimeoutError):
+            return False
 
 
 
@@ -235,7 +295,11 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
     log.info("[tick_calibrator] started, waiting for first client")
     try:
         while not activity.is_active():
-            await asyncio.sleep(5.0)
+            # wait_for_wakeup returns as soon as a subscriber joins, so a
+            # cold-start tab doesn't wait 5s for the next poll.
+            woke = await activity.wait_for_wakeup(5.0)
+            if woke:
+                break
     except asyncio.CancelledError:
         log.info("[tick_calibrator] cancelled during wait")
         raise
@@ -261,7 +325,16 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
                 wait = max(1.0, (target - 1.0) - _mono())
             else:
                 wait = interval
-            await asyncio.sleep(wait)
+            # Idle long-sleep is interruptible: a new subscriber sets the
+            # wakeup event and we re-evaluate immediately. Active waits use
+            # a plain sleep — they're at most ACTIVE_CALIB_INTERVAL=5min and
+            # the predicted-tick target makes early wakeups counterproductive.
+            if active:
+                await asyncio.sleep(wait)
+            else:
+                woke = await activity.wait_for_wakeup(wait)
+                if woke:
+                    log.info("[tick_calibrator] woken by subscriber join")
 
             if breaker.is_open:
                 log.debug("[tick_calibrator] breaker open, skipping")

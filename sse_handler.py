@@ -518,10 +518,14 @@ async def handle_sse_stream(request: Request, app_version: str):
             },
             headers={"Retry-After": str(retry_after)},
         )
-    # Tick calibrator runs at IDLE_CALIB_INTERVAL=30min when no client activity
-    # is recorded. The SSE handler now owns activity-touch so the calibrator
-    # stays in ACTIVE_CALIB_INTERVAL (5min) mode whenever a stream is open.
-    client_activity.touch()
+    # Tick calibrator drops to IDLE_CALIB_INTERVAL=30min when no client
+    # activity is recorded. Mark this subscriber as active so the
+    # calibrator keeps probing at the 5min rate — and crucially, keep
+    # marking it active as long as the SSE stream is open, not just
+    # while ticks are being detected (HAFAS sometimes goes minutes
+    # without position changes; without this, the calibrator went idle
+    # and stopped probing entirely, freezing the live view).
+    client_activity.subscriber_joined()
 
     async def event_generator():
         try:
@@ -645,6 +649,10 @@ async def handle_sse_stream(request: Request, app_version: str):
                 await fanout.registry.unsubscribe(sub.connection_id)
             except Exception:
                 log.exception("[sse] unsubscribe failed for cid")
+            try:
+                client_activity.subscriber_left()
+            except Exception:
+                log.exception("[sse] subscriber_left failed for cid")
             # Cookie cleared via headers on the StreamingResponse; the cookie
             # is path-scoped so the browser keeps it only for /api/stream/*
             # POSTs anyway. Task cancel happens at the StreamingResponse level
