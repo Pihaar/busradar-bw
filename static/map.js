@@ -467,11 +467,55 @@ export var markers = {
   },
 
   updateAll: function(vehicles) {
-    var seen = new Set();
+    // `vehicles` here is the FULL server payload (the SSE handler returns
+    // the HAFAS ring, which extends past the four-corner viewport). We
+    // bbox-filter inside this function rather than upstream so we can
+    // distinguish two different "missing from rendered set" cases:
+    //
+    //   (a) Vehicle still in the server's ring but its new position fell
+    //       outside the current map.getBounds() — user-visible: the bus
+    //       just drove off-screen. Remove the marker immediately. There's
+    //       nothing to "wait for" because the server keeps confirming the
+    //       vehicle exists, we just don't want it on this user's map.
+    //
+    //   (b) Vehicle not in the server's payload at all — the journey
+    //       ended, HAFAS dropped it, the bus left the ring entirely.
+    //       Apply the missedCycles grace so a one-frame drop-out doesn't
+    //       blink the marker; remove after graceperiodCycles ticks.
+    //
+    // The previous shape (client-side bbox filter UPSTREAM of updateAll)
+    // collapsed case (a) into case (b), leaving the marker frozen at its
+    // last visible position for a full grace window — that's the
+    // "buses stuck on the map when they drive out of the viewport" bug.
+    var bounds = state.map ? state.map.getBounds() : null;
+    var swLat = bounds ? bounds.getSouth() : -Infinity;
+    var neLat = bounds ? bounds.getNorth() : Infinity;
+    var swLon = bounds ? bounds.getWest() : -Infinity;
+    var neLon = bounds ? bounds.getEast() : Infinity;
+    function inBbox(lat, lon) {
+      return lat >= swLat && lat <= neLat && lon >= swLon && lon <= neLon;
+    }
+
+    var inServerRing = new Set();
+    var visibleCount = 0;
 
     vehicles.forEach(function(v) {
-      seen.add(v.jid);
+      inServerRing.add(v.jid);
       var existing = state.vehicles.get(v.jid);
+      var visible = inBbox(v.lat, v.lon);
+
+      if (!visible) {
+        // Case (a). Remove the marker now (unless this is the selected
+        // journey — we keep that one rendered even off-bbox so the user
+        // can still see "their" bus).
+        if (existing && state.selectedJid !== v.jid) {
+          existing.marker.remove();
+          state.vehicles.delete(v.jid);
+        }
+        return;
+      }
+
+      visibleCount++;
 
       if (existing) {
         var currentPos = existing.marker.getLatLng();
@@ -510,7 +554,9 @@ export var markers = {
     });
 
     state.vehicles.forEach(function(entry, jid) {
-      if (!seen.has(jid)) {
+      if (!inServerRing.has(jid)) {
+        // Case (b): truly missing from server-side. Grace-period the
+        // removal so a single dropped frame doesn't blink the marker.
         entry.missedCycles++;
         if (entry.missedCycles >= CONFIG.graceperiodCycles) {
           if (state.selectedJid === jid) {
@@ -521,6 +567,10 @@ export var markers = {
         }
       }
     });
+
+    // Expose so the status counter can show the actually-visible count
+    // without re-filtering the array upstream.
+    markers._lastVisibleCount = visibleCount;
   },
 
   highlightSelected: function(jid) {

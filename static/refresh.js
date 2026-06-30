@@ -389,24 +389,14 @@ export function refresh() {
 // polling here.
 function _handleVehiclesPayload(data) {
   const capturedInteractionSeq = state._userInteractionSeq;
-  let vehicles = data.vehicles || [];
+  const vehicles = data.vehicles || [];
 
-  // HAFAS JourneyGeoPos is a ring query (centre + maxDist), so the SSE
-  // payload includes vehicles that lie outside the four-corner viewport
-  // bbox but inside the ring. Filter to the actually-visible map bounds
-  // here so the counter and the rendered marker set match what the user
-  // sees. Without this, a 1200×800 desktop showed e.g. 53 in the counter
-  // but only ~46 markers within the map rectangle.
-  if (state.map) {
-    const bounds = state.map.getBounds();
-    const swLat = bounds.getSouth();
-    const neLat = bounds.getNorth();
-    const swLon = bounds.getWest();
-    const neLon = bounds.getEast();
-    vehicles = vehicles.filter(function (v) {
-      return v.lat >= swLat && v.lat <= neLat && v.lon >= swLon && v.lon <= neLon;
-    });
-  }
+  // Note: no upstream bbox-filter here. markers.updateAll() applies the
+  // map-bounds check itself so it can distinguish "still in HAFAS ring,
+  // just out of viewport" (remove immediately) from "gone from server"
+  // (grace-period). Filtering upstream collapsed the two cases and
+  // froze the marker at its last visible position for a full grace
+  // window when a bus drove off-screen.
 
   if (data.serverTime) {
     const sh = parseInt(data.serverTime.slice(0, 2), 10);
@@ -431,7 +421,13 @@ function _handleVehiclesPayload(data) {
 
   markers.updateAll(vehicles);
   stopsLayer.update(vehicles);
-  updateStatus(vehicles.length, data.dataAge, state._lastConnectedClients);
+  // markers.updateAll exposes the in-bbox count it just rendered; using
+  // that keeps the status counter aligned with the actual marker set on
+  // screen (vehicles.length would include the ring-but-not-bbox tail).
+  const visibleCount = markers._lastVisibleCount != null
+    ? markers._lastVisibleCount
+    : vehicles.length;
+  updateStatus(visibleCount, data.dataAge, state._lastConnectedClients);
 
   if (state.followBus && state.selectedJid) {
     const followEntry = state.vehicles.get(state.selectedJid);
