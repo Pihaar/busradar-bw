@@ -1,5 +1,6 @@
 """E2E tests for special stop edge cases (from memory/test-cases-special-stops.md)."""
 
+import pytest
 
 
 class TestStLeonRotSee:
@@ -82,11 +83,20 @@ class TestWieslochWalldorf:
         assert data == 0, f"Steig A should have 0 line 721 departures, got {data}"
 
     def test_steig_a_plus1d_badge_on_wrap(self, server, page):
-        """Steig A (44278341): +1d badge appears when departure times wrap past midnight."""
+        """Steig A (44278341): +1d badge appears when departure times wrap past midnight.
+
+        Live-data test: HAFAS only returns 24 h of departures, so the
+        wrap-past-midnight departures show up in the rendered list only
+        when the auto-expand window can actually reach them. Around
+        midday on a sparse stop like this one the next wrap is 14+ h
+        away — 10 × 60 min load-more clicks max out at 660 min and the
+        wrap is genuinely off-screen, with no defect on our side. Skip
+        in that case instead of failing; the assertion fires only when
+        we have a wrap dep within reach."""
+        from datetime import datetime
         page.goto(server + "/#stop=44278341")
-        # Wait for auto-expand to load enough departures (up to 30s)
         page.wait_for_timeout(3000)
-        # Check raw data for wrap existence
+        # Probe raw data to see if a wrap exists AT ALL within 24h.
         result = page.evaluate("""() =>
             fetch('/api/stationboard', {method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({lid:'A=1@L=44278341@', type:'DEP', dur:1440})})
@@ -97,6 +107,9 @@ class TestWieslochWalldorf:
                     let prevHour = -1;
                     let hasWrap = false;
                     let hasOffsetPrefix = false;
+                    let firstWrapMinutesFromNow = null;
+                    const now = new Date();
+                    const nowMin = now.getHours() * 60 + now.getMinutes();
                     const filtered = jnyL.filter(j => {
                         const loc = locL[(j.stbStop || {}).locX] || {};
                         return loc.extId === '44278341';
@@ -104,20 +117,40 @@ class TestWieslochWalldorf:
                     for (const j of filtered) {
                         const stb = j.stbStop || {};
                         const t = stb.dTimeS || stb.dTimeR || '';
-                        if (t.length > 6) hasOffsetPrefix = true;
+                        if (t.length > 6) {
+                            hasOffsetPrefix = true;
+                            // dTimeS = "DDhhmmss" with DD = day-offset (01 = +1d)
+                            if (firstWrapMinutesFromNow === null) {
+                                const dayOff = parseInt(t.slice(0, t.length - 6), 10);
+                                const h = parseInt(t.slice(t.length - 6, t.length - 4), 10);
+                                const m = parseInt(t.slice(t.length - 4, t.length - 2), 10);
+                                if (isFinite(dayOff) && isFinite(h) && isFinite(m)) {
+                                    firstWrapMinutesFromNow = dayOff * 1440 + h * 60 + m - nowMin;
+                                }
+                            }
+                        }
                         if (t.length >= 4) {
                             const h = parseInt(t.length > 6 ? t.slice(t.length-6, t.length-4) : t.slice(0,2));
                             if (prevHour > 20 && h < 6) hasWrap = true;
                             prevHour = h;
                         }
                     }
-                    return {total: filtered.length, hasWrap, hasOffsetPrefix};
+                    return {total: filtered.length, hasWrap, hasOffsetPrefix, firstWrapMinutesFromNow};
                 })
         """)
         if result["total"] == 0:
             return  # No departures — pass
         if not result["hasWrap"] and not result["hasOffsetPrefix"]:
             return  # No midnight wrap in data — nothing to test
+        # The auto-expand walks +60 min per load-more click; 10 clicks reach
+        # at most 660 min ahead. If the next wrap dep is further out (early
+        # morning, midday on a sparse stop), skip rather than fail — the
+        # filter would render the badge if a wrap was inside the window.
+        first_wrap = result.get("firstWrapMinutesFromNow")
+        if first_wrap is not None and first_wrap > 600:
+            pytest.skip(
+                f"Next +1d wrap is {first_wrap} min out — outside the test's 10×60min reach"
+            )
         # Wait for auto-expand to reach the midnight departures (click load more)
         for _ in range(10):
             btn = page.locator("#departure-list .load-more-btn")
