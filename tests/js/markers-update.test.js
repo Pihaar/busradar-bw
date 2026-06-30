@@ -122,6 +122,8 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
     expect(entry.missedCycles).toBe(0);
 
     // Tick 2: vehicle missing from server (journey ended, left ring).
+    // Last known position is INSIDE the bbox so grace applies — could
+    // be a one-frame drop-out rather than a genuine departure.
     markers.updateAll([]);
     expect(entry.missedCycles).toBe(1);
     expect(entry.marker.remove).not.toHaveBeenCalled();
@@ -130,6 +132,55 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
     markers.updateAll([]);
     expect(entry.marker.remove).toHaveBeenCalledOnce();
     expect(state.vehicles.has('d')).toBe(false);
+  });
+
+  it('removes a vanished vehicle IMMEDIATELY if its last known position is off-bbox', () => {
+    // Tick 1: bus appears with position inside the bbox.
+    markers.updateAll([
+      { jid: 'e', lat: 49.35, lon: 8.65, line: '725', delay: 0 },
+    ]);
+    const entry = state.vehicles.get('e');
+    expect(state.vehicles.has('e')).toBe(true);
+
+    // Tick 2: same bus, new position OFF-bbox. v1.0.26 case (a): marker
+    // gets removed on the spot. The marker entry is deleted; we
+    // re-check below by injecting a stale "last-known off-bbox" entry
+    // directly, simulating the (b1) case where the bus already drifted
+    // off-screen on a previous tick and now disappears from the server
+    // payload entirely.
+    markers.updateAll([
+      { jid: 'e', lat: 49.50, lon: 8.65, line: '725', delay: 0 },
+    ]);
+    expect(state.vehicles.has('e')).toBe(false);
+
+    // (b1): a vehicle whose tracked data position is already outside
+    // the bbox, then disappears from the server. The grace-period that
+    // used to fire here was the residual "frozen for several ticks"
+    // bug — the marker should drop on the very next tick.
+    state.vehicles.set('f', {
+      marker: makeMarkerMock(),
+      data: { jid: 'f', lat: 49.55, lon: 8.65, line: '725', delay: 0 }, // off-bbox
+      missedCycles: 0,
+    });
+    const fEntry = state.vehicles.get('f');
+    markers.updateAll([]); // server doesn't carry 'f' anymore
+    expect(fEntry.marker.remove).toHaveBeenCalledOnce();
+    expect(state.vehicles.has('f')).toBe(false);
+  });
+
+  it('keeps grace-period for a vehicle that vanishes IN-bbox (genuine HAFAS drop-out)', () => {
+    state.vehicles.set('g', {
+      marker: makeMarkerMock(),
+      data: { jid: 'g', lat: 49.35, lon: 8.65, line: '725', delay: 0 }, // in-bbox
+      missedCycles: 0,
+    });
+    const entry = state.vehicles.get('g');
+
+    // Tick: server payload is empty. Bus was just there and is now
+    // gone with no off-screen explanation — keep grace.
+    markers.updateAll([]);
+    expect(entry.missedCycles).toBe(1);
+    expect(entry.marker.remove).not.toHaveBeenCalled();
   });
 
   it('counts only in-bbox vehicles in _lastVisibleCount', () => {
