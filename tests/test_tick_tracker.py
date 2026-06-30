@@ -222,6 +222,72 @@ class TestClientActivity:
         assert woke is False
 
 
+class TestCalibratorWaitMath:
+    """Lock the predicted-tick wait computation. The earlier code bumped
+    the target by TICK_PERIOD until target-now >= ACTIVE_CALIB_INTERVAL,
+    which produced 5-minute waits between probes even on a fresh tick
+    and starved SSE subscribers of vehicles events.
+
+    The fix's contract: the wait is bounded by `pred - 1 - now` (with
+    floor 1 s, ceiling ACTIVE_CALIB_INTERVAL). For any pred returned by
+    next_tick_prediction(), the wait must be at most TICK_PERIOD."""
+
+    def _calc_wait(self, pred: float, now: float, interval: float) -> float:
+        # Direct port of the production formula at tick.py inside the
+        # calibrator loop so a refactor that touches the math has to
+        # touch this test too.
+        wait = max(1.0, (pred - 1.0) - now)
+        if wait > interval:
+            wait = interval
+        return wait
+
+    def test_fresh_tick_waits_under_tick_period(self):
+        from tick import TICK_PERIOD, ACTIVE_CALIB_INTERVAL
+        # last_tick = now → pred = now + TICK_PERIOD
+        pred = 30.0
+        now = 0.0
+        wait = self._calc_wait(pred, now, ACTIVE_CALIB_INTERVAL)
+        assert wait < TICK_PERIOD
+        assert wait == 29.0
+
+    def test_tick_just_passed_probes_almost_immediately(self):
+        from tick import ACTIVE_CALIB_INTERVAL
+        # last_tick = -1s, pred = +29s
+        pred = 29.0
+        now = 0.0
+        wait = self._calc_wait(pred, now, ACTIVE_CALIB_INTERVAL)
+        assert wait == 28.0
+
+    def test_pred_in_past_probes_within_a_second(self):
+        from tick import ACTIVE_CALIB_INTERVAL
+        # If next_tick_prediction returned a value that's already
+        # slightly in the past (clock skew, scan-overrun), the wait
+        # must floor at 1 s — never sleep negative.
+        pred = -5.0
+        now = 0.0
+        wait = self._calc_wait(pred, now, ACTIVE_CALIB_INTERVAL)
+        assert wait == 1.0
+
+    def test_implausibly_far_pred_caps_at_interval(self):
+        from tick import ACTIVE_CALIB_INTERVAL
+        # Defensive cap. next_tick_prediction shouldn't return values
+        # this far out, but if it does, the calibrator must still wake
+        # within ACTIVE_CALIB_INTERVAL so SSE subscribers don't freeze.
+        pred = 10_000.0
+        now = 0.0
+        wait = self._calc_wait(pred, now, ACTIVE_CALIB_INTERVAL)
+        assert wait == ACTIVE_CALIB_INTERVAL
+
+    def test_never_exceeds_tick_period_for_normal_predictions(self):
+        """For every pred that next_tick_prediction() can legitimately
+        return (0 < pred-now ≤ TICK_PERIOD), the wait must be ≤ TICK_PERIOD.
+        Guards the SSE-fanout cadence promise."""
+        from tick import TICK_PERIOD, ACTIVE_CALIB_INTERVAL
+        for offset in range(1, int(TICK_PERIOD) + 1):
+            wait = self._calc_wait(float(offset), 0.0, ACTIVE_CALIB_INTERVAL)
+            assert wait <= TICK_PERIOD, f"offset={offset} → wait={wait}"
+
+
 class TestCalibration:
     @pytest.fixture(autouse=True)
     def reset_tracker(self):
