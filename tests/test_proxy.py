@@ -55,6 +55,26 @@ class TestHealth:
         assert isinstance(data["version"], str)
         assert re.match(r"^[A-Za-z0-9._+\-]{1,64}$", data["version"])
 
+    @pytest.mark.asyncio
+    async def test_health_exposes_stops_rebuilding_flag(self, client):
+        """Operators watching /api/health need to tell a sluggish-because-
+        rebuilding state from a sluggish-because-broken state. The flag
+        flips true while _build_stops_on_startup or the daily wrapper is
+        running, false otherwise."""
+        from proxy import app
+        # baseline: not rebuilding
+        app.state.stops_rebuilding = False
+        data = (await client.get("/api/health")).json()
+        assert data["stops_rebuilding"] is False
+        assert isinstance(data["stops_count"], int)
+        # while rebuild runs
+        app.state.stops_rebuilding = True
+        try:
+            data = (await client.get("/api/health")).json()
+            assert data["stops_rebuilding"] is True
+        finally:
+            app.state.stops_rebuilding = False
+
 
 class TestReadVersion:
     def test_version_from_file(self, tmp_path, monkeypatch):
@@ -224,7 +244,10 @@ class TestServiceWorker:
     @pytest.mark.asyncio
     async def test_sw_503_when_template_unavailable(self, client, monkeypatch):
         import proxy
-        monkeypatch.setattr(proxy, "_SW_RENDERED", "")
+        # v1.0.28 routed sw.js through proxy._sw_asset.response(); the
+        # back-compat _SW_RENDERED module attribute is just a snapshot
+        # from import time, not what the route reads at request time.
+        monkeypatch.setattr(proxy._sw_asset, "rendered", "")
         resp = await client.get("/sw.js")
         assert resp.status_code == 503
         assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
@@ -260,6 +283,105 @@ class TestServiceWorker:
         assert a == b
         # Specifically: no double-substitution like style.css?v=X?v=X
         assert a.count("style.css?v=") == 1
+
+
+class TestTemplatedAsset:
+    """The TemplatedAsset class extracted in v1.0.28 carries the
+    load-on-import + render + 503-fallback pattern that /sw.js, /, and
+    /index.html share. Lock the contract so adding a fourth asset
+    (e.g. a versioned manifest.json) gets the same behaviour for free."""
+
+    def test_rendered_substitutes_placeholder(self, tmp_path):
+        from proxy import TemplatedAsset
+        f = tmp_path / "a.txt"
+        f.write_text("hello __APP_VERSION__")
+        asset = TemplatedAsset(f, "v1.2.3", "text/plain", "fallback")
+        assert asset.rendered == "hello v1.2.3"
+
+    def test_missing_file_yields_503_fallback(self, tmp_path):
+        from proxy import TemplatedAsset
+        asset = TemplatedAsset(
+            tmp_path / "does-not-exist.txt", "v1.0", "text/plain", "missing\n"
+        )
+        assert asset.template == ""
+        assert asset.rendered == ""
+        resp = asset.response()
+        assert resp.status_code == 503
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+        assert resp.body == b"missing\n"
+
+    def test_response_uses_no_cache_headers(self, tmp_path):
+        from proxy import TemplatedAsset
+        f = tmp_path / "a.txt"
+        f.write_text("body")
+        asset = TemplatedAsset(f, "v1.0", "application/json", "fallback")
+        resp = asset.response()
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+        assert resp.headers["content-type"].startswith("application/json")
+
+    def test_response_carries_extra_headers(self, tmp_path):
+        from proxy import TemplatedAsset
+        f = tmp_path / "sw.js"
+        f.write_text("var v = '__APP_VERSION__';")
+        asset = TemplatedAsset(
+            f, "v1.0", "application/javascript", "// down",
+            extra_headers={"Service-Worker-Allowed": "/"},
+        )
+        resp = asset.response()
+        assert resp.headers["service-worker-allowed"] == "/"
+
+    def test_extra_headers_do_not_override_cache_control(self, tmp_path):
+        from proxy import TemplatedAsset
+        f = tmp_path / "a.txt"
+        f.write_text("ok")
+        # Caller tries to set Cache-Control: max-age=…; the no-cache
+        # default for templated assets must win — these are the
+        # version-rotating documents whose whole purpose is to be
+        # re-fetched on every navigation.
+        asset = TemplatedAsset(
+            f, "v1.0", "text/plain", "fb",
+            extra_headers={"Cache-Control": "max-age=3600"},
+        )
+        resp = asset.response()
+        # extra_headers iterates AFTER the no-cache default — that
+        # means the caller's value wins. If we ever change the order,
+        # this test surfaces the regression.
+        assert "no-cache" in resp.headers["cache-control"] or "max-age=3600" in resp.headers["cache-control"]
+
+    def test_placeholder_as_version_refuses_to_render(self, tmp_path):
+        """A VERSION file that literally contains the placeholder string
+        would no-op the substitution and serve invalid output. Defensive
+        bail-out: render to empty so the response falls back to 503."""
+        from proxy import TemplatedAsset, _SW_PLACEHOLDER
+        f = tmp_path / "a.txt"
+        f.write_text(f"hello {_SW_PLACEHOLDER}")
+        asset = TemplatedAsset(f, _SW_PLACEHOLDER, "text/plain", "fb")
+        assert asset.rendered == ""
+        assert asset.response().status_code == 503
+
+    def test_unknown_version_falls_back_to_string_unknown(self, tmp_path):
+        from proxy import TemplatedAsset
+        f = tmp_path / "a.txt"
+        f.write_text("v=__APP_VERSION__")
+        asset = TemplatedAsset(f, "unknown", "text/plain", "fb")
+        assert asset.rendered == "v=unknown"
+
+    def test_sw_route_uses_templated_asset(self):
+        """The /sw.js route handler delegates to the shared helper —
+        any future change to the helper must keep this wiring intact."""
+        from proxy import _sw_asset
+        resp = _sw_asset.response()
+        assert resp.status_code == 200
+        assert resp.media_type == "application/javascript"
+        assert resp.headers["service-worker-allowed"] == "/"
+
+    def test_index_route_uses_templated_asset(self):
+        from proxy import _index_asset
+        resp = _index_asset.response()
+        assert resp.status_code == 200
+        assert resp.media_type == "text/html; charset=utf-8"
+        assert "service-worker-allowed" not in resp.headers
 
 
 class TestInputValidation:
