@@ -206,14 +206,44 @@ export function startStream() {
 }
 
 document.addEventListener('visibilitychange', function () {
-  if (document.visibilityState === 'visible' && state.map) {
-    if (!_es || _es.readyState === 2) {
-      _reconnectAttempt = 0;
-      clearTimeout(_reconnectTimer);
-      startStream();
-    }
+  if (document.visibilityState !== 'visible' || !state.map) return;
+  // Two recovery paths:
+  //   (a) Browser noticed the disconnect — readyState is CLOSED.
+  //   (b) Mobile-zombie: the OS suspended the tab long enough for the
+  //       server to time out and reap our subscriber, but the
+  //       EventSource still reports readyState===OPEN. No `onerror`
+  //       fires until the next data event tries to land, which is
+  //       never on a dead connection. The user then sees stale buses
+  //       and has to pan the map to "fix" it — that pan-triggered
+  //       viewport POST 401s and our recovery path kicks in. We catch
+  //       it here instead by checking how stale lastUpdate is.
+  if (!_es || _es.readyState === 2) {
+    _reconnectAttempt = 0;
+    clearTimeout(_reconnectTimer);
+    startStream();
+    return;
+  }
+  if (state.lastUpdate && Date.now() - state.lastUpdate > STALE_THRESHOLD_MS) {
+    _forceReconnect('stale-on-visible');
   }
 });
+
+// Force a fresh reconnect when the stream is dead-but-claiming-open. The
+// cooldown keeps a misdetected "stale" from triggering a reconnect storm
+// if the actual problem is upstream (HAFAS slow, server overloaded). A
+// single bad detection costs one cycle; the cooldown caps the cost.
+let _lastForceReconnectAt = 0;
+const FORCE_RECONNECT_COOLDOWN_MS = 15000;
+
+function _forceReconnect(reason) {
+  const now = Date.now();
+  if (now - _lastForceReconnectAt < FORCE_RECONNECT_COOLDOWN_MS) return;
+  _lastForceReconnectAt = now;
+  if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+  _reconnectAttempt = 0;
+  clearTimeout(_reconnectTimer);
+  startStream();
+}
 
 // 1s status ticker — independent of network. Same behaviour as before.
 // HAFAS pushes vehicles every ~30s tick. If we don't see one for this long
@@ -273,6 +303,16 @@ setInterval(function () {
     if (dot && !dot.classList.contains('status-dot--offline') && !dot.classList.contains('status-dot--error')) {
       showPersistentError(t('connection_stale'));
     }
+  }
+  // Active recovery for the mobile-zombie case: the socket still claims
+  // OPEN but no vehicles have arrived for more than a HAFAS tick worth
+  // of wall-clock. Reconnect to find out — if HAFAS is genuinely down
+  // the new connection 5xxs and the indicator stays red, if the local
+  // socket was dead the new connection works and the dot turns green
+  // on the next tick. The cooldown stops a confused detection from
+  // re-tearing-down a healthy stream every second.
+  if (staleByTime && _es && _es.readyState === 1 && !offlineByNavigator) {
+    _forceReconnect('stale-timer');
   }
 }, 1000);
 
