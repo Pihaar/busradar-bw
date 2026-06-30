@@ -317,12 +317,26 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
 
             pred = tracker.next_tick_prediction()
             if pred and active:
-                target = pred
-                for _ in range(20):
-                    if target - _mono() >= interval:
-                        break
-                    target += TICK_PERIOD
-                wait = max(1.0, (target - 1.0) - _mono())
+                # Probe just before the predicted next tick. The original
+                # code here ran a for-loop that bumped `target` by
+                # TICK_PERIOD until `target - now >= interval` — which on
+                # a fresh tick meant the calibrator slept ~5 minutes
+                # (ACTIVE_CALIB_INTERVAL) between probes, since pred is
+                # always within one TICK_PERIOD of now and the loop
+                # would skip 10 cycles to reach the interval ceiling.
+                # That was fine for the pre-SSE polling-cache design,
+                # but with SSE-push the calibrator IS the tick source
+                # for vehicle fan-out, so subscribers waited 5 minutes
+                # between vehicles events while /api/health showed
+                # calibrator_mode "active" and tick_age_s climbing.
+                # next_tick_prediction() already returns the soonest
+                # future tick; subtract 1 s of slack and floor at 1.
+                wait = max(1.0, (pred - 1.0) - _mono())
+                if wait > interval:
+                    # Safety net: if the prediction lands implausibly
+                    # far in the future, fall back to the configured
+                    # interval rather than vanishing for an hour.
+                    wait = interval
             else:
                 wait = interval
             # Idle long-sleep is interruptible: a new subscriber sets the
