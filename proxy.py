@@ -210,6 +210,10 @@ async def lifespan(app: FastAPI):
     cached = load_stops_cache()
     stale = is_stops_cache_stale(cached)
     skip_rebuild = os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") == "1"
+    # Initialise the rebuild-in-progress flag before any background task
+    # can flip it. /api/health reads this so operators can tell whether a
+    # multi-minute HAFAS-fanout rebuild is currently consuming the server.
+    app.state.stops_rebuilding = False
     if skip_rebuild:
         log.warning("BUSRADAR_SKIP_STOPS_REBUILD=1 set — skipping startup stops rebuild")
     if cached:
@@ -250,15 +254,22 @@ async def lifespan(app: FastAPI):
 
 async def _build_stops_on_startup(app: FastAPI):
     from stops_builder import build_stops_cache
+    import time as _t
+    app.state.stops_rebuilding = True
+    t0 = _t.time()
     try:
         data = await build_stops_cache()
         app.state.stops_data = data
+        log.info("Startup stops build complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0)
     except Exception as e:
-        log.error("Startup stops build failed: %s", e)
+        log.error("Startup stops build failed after %.0fs: %s", _t.time() - t0, e)
+    finally:
+        app.state.stops_rebuilding = False
 
 
 async def schedule_daily_rebuild_wrapper(app: FastAPI):
     from stops_builder import build_stops_cache
+    import time as _t
     while True:
         from datetime import datetime, timedelta
         now = datetime.now()
@@ -268,11 +279,16 @@ async def schedule_daily_rebuild_wrapper(app: FastAPI):
         wait_seconds = (next_run - now).total_seconds()
         log.info("Next stops rebuild at %s", next_run.strftime("%Y-%m-%d %H:%M"))
         await asyncio.sleep(wait_seconds)
+        app.state.stops_rebuilding = True
+        t0 = _t.time()
         try:
             data = await build_stops_cache()
             app.state.stops_data = data
+            log.info("Daily stops rebuild complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0)
         except Exception as e:
-            log.error("Daily stops rebuild failed: %s", e)
+            log.error("Daily stops rebuild failed after %.0fs: %s", _t.time() - t0, e)
+        finally:
+            app.state.stops_rebuilding = False
 
 
 app = FastAPI(title="Busradar BW", lifespan=lifespan)
@@ -634,6 +650,14 @@ async def health(request: Request):
         "version": _VERSION,
         "circuit_breaker": "open" if breaker.is_open else "closed",
         "failures": breaker.failures,
+        # True while either the startup or the daily 3am stops-cache
+        # rebuild is running. The rebuild fans out hundreds of HAFAS
+        # calls (~600 grid points + per-stop platform discovery) and
+        # takes a few minutes; surfacing it here lets operators tell
+        # "live data slow because rebuild in progress" apart from
+        # "live data slow because something is wrong".
+        "stops_rebuilding": bool(getattr(request.app.state, "stops_rebuilding", False)),
+        "stops_count": (getattr(request.app.state, "stops_data", None) or {}).get("count", 0),
     }
     if _TICK_ENABLED:
         tick_age = (mono_now - ts) if ts else None
@@ -690,38 +714,62 @@ async def line_search(
     return {"vehicles": matches, "count": len(matches)}
 
 
-_SW_PATH = Path(__file__).resolve().parent / "static" / "sw.js"
-try:
-    _SW_TEMPLATE = _SW_PATH.read_text(encoding="utf-8")
-except OSError as e:
-    log.error("[startup] failed to read %s: %s", _SW_PATH, e)
-    _SW_TEMPLATE = ""
-
-# index.html carries the same `__APP_VERSION__` placeholder in style/script
-# URLs so a deploy busts the browser's HTTP cache for those resources
-# (StaticFiles serves them with the nginx-default max-age=2592000 and there's
-# no other cache-bust path — the SW cache rotates on its own version-baked
-# cache key, but only after the new SW has activated, which doesn't help a
-# tab that still holds the previous CSS in its HTTP cache).
-_INDEX_PATH = Path(__file__).resolve().parent / "static" / "index.html"
-try:
-    _INDEX_TEMPLATE = _INDEX_PATH.read_text(encoding="utf-8")
-except OSError as e:
-    log.error("[startup] failed to read %s: %s", _INDEX_PATH, e)
-    _INDEX_TEMPLATE = ""
-
+# --- Templated static assets ---
+# /sw.js and / (index.html) both want the same trick: load a file at
+# import time, substitute `__APP_VERSION__` for the deploy version,
+# serve the result with no-cache headers, and fall back to a 503 stub
+# when the template is unreadable. TemplatedAsset captures that
+# pattern so a fourth route (e.g. a versioned manifest.json) is one
+# instance, not another copy-pasted route handler.
 _SW_PLACEHOLDER = "__APP_VERSION__"
 
 
-def _render_sw(template: str, version: str) -> str:
-    """Substitute `__APP_VERSION__` in a template string. Originally written
-    for sw.js (hence the name), now also used for index.html (the style.css
-    cache-bust path). Kept under the historical name so the test surface and
-    callers don't need a churn-only rename; `_render_template_version` is a
-    clearer alias if you'd rather use it at new call sites.
+class TemplatedAsset:
+    """Hand-served static file with `__APP_VERSION__` substituted at
+    import time. Stores the rendered body + the metadata needed to
+    answer requests (media type, fallback stub for the 503 path,
+    extra response headers like Service-Worker-Allowed).
 
-    Falls back to "unknown" when version is missing so a misconfigured deploy
-    still yields parseable output (the cache simply won't rotate)."""
+    The class deliberately doesn't read the file or do the substitution
+    lazily — both happen once at construction so request-time work is
+    just two attribute reads and a Response constructor. Edit-in-place
+    deploys still need a process restart to pick up template changes,
+    which matches the existing deploy model (RPM + transactional-update
+    + reboot)."""
+
+    def __init__(self, path: Path, version: str, media_type: str,
+                 fallback_body: str, extra_headers: dict | None = None):
+        self.path = path
+        self.media_type = media_type
+        self.fallback_body = fallback_body
+        self.extra_headers = extra_headers or {}
+        try:
+            self.template = path.read_text(encoding="utf-8")
+        except OSError as e:
+            log.error("[startup] failed to read %s: %s", path, e)
+            self.template = ""
+        self.rendered = _render_template_version(self.template, version)
+        if self.template and not self.rendered:
+            log.warning("[startup] %s template loaded but render produced empty body", path.name)
+
+    def response(self) -> Response:
+        no_cache = "no-cache, no-store, must-revalidate"
+        if not self.rendered:
+            return Response(
+                self.fallback_body,
+                media_type=self.media_type,
+                status_code=503,
+                headers={"Cache-Control": no_cache},
+            )
+        headers = {"Cache-Control": no_cache}
+        headers.update(self.extra_headers)
+        return Response(self.rendered, media_type=self.media_type, headers=headers)
+
+
+def _render_template_version(template: str, version: str) -> str:
+    """Substitute `__APP_VERSION__` in a template string. Falls back to
+    "unknown" when version is missing so a misconfigured deploy still
+    yields parseable output (the cache simply won't rotate)."""
     if not template:
         return ""
     if version == _SW_PLACEHOLDER:
@@ -732,18 +780,41 @@ def _render_sw(template: str, version: str) -> str:
     return template.replace(_SW_PLACEHOLDER, version or "unknown")
 
 
-# Clearer name for new call sites; both names point at the same function so
-# existing tests that import `_render_sw` keep working.
-_render_template_version = _render_sw
+# Historical name kept as an alias — the existing test surface imports
+# `_render_sw` and a churn-only rename gains nothing.
+_render_sw = _render_template_version
 
 
-_SW_RENDERED = _render_sw(_SW_TEMPLATE, _VERSION)
-if _SW_TEMPLATE and not _SW_RENDERED:
-    log.warning("[startup] SW template loaded but render produced empty body")
-elif _VERSION == "unknown":
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+_sw_asset = TemplatedAsset(
+    path=_STATIC_DIR / "sw.js",
+    version=_VERSION,
+    media_type="application/javascript",
+    fallback_body="// service worker unavailable\n",
+    extra_headers={"Service-Worker-Allowed": "/"},
+)
+
+_index_asset = TemplatedAsset(
+    path=_STATIC_DIR / "index.html",
+    version=_VERSION,
+    media_type="text/html; charset=utf-8",
+    fallback_body="<!doctype html><meta charset=utf-8><title>busradar</title>service unavailable\n",
+)
+
+if _VERSION == "unknown":
     log.warning("[startup] _VERSION is 'unknown'; SW cache name will not rotate on deploy")
 
-_INDEX_RENDERED = _render_template_version(_INDEX_TEMPLATE, _VERSION) if _INDEX_TEMPLATE else ""
+# Back-compat aliases so existing tests / external callers reading
+# _SW_TEMPLATE / _SW_RENDERED / _INDEX_TEMPLATE / _INDEX_RENDERED at
+# module load keep working. New code should reach through the asset
+# objects directly.
+_SW_PATH = _sw_asset.path
+_SW_TEMPLATE = _sw_asset.template
+_SW_RENDERED = _sw_asset.rendered
+_INDEX_PATH = _index_asset.path
+_INDEX_TEMPLATE = _index_asset.template
+_INDEX_RENDERED = _index_asset.rendered
 
 
 @app.get("/api/stream/")
@@ -763,54 +834,17 @@ async def stream_select(request: Request):
 
 @app.get("/sw.js")
 async def serve_sw():
-    """Hand-served so we can substitute the cache-version into the SW source.
-    StaticFiles can't template, and we need a fresh CACHE name per release."""
-    if not _SW_RENDERED:
-        return Response(
-            "// service worker unavailable\n",
-            media_type="application/javascript",
-            status_code=503,
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
-    return Response(
-        _SW_RENDERED,
-        media_type="application/javascript",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Service-Worker-Allowed": "/",
-        },
-    )
-
-
-async def _serve_index() -> Response:
-    """Hand-serve index.html with the version placeholder substituted so the
-    style/script URLs carry a cache-bust query param. no-cache on the document
-    itself ensures the browser re-fetches the HTML on every navigation, picking
-    up the new ?v= URLs whenever the deploy version changes — the heavy
-    sub-resources (style.css, refresh.js, …) stay aggressively cached behind
-    those versioned URLs."""
-    if not _INDEX_RENDERED:
-        return Response(
-            "<!doctype html><meta charset=utf-8><title>busradar</title>service unavailable\n",
-            media_type="text/html; charset=utf-8",
-            status_code=503,
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
-    return Response(
-        _INDEX_RENDERED,
-        media_type="text/html; charset=utf-8",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-    )
+    return _sw_asset.response()
 
 
 @app.get("/")
 async def serve_root():
-    return await _serve_index()
+    return _index_asset.response()
 
 
 @app.get("/index.html")
 async def serve_index():
-    return await _serve_index()
+    return _index_asset.response()
 
 
 # html=False — the explicit @app.get("/") and @app.get("/index.html") routes
