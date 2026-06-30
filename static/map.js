@@ -555,8 +555,35 @@ export var markers = {
 
     state.vehicles.forEach(function(entry, jid) {
       if (!inServerRing.has(jid)) {
-        // Case (b): truly missing from server-side. Grace-period the
-        // removal so a single dropped frame doesn't blink the marker.
+        // Case (b): vehicle not in this server payload. Two sub-cases:
+        //
+        //   (b1) Marker's last known position is OUTSIDE the visible
+        //        bbox. The bus already drove off-screen and the server
+        //        has now dropped it from the ring entirely. Removing
+        //        immediately is the user-visible-correct call —
+        //        keeping the missedCycles grace here was the residual
+        //        "frozen marker for several ticks" report after v1.0.26:
+        //        the v1.0.26 fix only caught the case where a fresh
+        //        position landed off-bbox, but a bus leaving the ring
+        //        outright (no fresh position at all) still fell back
+        //        to the grace path.
+        //
+        //   (b2) Last known position is INSIDE the bbox. The vehicle
+        //        was just there and is suddenly missing without an
+        //        off-screen explanation — keep the grace so a single
+        //        dropped frame doesn't blink the marker.
+        var lastLat = entry.data ? entry.data.lat : null;
+        var lastLon = entry.data ? entry.data.lon : null;
+        var lastVisible = lastLat != null && lastLon != null
+          ? inBbox(lastLat, lastLon)
+          : false;
+        if (!lastVisible && state.selectedJid !== jid) {
+          // (b1) — drop now.
+          entry.marker.remove();
+          state.vehicles.delete(jid);
+          return;
+        }
+        // (b2) — grace.
         entry.missedCycles++;
         if (entry.missedCycles >= CONFIG.graceperiodCycles) {
           if (state.selectedJid === jid) {
