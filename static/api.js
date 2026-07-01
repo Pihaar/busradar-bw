@@ -14,6 +14,17 @@ var _selectStreamTimer = null;
 var _selectStreamPending = null;
 var _selectStreamResolvers = [];
 var _selectStreamRejecters = [];
+// Defense-in-depth cap on the debounce queue. A tight-loop caller inside
+// this tab (compromised extension, DevTools script) can push a resolve/
+// reject pair on every call while also resetting the 250ms timer — the
+// arrays grow without the flush ever firing. Blast radius is the
+// attacker's own tab (the POST never goes out), but a cap costs nothing
+// and keeps the memory footprint bounded. When the cap is hit we reject
+// the OLDEST pending pair with a "superseded" error and let the newest
+// call in; the timer stays running so the flush still fires eventually
+// and drains the remaining waiters. 64 is enough for any legitimate
+// burst (rapid load-more clicks max out around 6-10 per debounce window).
+var _SELECTSTREAM_QUEUE_CAP = 64;
 
 function _selectStreamFlush() {
   _selectStreamTimer = null;
@@ -78,6 +89,18 @@ function _selectStreamImpl(type, id, boardType, dur) {
   }
   _selectStreamPending = selection;
   return new Promise(function (resolve, reject) {
+    // Cap at _SELECTSTREAM_QUEUE_CAP: if a tight-loop caller has already
+    // pushed that many pairs without the flush firing, drop the oldest
+    // by rejecting its reject-callback and shifting both arrays. The
+    // released promise's `.catch` handler (if any) runs; the promise
+    // itself is now eligible for GC because nothing holds a strong ref.
+    if (_selectStreamResolvers.length >= _SELECTSTREAM_QUEUE_CAP) {
+      _selectStreamResolvers.shift();
+      var oldestReject = _selectStreamRejecters.shift();
+      try {
+        oldestReject(new Error('selectStream superseded (queue cap)'));
+      } catch (e) { /* consumer .catch threw — swallow, we're just draining */ }
+    }
     _selectStreamResolvers.push(resolve);
     _selectStreamRejecters.push(reject);
     if (_selectStreamTimer) clearTimeout(_selectStreamTimer);

@@ -178,6 +178,32 @@ describe('api.selectStream (debounced)', () => {
     const body = JSON.parse(window.fetch.mock.calls[0][1].body);
     expect(body.selection.dur).toBe(1440);
   });
+
+  it('caps the debounce queue at 64 by rejecting the oldest pending caller', async () => {
+    // A tight-loop caller (compromised extension, DevTools script) keeps
+    // resetting the 250ms timer so the flush never fires. Without a cap
+    // the resolver/rejecter arrays grow unbounded (self-DoS in the
+    // attacker's own tab, but memory pressure regardless). With the cap
+    // in place the 65th call boots the 1st call out with a "superseded"
+    // rejection; nothing goes to the wire yet.
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const promises = [];
+    for (let i = 0; i < 65; i++) {
+      // Each call schedules a new timer, so the flush stays deferred.
+      promises.push(api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch(e => e));
+    }
+    // The oldest promise (index 0) resolves-to-error immediately when
+    // the 65th call pushes it out — awaiting it must not hang.
+    const oldest = await promises[0];
+    expect(oldest).toBeInstanceOf(Error);
+    expect(oldest.message).toMatch(/superseded/i);
+    // No fetch yet; timer still hasn't fired.
+    expect(window.fetch).not.toHaveBeenCalled();
+    // Let the trailing edge fire so the remaining 64 waiters resolve
+    // and pytest doesn't complain about unhandled rejections.
+    await vi.advanceTimersByTimeAsync(260);
+    expect(window.fetch).toHaveBeenCalledOnce();
+  });
 });
 
 describe('urlState.saveMapPosition', () => {
