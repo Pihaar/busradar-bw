@@ -266,28 +266,48 @@ export var mapModule = {
     // to the GPS fix — the user just clicked a shared link and wants that
     // view. The dot itself is still expected though.
     var suppressView = !!(location.hash && location.hash.length > 1);
-    _gpsDebugSet("getCurrentPosition suppressView=" + suppressView);
+    var standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+    _gpsDebugSet("getCurrentPosition suppressView=" + suppressView + " pwa=" + standalone);
     navigator.geolocation.getCurrentPosition(
       function(pos) {
         _gpsDebugSet("cb: showLoc=" + settings.current.showLocation);
         if (!settings.current.showLocation) return;
         var lat = pos.coords.latitude;
         var lon = pos.coords.longitude;
+        // PWA-Fix: at standalone startup Leaflet's map container often
+        // still has zero size when the geolocation callback lands (the
+        // OS shell chrome is still resolving). Rendering a marker at
+        // that moment places it in a viewport of 0×0 → invisible even
+        // though the leaflet layers are added correctly. invalidateSize
+        // forces a fresh size measurement + tile/pane recompute; the
+        // subsequent setUserLocationMarker then lands in a real viewport.
+        state.map.invalidateSize();
         if (!suppressView) {
           state.map.setView([lat, lon], CONFIG.defaultZoom);
           stopsLayer.loadAll(lat, lon, 5000);
         }
-        setUserLocationMarker(lat, lon);
-        setTimeout(function() { setUserLocationMarker(lat, lon); }, 100);
-        setTimeout(function() { setUserLocationMarker(lat, lon); }, 1000);
+        // whenReady runs synchronously if the map has already fired
+        // load; otherwise it queues until the map is fully initialised.
+        // Handles the PWA case where the map isn't quite ready yet.
+        state.map.whenReady(function() {
+          setUserLocationMarker(lat, lon);
+        });
+        // Belt-and-suspenders retries. Each retry also invalidates size
+        // once more, in case the standalone chrome only settled after
+        // our first attempt.
+        setTimeout(function() {
+          state.map.invalidateSize();
+          setUserLocationMarker(lat, lon);
+        }, 100);
+        setTimeout(function() {
+          state.map.invalidateSize();
+          setUserLocationMarker(lat, lon);
+        }, 1000);
         setTimeout(function() { setUserLocationMarker(lat, lon); }, 5000);
       },
       function(err) {
         _gpsDebugSet("err:" + (err && err.code));
       },
-      // Match the GPS-button options exactly. The prior asymmetry
-      // (enableHighAccuracy:false, maximumAge:60000) had no evidence
-      // for it and diverging from the working path adds surface area.
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
     );
   },
