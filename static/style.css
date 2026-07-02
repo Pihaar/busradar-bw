@@ -1412,3 +1412,21 @@ html, body {
     box-shadow: none !important;
   }
 }
+
+/* GPS location marker (blue dot). Rendered via L.divIcon into a
+   dedicated pane at z-index 650 so it always sits above bus markers.
+   The span-based structure lets the outline stay crisp on high-DPI
+   phones (SVG circleMarker was fuzzy at 8px radius). */
+.user-location-marker {
+  pointer-events: none;
+}
+.user-location-marker__dot {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4285f4;
+  border: 3px solid #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.35);
+  margin: 3px;
+}
