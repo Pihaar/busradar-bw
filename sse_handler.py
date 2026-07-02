@@ -566,6 +566,22 @@ async def handle_sse_stream(request: Request, app_version: str):
                     yield _format_keepalive()
                     continue
 
+                # REPORT_ONLY: skip 2 of every 3 push ticks. sse_push_loop
+                # fires every 10 s so CALC-mode subs get a fresh HAFAS-
+                # interpolated position on that cadence; REPORT_ONLY on the
+                # other hand shows real GPS positions which HAFAS itself
+                # only updates every ~30 s, so emitting on every 10 s tick
+                # would just re-push identical payloads and burn HAFAS
+                # budget. Anchor the pattern to the subscriber (not the
+                # global tick_seq) so the first tick after subscribe
+                # always emits — a REPORT_ONLY user who just opened the
+                # app shouldn't wait up to 20 s for the first paint.
+                if sub.pos_mode == "REPORT_ONLY":
+                    seen = sub.report_only_ticks_seen
+                    sub.report_only_ticks_seen = seen + 1
+                    if seen > 0 and seen % 3 != 0:
+                        continue
+
                 # New tick. Fetch vehicles + detail (if a selection is set)
                 # in parallel so per-tick wall-clock is max(latencies), not
                 # sum. asyncio.gather with return_exceptions keeps a detail
@@ -712,6 +728,12 @@ async def handle_viewport(request: Request):
         or sub.pos_mode != payload.posMode
     )
     sub.viewport = new_bbox
+    if sub.pos_mode != payload.posMode:
+        # Reset the REPORT_ONLY tick-skip counter so a mode switch
+        # (either direction) starts fresh: the very next tick pushes
+        # so the user sees the new-mode data immediately, and the
+        # skip pattern re-anchors from there.
+        sub.report_only_ticks_seen = 0
     sub.pos_mode = payload.posMode
     sub.last_viewport_bbox = new_quantized
 

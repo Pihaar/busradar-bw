@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { state, settings, SETTINGS_KEY, BACKOFF_BASE, getDelayClass, getDelayText, decodePolyline, applyI18n, t, extractHafasMessages, formatTime } from '../../static/state.js';
+import { state, settings, SETTINGS_KEY, getDelayClass, getDelayText, decodePolyline, applyI18n, t, extractHafasMessages, formatTime } from '../../static/state.js';
 import { api, urlState } from '../../static/api.js';
 
 describe('api.getStops', () => {
@@ -904,20 +904,6 @@ describe('settings', () => {
       // 8 chars, offset='01', hh='XX'
       expect(formatTime('01XX0000')).toBe('');
     });
-  });
-});
-
-describe('state._nextFreshDataIn (tick hint)', () => {
-  it('is initialized to null', () => {
-    expect(state._nextFreshDataIn).toBe(null);
-  });
-
-  it('accepts valid number >= 0', () => {
-    state._nextFreshDataIn = 12.5;
-    expect(state._nextFreshDataIn).toBe(12.5);
-    state._nextFreshDataIn = 0;
-    expect(state._nextFreshDataIn).toBe(0);
-    state._nextFreshDataIn = null;
   });
 });
 

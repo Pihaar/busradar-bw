@@ -140,6 +140,11 @@ class Subscriber:
     # Bbox-quantize of the viewport when /viewport was last accepted, so
     # /viewport POST can skip fire_tick() when nothing actually changed.
     last_viewport_bbox: tuple[int, int, int, int] | None = None
+    # REPORT_ONLY sub tick-skipping counter. sse_push_loop fires every 10 s,
+    # but HAFAS REPORT_ONLY positions only update every ~30 s, so we skip
+    # 2 out of every 3 ticks for these subs (first tick after subscribe is
+    # never skipped, so the map paints quickly).
+    report_only_ticks_seen: int = 0
 
 
 # === Tick fanout primitives ===
