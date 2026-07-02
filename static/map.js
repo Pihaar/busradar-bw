@@ -259,14 +259,17 @@ export var mapModule = {
   },
 
   requestGPS: function() {
-    if (!navigator.geolocation) return;
-    if (!settings.current.showLocation) return;
+    _gpsDebugSet("requestGPS: entry");
+    if (!navigator.geolocation) { _gpsDebugSet("no geolocation"); return; }
+    if (!settings.current.showLocation) { _gpsDebugSet("showLocation=off"); return; }
     // URL-restore (hash carries lat/lon/z) means we must NOT jump the map
     // to the GPS fix — the user just clicked a shared link and wants that
     // view. The dot itself is still expected though.
     var suppressView = !!(location.hash && location.hash.length > 1);
+    _gpsDebugSet("getCurrentPosition suppressView=" + suppressView);
     navigator.geolocation.getCurrentPosition(
       function(pos) {
+        _gpsDebugSet("cb: showLoc=" + settings.current.showLocation);
         if (!settings.current.showLocation) return;
         var lat = pos.coords.latitude;
         var lon = pos.coords.longitude;
@@ -274,20 +277,14 @@ export var mapModule = {
           state.map.setView([lat, lon], CONFIG.defaultZoom);
           stopsLayer.loadAll(lat, lon, 5000);
         }
-        // Set the marker AND retry a few times: for reasons that are
-        // still not fully understood, the first setUserLocationMarker
-        // call from this init-time callback occasionally leaves the
-        // dot invisible even though the GPS-button click (same fn,
-        // same args, later in the session) always works. Retries at
-        // 100ms/1s/5s cover the window without measurable cost —
-        // setUserLocationMarker is idempotent (setLatLng on an
-        // already-correct marker is essentially a no-op).
         setUserLocationMarker(lat, lon);
         setTimeout(function() { setUserLocationMarker(lat, lon); }, 100);
         setTimeout(function() { setUserLocationMarker(lat, lon); }, 1000);
         setTimeout(function() { setUserLocationMarker(lat, lon); }, 5000);
       },
-      function() {},
+      function(err) {
+        _gpsDebugSet("err:" + (err && err.code));
+      },
       // Match the GPS-button options exactly. The prior asymmetry
       // (enableHighAccuracy:false, maximumAge:60000) had no evidence
       // for it and diverging from the working path adds surface area.
@@ -295,6 +292,32 @@ export var mapModule = {
     );
   },
 };
+
+// Diagnostic panel — visible only when the URL carries ?gpsdebug=1.
+// Renders a small status pill in the bottom-left of the viewport showing
+// the last thing setUserLocationMarker / requestGPS did. Ships in-prod
+// because the bug reproduces on user devices we can't reach with
+// DevTools. Zero visual footprint when the flag isn't set.
+var _gpsDebugEl = null;
+function _gpsDebugSet(msg) {
+  try {
+    if (typeof URLSearchParams === "undefined") return;
+    var params = new URLSearchParams(location.search);
+    if (params.get("gpsdebug") !== "1") return;
+    if (!_gpsDebugEl) {
+      _gpsDebugEl = document.createElement("div");
+      _gpsDebugEl.id = "gps-debug";
+      _gpsDebugEl.style.cssText =
+        "position:fixed;bottom:8px;left:8px;z-index:9999;" +
+        "background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;" +
+        "font:11px/1.3 monospace;border-radius:4px;max-width:60vw;" +
+        "pointer-events:none;";
+      document.body.appendChild(_gpsDebugEl);
+    }
+    var ts = new Date().toISOString().slice(11, 19);
+    _gpsDebugEl.textContent = ts + " " + msg;
+  } catch (e) {}
+}
 
 // GPS dot: divIcon-based marker in a dedicated pane that renders ABOVE
 // the bus markers. The prior implementation used L.circleMarker in the
@@ -324,20 +347,18 @@ function _ensureUserLocationPaneAndIcon() {
 }
 
 export function setUserLocationMarker(lat, lon) {
-  if (!settings.current.showLocation) return;
-  if (!state.map) return;
+  if (!settings.current.showLocation) { _gpsDebugSet("setMarker skipped: showLoc=off"); return; }
+  if (!state.map) { _gpsDebugSet("setMarker skipped: no map"); return; }
   var icon = _ensureUserLocationPaneAndIcon();
-  if (!icon) return;
+  if (!icon) { _gpsDebugSet("setMarker: no icon"); return; }
   var ll = [lat, lon];
-  // Defensive: if the marker exists in state but is no longer attached
-  // to the map (leaflet's _map internal is null), it was detached by
-  // something we don't see. Drop the stale reference and re-create,
-  // otherwise setLatLng on a detached marker is invisible.
   if (state._userLocationMarker && !state._userLocationMarker._map) {
+    _gpsDebugSet("setMarker: stale ref detected, recreating");
     state._userLocationMarker = null;
   }
   if (state._userLocationMarker) {
     state._userLocationMarker.setLatLng(ll);
+    _gpsDebugSet("setMarker: setLatLng " + lat.toFixed(4) + "," + lon.toFixed(4));
   } else {
     state._userLocationMarker = L.marker(ll, {
       icon: icon,
@@ -346,6 +367,8 @@ export function setUserLocationMarker(lat, lon) {
       keyboard: false,
       zIndexOffset: 1000,
     }).addTo(state.map);
+    _gpsDebugSet("setMarker: created @" + lat.toFixed(4) + "," + lon.toFixed(4)
+                 + " map=" + !!state._userLocationMarker._map);
   }
 }
 
