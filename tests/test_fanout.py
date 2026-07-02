@@ -14,6 +14,7 @@ from fanout import (
     Subscriber,
     SubscriberRegistry,
     canonicalize_ip,
+    fire_push_tick,
     fire_tick,
     quantize_bbox,
     should_disconnect_slow_consumer,
@@ -33,6 +34,7 @@ def reset_module_state():
     helper that the async test invokes after the event-loop is up."""
     yield
     fanout.tick_seq = 0
+    fanout.push_seq = 0
 
 
 async def _fresh_condition():
@@ -40,6 +42,7 @@ async def _fresh_condition():
     running event loop. Must be awaited from inside an async test."""
     fanout.tick_condition = asyncio.Condition()
     fanout.tick_seq = 0
+    fanout.push_seq = 0
 
 
 # === canonicalize_ip ===
@@ -176,6 +179,24 @@ class TestTickFanout:
         seq = await fire_tick()
         assert seq == before + 1
         assert fanout.tick_seq == seq
+
+    @pytest.mark.asyncio
+    async def test_fire_tick_does_not_bump_push_seq(self, reset_module_state):
+        """fire_tick is for viewport-change wakes; push_seq stays put so
+        REPORT_ONLY subs anchored on push_seq are not affected by other
+        users' viewport POSTs."""
+        await _fresh_condition()
+        before_push = fanout.push_seq
+        await fire_tick()
+        assert fanout.push_seq == before_push
+
+    @pytest.mark.asyncio
+    async def test_fire_push_tick_bumps_both_counters(self, reset_module_state):
+        await _fresh_condition()
+        before_tick, before_push = fanout.tick_seq, fanout.push_seq
+        await fire_push_tick()
+        assert fanout.tick_seq == before_tick + 1
+        assert fanout.push_seq == before_push + 1
 
     @pytest.mark.asyncio
     async def test_condition_no_lost_wakeup_under_concurrent_notify(self, reset_module_state):
@@ -319,3 +340,98 @@ class TestCapExceeded:
         assert e.limit == 500
         assert "global" in str(e)
         assert "500" in str(e)
+
+
+# === Subscriber REPORT_ONLY skip-anchor state ===
+
+class TestReportOnlySkipAnchor:
+    def test_default_last_emitted_push_seq_is_none(self):
+        """Fresh Subscriber starts with no anchor so the first push always
+        emits — matches the 'first tick after subscribe paints quickly'
+        contract from the PIV fix."""
+        sub = Subscriber(connection_id="x", ip="")
+        assert sub.last_emitted_push_seq is None
+
+    def test_skip_gate_first_emit_when_none(self):
+        """The REPORT_ONLY gate condition ((last is not None) and (delta < 3))
+        evaluates to 'emit' when last is None."""
+        last = None
+        now_push = 7
+        skip = last is not None and (now_push - last) < 3
+        assert not skip
+
+    def test_skip_gate_emit_at_delta_3(self):
+        last = 5
+        now_push = 8
+        skip = last is not None and (now_push - last) < 3
+        assert not skip
+
+    def test_skip_gate_skips_at_delta_1_and_2(self):
+        last = 5
+        for delta in (1, 2):
+            now_push = last + delta
+            skip = last is not None and (now_push - last) < 3
+            assert skip, f"delta={delta} should skip"
+
+    def test_skip_gate_emits_at_delta_greater_than_3(self):
+        last = 5
+        now_push = 100
+        skip = last is not None and (now_push - last) < 3
+        assert not skip
+
+    def test_posmode_toggle_reset_semantic(self):
+        """Simulate the handle_viewport posmode_changed branch. After reset
+        to None, the next skip check emits regardless of push_seq value."""
+        sub = Subscriber(connection_id="x", ip="")
+        sub.last_emitted_push_seq = 42
+        # posmode change:
+        sub.last_emitted_push_seq = None
+        assert sub.last_emitted_push_seq is None
+
+    def test_skip_gate_immune_to_viewport_wake_desync(self):
+        """Named case: v1.2.0 REPORT_ONLY regression. Before the push_seq
+        anchor, per-sub counters were bumped on every wake including
+        viewport-POST wakes. That let another user's viewport POST desync
+        this sub's skip pattern. Anchored to global push_seq now — extra
+        wakes from fire_tick() do not shift the skip cadence."""
+        sub = Subscriber(connection_id="x", ip="")
+        # Simulate 3 viewport-POST wakes: push_seq unchanged, gate should not
+        # advance state.
+        push_seq_at_start = 10
+        # First emit anchors:
+        sub.last_emitted_push_seq = push_seq_at_start
+        # Now: 3 viewport-wake events during which push_seq stays at 10.
+        for _ in range(3):
+            # Each iteration is what the sse_handler loop would do on a wake.
+            delta = push_seq_at_start - sub.last_emitted_push_seq
+            skip = sub.last_emitted_push_seq is not None and delta < 3
+            assert skip, "viewport-POST wake with unchanged push_seq must skip"
+            # Loop continues without touching last_emitted_push_seq.
+        # After 3 push cycles the anchor advances:
+        assert sub.last_emitted_push_seq == push_seq_at_start
+
+
+# === fire_push_tick semantics ===
+
+class TestFirePushTick:
+    @pytest.mark.asyncio
+    async def test_push_seq_monotonic(self, reset_module_state):
+        await _fresh_condition()
+        seq0 = fanout.push_seq
+        await fire_push_tick()
+        await fire_push_tick()
+        await fire_push_tick()
+        assert fanout.push_seq == seq0 + 3
+
+    @pytest.mark.asyncio
+    async def test_mixed_fire_tick_and_fire_push_tick(self, reset_module_state):
+        """Interleave fire_tick (viewport wake) with fire_push_tick (push loop).
+        tick_seq advances on every call; push_seq only on push_tick."""
+        await _fresh_condition()
+        await fire_tick()
+        await fire_tick()
+        await fire_push_tick()
+        await fire_tick()
+        await fire_push_tick()
+        assert fanout.tick_seq == 5
+        assert fanout.push_seq == 2

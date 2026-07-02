@@ -324,7 +324,12 @@ def _post_rate_check_ip(ip: str) -> bool:
     `ip` should already be canonicalized (IPv4 stays, IPv6 collapses to /64)
     so an attacker with a routed /64 sees one bucket, not 2^64."""
     if not ip:
-        return True  # malformed/no-IP requests are subject to per-subscriber only
+        # Empty IP means request.client was None (unix socket, misconfigured
+        # trusted-proxy header stripping). Deny by default — allowing was
+        # an amplification loophole: an attacker who could route through
+        # such a proxy would collapse to a single unrated bucket and bypass
+        # the per-IP cap entirely (white-hat PIV finding).
+        return False
     now = time.monotonic()
     # Eviction first — if we're at the keyspace cap, drop the oldest entry
     # BEFORE inserting the new one. The previous shape ran eviction only in
@@ -566,21 +571,22 @@ async def handle_sse_stream(request: Request, app_version: str):
                     yield _format_keepalive()
                     continue
 
-                # REPORT_ONLY: skip 2 of every 3 push ticks. sse_push_loop
-                # fires every 10 s so CALC-mode subs get a fresh HAFAS-
-                # interpolated position on that cadence; REPORT_ONLY on the
-                # other hand shows real GPS positions which HAFAS itself
-                # only updates every ~30 s, so emitting on every 10 s tick
-                # would just re-push identical payloads and burn HAFAS
-                # budget. Anchor the pattern to the subscriber (not the
-                # global tick_seq) so the first tick after subscribe
-                # always emits — a REPORT_ONLY user who just opened the
-                # app shouldn't wait up to 20 s for the first paint.
+                # REPORT_ONLY: skip 2 of every 3 push cycles. HAFAS's real
+                # GPS position only refreshes every ~30 s, so emitting on
+                # every 10 s SSE push would re-send identical payloads and
+                # spend HAFAS budget on nothing. Anchored to fanout.push_seq
+                # (only incremented by sse_push_loop's fire_push_tick, not
+                # by handle_viewport's fire_tick) — this keeps the 3:1 skip
+                # pattern deterministic even when other users' viewport
+                # POSTs wake the stream in between pushes. last_emitted_push_seq
+                # starts as None so the first tick after subscribe (or after
+                # a posMode toggle) always emits.
                 if sub.pos_mode == "REPORT_ONLY":
-                    seen = sub.report_only_ticks_seen
-                    sub.report_only_ticks_seen = seen + 1
-                    if seen > 0 and seen % 3 != 0:
+                    now_push = fanout.push_seq
+                    last = sub.last_emitted_push_seq
+                    if last is not None and (now_push - last) < 3:
                         continue
+                    sub.last_emitted_push_seq = now_push
 
                 # New tick. Fetch vehicles + detail (if a selection is set)
                 # in parallel so per-tick wall-clock is max(latencies), not
@@ -720,20 +726,15 @@ async def handle_viewport(request: Request):
 
     new_bbox = (payload.swLat, payload.swLon, payload.neLat, payload.neLon)
     new_quantized = fanout.quantize_bbox(new_bbox)
-    # Fire on EITHER bbox-change OR posMode-change: both flip the singleflight
-    # cache key, so a posMode-only toggle (CALC ↔ REPORT_ONLY) without a tick
-    # wake would leave the user staring at the wrong-mode data for up to 30s.
-    state_changed = (
-        sub.last_viewport_bbox != new_quantized
-        or sub.pos_mode != payload.posMode
-    )
+    bbox_changed = sub.last_viewport_bbox != new_quantized
+    posmode_changed = sub.pos_mode != payload.posMode
     sub.viewport = new_bbox
-    if sub.pos_mode != payload.posMode:
-        # Reset the REPORT_ONLY tick-skip counter so a mode switch
-        # (either direction) starts fresh: the very next tick pushes
-        # so the user sees the new-mode data immediately, and the
-        # skip pattern re-anchors from there.
-        sub.report_only_ticks_seen = 0
+    if posmode_changed:
+        # Reset the REPORT_ONLY skip anchor so a mode switch (either
+        # direction) surfaces immediately: last_emitted_push_seq=None means
+        # "next push always emits", regardless of where the global push_seq
+        # sits. The skip pattern re-anchors from that emit.
+        sub.last_emitted_push_seq = None
     sub.pos_mode = payload.posMode
     sub.last_viewport_bbox = new_quantized
 
@@ -745,8 +746,13 @@ async def handle_viewport(request: Request):
     # Only wake the loop if the user actually changed something we'd refetch
     # for. fire_tick() is a global broadcast — without this guard, every
     # redundant viewport POST (e.g. browser firing moveend at sub-quantize
-    # precision) would wake every subscriber on the box.
-    if state_changed:
+    # precision) would wake every subscriber on the box. A posMode-only
+    # change does NOT wake — the sub itself has already been re-anchored
+    # via last_emitted_push_seq=None above; the next natural push (≤10s)
+    # will emit their new-mode data. Broadcasting on posMode toggle would
+    # amplify one user's UI action into 500 subscriber wake-ups + fetches
+    # (white-hat PIV finding).
+    if bbox_changed:
         await fanout.fire_tick()
     return JSONResponse(content={"ok": True})
 

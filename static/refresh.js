@@ -382,18 +382,22 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
-// GPS-dot refresh on every SSE tick. In v1.0.0 the polling loop drove
-// this; the SSE migration in v1.0.7 dropped it accidentally, so the dot
-// froze at whatever position it was first drawn at (and never appeared
-// at all when the user hadn't clicked the GPS button). getCurrentPosition
-// with maximumAge:10000 lets the browser return a cached fix cheaply if
-// nothing has moved, so the ~30 s cadence isn't a battery concern.
-function _maybeRefreshUserLocation() {
+// GPS-dot refresh, throttled to ~30 s cadence. In v1.0.0 the polling loop
+// drove this at the poll rate. v1.1.1 restored it on every SSE tick, but
+// the v1.2.0 push cadence dropped to 10 s and firing getCurrentPosition
+// with enableHighAccuracy every 10 s hammers mobile-device GPS + battery.
+// Throttle back to every 3rd tick (~30 s effective) which matches the
+// original polling cadence — the dot doesn't need more precision than
+// the underlying GPS-hardware update rate anyway.
+var _gpsRefreshTickCounter = 0;
+export function _maybeRefreshUserLocation() {
   if (!settings.current.showLocation) return;
   if (!navigator.geolocation) return;
+  _gpsRefreshTickCounter++;
+  if (_gpsRefreshTickCounter % 3 !== 1) return;  // 1, 4, 7, ... ≈ every 30 s
   navigator.geolocation.getCurrentPosition(function (pos) {
     setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
-  }, function () {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 });
+  }, function () {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 });
 }
 
 // === Vehicle-payload handler ===

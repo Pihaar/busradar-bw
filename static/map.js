@@ -261,14 +261,22 @@ export var mapModule = {
   requestGPS: function() {
     if (!navigator.geolocation) return;
     if (!settings.current.showLocation) return;
-    if (location.hash && location.hash.length > 1) return;
+    // URL-restore (hash carries lat/lon/z) means we must NOT jump the map
+    // to the GPS fix — the user just clicked a shared link and wants that
+    // view. The dot itself is still expected though; the v1.1.1 fix that
+    // called setUserLocationMarker only inside the setView-branch missed
+    // the URL-restore case, so the dot stayed absent until the first SSE
+    // tick's _maybeRefreshUserLocation fired ~10 s later.
+    var suppressView = !!(location.hash && location.hash.length > 1);
     navigator.geolocation.getCurrentPosition(
       function(pos) {
-        state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
-        stopsLayer.loadAll(pos.coords.latitude, pos.coords.longitude, 5000);
-        // Drop the dot at the same time as the map jump so the user sees
-        // where they are on the very first render, not only after they
-        // hit the GPS button. Tick handler keeps it in sync afterwards.
+        // Re-check showLocation defensively: user could have toggled off
+        // during the async GPS acquisition window (up to 5 s).
+        if (!settings.current.showLocation) return;
+        if (!suppressView) {
+          state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
+          stopsLayer.loadAll(pos.coords.latitude, pos.coords.longitude, 5000);
+        }
         setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
       },
       function() {},

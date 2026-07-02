@@ -103,7 +103,12 @@ settings._bindUI = function() {
         return;
       }
       if (val) {
+        // Nonce guards against a fast on→off toggle sequence: the async GPS
+        // callback (up to 8 s) could otherwise resurrect showLocation=true
+        // after the user already turned it off in the meantime.
+        var thisNonce = ++self._locationToggleNonce;
         navigator.geolocation.getCurrentPosition(function(pos) {
+          if (self._locationToggleNonce !== thisNonce) return;  // superseded
           self.current.showLocation = true;
           self._save();
           self._updateGroup('setting-location', 'on');
@@ -111,9 +116,11 @@ settings._bindUI = function() {
           setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
           state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
         }, function() {
+          if (self._locationToggleNonce !== thisNonce) return;
           showError(t('location_denied'));
         }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
       } else {
+        self._locationToggleNonce++;
         self.current.showLocation = false;
         self._save();
         self._updateGroup('setting-location', 'off');

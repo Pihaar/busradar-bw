@@ -268,6 +268,11 @@ export var settings = {
   _saveTimer: null,
   _userInterpolation: true,
   _userRefreshInterval: 10000,
+  // Monotonic counter bumped by every showLocation toggle. The async
+  // geolocation success/error callbacks capture their value at click time
+  // and no-op if the counter has moved on — protects against on→off race
+  // where the async cb would otherwise resurrect showLocation=true.
+  _locationToggleNonce: 0,
 
   init: function() {
     var stored = this._loadAndValidate();
