@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin } from './state.js';
 import { api } from './api.js';
-import { markers, stopsLayer } from './map.js';
+import { markers, stopsLayer, setUserLocationMarker } from './map.js';
 import { ui } from './ui.js';
 import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce, formatStatusText } from './status.js';
 
@@ -382,6 +382,20 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
+// GPS-dot refresh on every SSE tick. In v1.0.0 the polling loop drove
+// this; the SSE migration in v1.0.7 dropped it accidentally, so the dot
+// froze at whatever position it was first drawn at (and never appeared
+// at all when the user hadn't clicked the GPS button). getCurrentPosition
+// with maximumAge:10000 lets the browser return a cached fix cheaply if
+// nothing has moved, so the ~30 s cadence isn't a battery concern.
+function _maybeRefreshUserLocation() {
+  if (!settings.current.showLocation) return;
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
+  }, function () {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 });
+}
+
 // === Vehicle-payload handler ===
 // Receives `vehicles` SSE events. Updates markers, status, follow-bus pan,
 // and triggers URL-restore on first delivery. Detail-panel updates flow
@@ -421,6 +435,7 @@ function _handleVehiclesPayload(data) {
 
   markers.updateAll(vehicles);
   stopsLayer.update(vehicles);
+  _maybeRefreshUserLocation();
   // markers.updateAll exposes the in-bbox count it just rendered; using
   // that keeps the status counter aligned with the actual marker set on
   // screen (vehicles.length would include the ring-but-not-bbox tail).

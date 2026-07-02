@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { state, settings, t, applyI18n, parseCoord, parseZoom } from './state.js';
 import { urlState } from './api.js';
-import { mapModule, stopsLayer } from './map.js';
+import { mapModule, stopsLayer, setUserLocationMarker } from './map.js';
 import { ui, search } from './ui.js';
 import { startStream, notifyViewportChange, refresh, showError, announce } from './refresh.js';
 
@@ -108,10 +108,7 @@ settings._bindUI = function() {
           self._save();
           self._updateGroup('setting-location', 'on');
           if (state._gpsControlContainer) state._gpsControlContainer.style.display = '';
-          state._userLocationMarker = L.circleMarker([pos.coords.latitude, pos.coords.longitude], {
-            radius: 8, fillOpacity: 0.9, weight: 3, color: '#fff', fillColor: '#4285f4',
-            interactive: false, className: 'user-location-marker',
-          }).addTo(state.map);
+          setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
           state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
         }, function() {
           showError(t('location_denied'));
