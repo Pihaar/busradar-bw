@@ -124,11 +124,7 @@ export var mapModule = {
             function(pos) {
               link.style.opacity = '';
               state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
-              if (state._userLocationMarker) state._userLocationMarker.remove();
-              state._userLocationMarker = L.circleMarker([pos.coords.latitude, pos.coords.longitude], {
-                radius: 8, fillOpacity: 0.9, weight: 3, color: '#fff', fillColor: '#4285f4',
-                interactive: false, className: 'user-location-marker',
-              }).addTo(state.map);
+              setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
             },
             function() {
               link.style.opacity = '';
@@ -270,12 +266,36 @@ export var mapModule = {
       function(pos) {
         state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
         stopsLayer.loadAll(pos.coords.latitude, pos.coords.longitude, 5000);
+        // Drop the dot at the same time as the map jump so the user sees
+        // where they are on the very first render, not only after they
+        // hit the GPS button. Tick handler keeps it in sync afterwards.
+        setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
       },
       function() {},
       { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
     );
   },
 };
+
+// Marker style is duplicated across three call sites (initial GPS,
+// settings-toggle, tick refresh) — centralised so a style tweak lands in
+// one place. Guarded by settings.showLocation so a call after the user
+// disabled the toggle mid-async does not resurrect the dot.
+var _USER_LOCATION_MARKER_OPTS = {
+  radius: 8, fillOpacity: 0.9, weight: 3, color: '#fff', fillColor: '#4285f4',
+  interactive: false, className: 'user-location-marker',
+};
+
+export function setUserLocationMarker(lat, lon) {
+  if (!settings.current.showLocation) return;
+  if (!state.map) return;
+  var ll = [lat, lon];
+  if (state._userLocationMarker) {
+    state._userLocationMarker.setLatLng(ll);
+  } else {
+    state._userLocationMarker = L.circleMarker(ll, _USER_LOCATION_MARKER_OPTS).addTo(state.map);
+  }
+}
 
 // === STOPS LAYER ===
 var STOPS_CACHE_KEY = 'busradar_stops_v2';
