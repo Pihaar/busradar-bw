@@ -249,13 +249,18 @@ async def lifespan(app: FastAPI):
     # Cancel in reverse creation order: push loop first (so it stops
     # broadcasting), then calibrator, then rebuild tasks. Errors are
     # logged separately from CancelledError so a real shutdown bug is
-    # visible in the journal rather than swallowed.
+    # visible in the journal rather than swallowed. Each await is
+    # timeout-bounded so a task that ignores cancel (rare, but a
+    # transactional_update or slow HAFAS response can hold it) can't
+    # brick uvicorn's grace-period shutdown.
     for _t in reversed(background_tasks):
         _t.cancel()
         try:
-            await _t
+            await asyncio.wait_for(_t, timeout=5.0)
         except asyncio.CancelledError:
             pass
+        except asyncio.TimeoutError:
+            log.warning("[lifespan] background task did not cancel within 5s")
         except Exception:
             log.exception("[lifespan] background task raised during shutdown")
     await app.state.client.aclose()

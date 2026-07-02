@@ -382,14 +382,19 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
-// GPS-dot refresh, throttled to ~30 s cadence. In v1.0.0 the polling loop
-// drove this at the poll rate. v1.1.1 restored it on every SSE tick, but
-// the v1.2.0 push cadence dropped to 10 s and firing getCurrentPosition
-// with enableHighAccuracy every 10 s hammers mobile-device GPS + battery.
-// Throttle back to every 3rd tick (~30 s effective) which matches the
-// original polling cadence — the dot doesn't need more precision than
-// the underlying GPS-hardware update rate anyway.
+// GPS-dot refresh, throttled to ~30 s cadence. Multi-user context: each
+// getCurrentPosition with enableHighAccuracy=true wakes GPS hardware on
+// mobile, at 1000× the power cost of the cached-fix path. maximumAge:60000
+// with enableHighAccuracy=false accepts a cached fix within a minute,
+// which is more than accurate enough for a dot on a city-scale map.
+// The initial jump-to-GPS in map.js:requestGPS already uses the same
+// low-power settings, so the periodic refresh matches.
 var _gpsRefreshTickCounter = 0;
+export function _resetGpsRefreshCounter() {
+  // Test-only helper. Module-level counter across a whole app-lifetime
+  // is fine in prod but breaks vitest run-order assumptions.
+  _gpsRefreshTickCounter = 0;
+}
 export function _maybeRefreshUserLocation() {
   if (!settings.current.showLocation) return;
   if (!navigator.geolocation) return;
@@ -397,7 +402,7 @@ export function _maybeRefreshUserLocation() {
   if (_gpsRefreshTickCounter % 3 !== 1) return;  // 1, 4, 7, ... ≈ every 30 s
   navigator.geolocation.getCurrentPosition(function (pos) {
     setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
-  }, function () {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 });
+  }, function () {}, { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 });
 }
 
 // === Vehicle-payload handler ===

@@ -123,6 +123,12 @@ class ClientActivity:
             return True
         return _mono() - self.last_ts < ACTIVE_CLIENT_WINDOW
 
+    def has_subscribers(self) -> bool:
+        """Public predicate replacing direct ._subscribers access from other
+        modules. Keeps ClientActivity's counter representation encapsulated
+        so a rename of the private field doesn't silently break callers."""
+        return self._subscribers > 0
+
     async def wait_for_wakeup(self, timeout: float) -> bool:
         """Sleep up to `timeout` seconds, returning early if a
         0→1 subscriber transition fires the wakeup event. Returns True
@@ -417,7 +423,7 @@ async def sse_push_loop(activity: ClientActivity):
             # Explicit subscriber gate — is_active() also returns True for
             # ACTIVE_CLIENT_WINDOW=120 s after the last subscriber left,
             # which would fire useless ticks. Real subscriber count only.
-            if activity._subscribers == 0:
+            if not activity.has_subscribers():
                 # Block until a subscriber joins (wakeup_event set on 0→1).
                 # Bounded to 300 s so a bug in the wakeup mechanic surfaces
                 # within minutes in the log rather than after an hour.

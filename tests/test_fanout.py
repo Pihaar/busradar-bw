@@ -142,14 +142,10 @@ class TestRegistry:
             await reg.subscribe(f"{prefix}beef")
         assert exc.value.scope == "ip"
 
-    @pytest.mark.asyncio
-    async def test_empty_ip_skips_per_ip_cap_only_global(self, reg):
-        # Unix-socket / malformed IP → empty string. Should NOT enforce per-IP
-        # but global cap still applies.
-        # Subscribe many with empty ip
-        for _ in range(MAX_SUBSCRIBERS_PER_IP * 2):
-            await reg.subscribe("")  # no per-IP rejection
-        assert len(reg) == MAX_SUBSCRIBERS_PER_IP * 2
+    # Note: the historical `test_empty_ip_skips_per_ip_cap_only_global`
+    # test was inverted in v1.2.2 — the old behaviour (empty IP bypasses
+    # per-IP cap) was a security hole. The current contract lives in
+    # TestEmptyIpCap below.
 
     @pytest.mark.asyncio
     async def test_len_reflects_subscribers(self, reg):
@@ -407,7 +403,10 @@ class TestReportOnlySkipAnchor:
             skip = sub.last_emitted_push_seq is not None and delta < 3
             assert skip, "viewport-POST wake with unchanged push_seq must skip"
             # Loop continues without touching last_emitted_push_seq.
-        # After 3 push cycles the anchor advances:
+        # Anchor did NOT move on any of the viewport wakes — that's the
+        # whole point of the fix. push_seq bumping through fire_push_tick
+        # is what would eventually advance it; that path is covered by
+        # TestFirePushTick above.
         assert sub.last_emitted_push_seq == push_seq_at_start
 
 
@@ -424,10 +423,14 @@ class TestFirePushTick:
         assert fanout.push_seq == seq0 + 3
 
     @pytest.mark.asyncio
-    async def test_mixed_fire_tick_and_fire_push_tick(self, reset_module_state):
+    async def test_mixed_fire_tick_and_fire_push_tick(self, reset_module_state, monkeypatch):
         """Interleave fire_tick (viewport wake) with fire_push_tick (push loop).
-        tick_seq advances on every call; push_seq only on push_tick."""
+        tick_seq advances on every call; push_seq only on push_tick.
+        Reset the fire_tick token bucket first so this test isn't affected
+        by whatever bucket state a previously-run test left behind."""
         await _fresh_condition()
+        monkeypatch.setattr(fanout, "_fire_tick_tokens", fanout.FIRE_TICK_BURST)
+        monkeypatch.setattr(fanout, "_fire_tick_last_refill", 0.0)
         await fire_tick()
         await fire_tick()
         await fire_push_tick()
@@ -435,3 +438,70 @@ class TestFirePushTick:
         await fire_push_tick()
         assert fanout.tick_seq == 5
         assert fanout.push_seq == 2
+
+
+# === fire_tick rate limit (global aggregate) ===
+
+class TestFireTickRateLimit:
+    @pytest.mark.asyncio
+    async def test_burst_then_shed(self, reset_module_state, monkeypatch):
+        """Global fire_tick rate-limit: after the initial burst, extra
+        calls in the same second must be shed (return without incrementing
+        tick_seq) so an attacker can't amplify a viewport-oscillation into
+        N HAFAS fetches per POST."""
+        await _fresh_condition()
+        # Reset the token bucket so this test starts full regardless of
+        # ordering with other tests.
+        monkeypatch.setattr(fanout, "_fire_tick_tokens", fanout.FIRE_TICK_BURST)
+        monkeypatch.setattr(fanout, "_fire_tick_last_refill", 0.0)
+        monkeypatch.setattr(fanout, "_fire_tick_shed_count", 0)
+        seq0 = fanout.tick_seq
+        burst = int(fanout.FIRE_TICK_BURST)
+        for _ in range(burst):
+            await fire_tick()
+        # Bucket now near-empty; 5 more back-to-back calls should be shed.
+        for _ in range(5):
+            await fire_tick()
+        # Tick_seq incremented only by successful bursts, not by shed calls.
+        assert fanout.tick_seq - seq0 == burst
+        assert fanout._fire_tick_shed_count >= 4  # at least 4 shed (5th could win a refill token)
+
+
+# === Registry empty-IP cap ===
+
+class TestEmptyIpCap:
+    @pytest.mark.asyncio
+    async def test_empty_ip_shares_one_bucket(self, reg):
+        """Regression: empty IP must map to a single shared bucket, not
+        skip the per-IP cap entirely. A misconfigured trusted-proxy zeroing
+        request.client would otherwise let one origin fill all
+        MAX_SUBSCRIBERS_GLOBAL slots."""
+        for _ in range(MAX_SUBSCRIBERS_PER_IP):
+            await reg.subscribe("")
+        with pytest.raises(CapExceeded) as exc:
+            await reg.subscribe("")
+        assert exc.value.scope == "ip"
+        assert exc.value.limit == MAX_SUBSCRIBERS_PER_IP
+
+    @pytest.mark.asyncio
+    async def test_empty_ip_and_real_ip_do_not_share_bucket(self, reg):
+        """Empty-ip bucket and a real IP bucket are independent — a request
+        from unix-socket doesn't consume the quota of a real client."""
+        for _ in range(MAX_SUBSCRIBERS_PER_IP):
+            await reg.subscribe("")
+        # Real IP still gets its own full quota.
+        for _ in range(MAX_SUBSCRIBERS_PER_IP):
+            await reg.subscribe("10.0.0.1")
+
+    @pytest.mark.asyncio
+    async def test_empty_ip_unsubscribe_clears_bucket(self, reg):
+        """Regression: unsubscribe path must drop empty-ip subscribers from
+        the shared bucket so re-connections eventually succeed."""
+        subs = []
+        for _ in range(MAX_SUBSCRIBERS_PER_IP):
+            subs.append(await reg.subscribe(""))
+        with pytest.raises(CapExceeded):
+            await reg.subscribe("")
+        await reg.unsubscribe(subs[0].connection_id)
+        # Slot freed — next subscribe must succeed.
+        await reg.subscribe("")

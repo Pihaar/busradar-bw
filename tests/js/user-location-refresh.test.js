@@ -2,9 +2,10 @@
  * Tests for _maybeRefreshUserLocation — the per-tick GPS-dot refresh
  * scheduled from the SSE vehicles handler.
  *
- * Contract (v1.2.0 fix): fires getCurrentPosition every ~30 s effective
- * (throttled to 1-in-3 SSE ticks at 10 s cadence). Guards showLocation-off
- * and geolocation-unavailable.
+ * Contract (v1.2.1 fix): fires getCurrentPosition every ~30 s effective
+ * (throttled to 1-in-3 SSE ticks at 10 s cadence), with low-power options
+ * (maximumAge 60s, enableHighAccuracy=false). Guards showLocation-off and
+ * geolocation-unavailable.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -18,7 +19,7 @@ globalThis.L = {
 
 vi.mock('../../static/ui.js', () => ({ ui: { selectJourney: vi.fn() } }));
 
-const { _maybeRefreshUserLocation } = await import('../../static/refresh.js');
+const { _maybeRefreshUserLocation, _resetGpsRefreshCounter } = await import('../../static/refresh.js');
 const { state, settings } = await import('../../static/state.js');
 
 describe('_maybeRefreshUserLocation — 30s throttle', () => {
@@ -30,15 +31,12 @@ describe('_maybeRefreshUserLocation — 30s throttle', () => {
     state.map = { addLayer: vi.fn() };
     state._userLocationMarker = null;
     settings.current = { showLocation: true };
-    // Reset the module-level counter by exhausting it via calls.
-    // Cheaper: import the module fresh (but vi module cache makes that
-    // heavy). Rely on the pattern seen in the test — first call fires,
-    // then two skips, then fire.
+    // Reset the module-level counter so tests run in any order (vitest
+    // shuffle-safety). The prior version relied on declaration-order.
+    _resetGpsRefreshCounter();
   });
 
   it('fires on 1st tick, skips 2nd and 3rd, fires 4th', () => {
-    // Assumes counter starts at 0 → increments to 1, 2, 3, 4, 5, 6
-    // and (counter % 3 === 1) fires at 1 and 4.
     _maybeRefreshUserLocation();
     expect(mockGetPos).toHaveBeenCalledTimes(1);
     _maybeRefreshUserLocation();
@@ -60,15 +58,11 @@ describe('_maybeRefreshUserLocation — 30s throttle', () => {
     expect(mockGetPos).not.toHaveBeenCalled();
   });
 
-  it('uses maximumAge 30000 (cached fix accepted for 30s)', () => {
+  it('uses low-power geolocation options', () => {
     _maybeRefreshUserLocation();
-    // Advance the throttle: next fire is on the 4th call
-    _maybeRefreshUserLocation();
-    _maybeRefreshUserLocation();
-    _maybeRefreshUserLocation();
-    const opts = mockGetPos.mock.calls[mockGetPos.mock.calls.length - 1][2];
-    expect(opts.maximumAge).toBe(30000);
+    const opts = mockGetPos.mock.calls[0][2];
+    expect(opts.maximumAge).toBe(60000);
     expect(opts.timeout).toBe(5000);
-    expect(opts.enableHighAccuracy).toBe(true);
+    expect(opts.enableHighAccuracy).toBe(false);
   });
 });
