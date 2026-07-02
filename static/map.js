@@ -285,23 +285,49 @@ export var mapModule = {
   },
 };
 
-// Marker style is duplicated across three call sites (initial GPS,
-// settings-toggle, tick refresh) — centralised so a style tweak lands in
-// one place. Guarded by settings.showLocation so a call after the user
-// disabled the toggle mid-async does not resurrect the dot.
-var _USER_LOCATION_MARKER_OPTS = {
-  radius: 8, fillOpacity: 0.9, weight: 3, color: '#fff', fillColor: '#4285f4',
-  interactive: false, className: 'user-location-marker',
-};
+// GPS dot: divIcon-based marker in a dedicated pane that renders ABOVE
+// the bus markers. The prior implementation used L.circleMarker in the
+// default overlayPane (z-index 400) — bus markers live in markerPane
+// (z-index 600), so when the user's GPS position happened to coincide
+// with a bus cluster, the blue dot was hidden underneath. A dedicated
+// pane at z-index 650 keeps the location dot on top of everything.
+var _GPS_PANE = "userLocationPane";
+var _USER_LOCATION_ICON = null;
+function _ensureUserLocationPaneAndIcon() {
+  if (!state.map) return null;
+  if (!state.map.getPane(_GPS_PANE)) {
+    var pane = state.map.createPane(_GPS_PANE);
+    pane.style.zIndex = "650";
+    // Not interactive: clicks fall through to buses/stops underneath.
+    pane.style.pointerEvents = "none";
+  }
+  if (_USER_LOCATION_ICON === null) {
+    _USER_LOCATION_ICON = L.divIcon({
+      className: "user-location-marker",
+      html: '<span class="user-location-marker__dot"></span>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+  }
+  return _USER_LOCATION_ICON;
+}
 
 export function setUserLocationMarker(lat, lon) {
   if (!settings.current.showLocation) return;
   if (!state.map) return;
+  var icon = _ensureUserLocationPaneAndIcon();
+  if (!icon) return;
   var ll = [lat, lon];
   if (state._userLocationMarker) {
     state._userLocationMarker.setLatLng(ll);
   } else {
-    state._userLocationMarker = L.circleMarker(ll, _USER_LOCATION_MARKER_OPTS).addTo(state.map);
+    state._userLocationMarker = L.marker(ll, {
+      icon: icon,
+      pane: _GPS_PANE,
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 1000,
+    }).addTo(state.map);
   }
 }
 
