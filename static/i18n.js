@@ -286,9 +286,6 @@
   de.hint_animation_disabled = 'Animation deaktiviert (Zoom zu weit)';
   en.hint_animation_disabled = 'Animation disabled (zoomed out too far)';
 
-  de.hint_refresh_reduced = 'Aktualisierung auf {n}s reduziert (Zoom zu weit)';
-  en.hint_refresh_reduced = 'Refresh reduced to {n}s (zoomed out too far)';
-
   // === ACCESSIBILITY ===
   de.aria_map = 'Live-Buskarte Baden-Württemberg';
   en.aria_map = 'Live bus map Baden-Württemberg';

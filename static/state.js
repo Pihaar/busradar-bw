@@ -13,8 +13,6 @@ export var state = {
   routeLayer: null,
   routeStopMarkers: [],
   routeCoords: null,
-  refreshTimeout: null,
-  isLoading: false,
   consecutiveErrors: 0,
   currentInterval: CONFIG.refreshInterval,
   lastUpdate: null,
@@ -36,7 +34,6 @@ export var state = {
   _lastBusCount: 0,
   // increment on user gesture; async handlers compare captured-vs-current to detect interruption
   _userInteractionSeq: 0,
-  _nextFreshDataIn: null,
   _appVersion: null,
   _appVersionFetch: null,
   _lastConnectedClients: undefined,
@@ -265,8 +262,6 @@ export function extractHafasMessages(common, msgL, stopL) {
 
 // === SETTINGS ===
 export var SETTINGS_KEY = 'busradar_settings_v1';
-export var BACKOFF_BASE = 10000;
-
 export var settings = {
   defaults: { refreshInterval: 10000, interpolation: true, theme: 'dark', posMode: 'CALC', lang: 'de', showLocation: false },
   current: null,
@@ -381,9 +376,6 @@ export var settings = {
     var msgs = [];
     if (zoom < CONFIG.zoomThresholdNoAnimation) {
       msgs.push(t('hint_animation_disabled'));
-    }
-    if (zoom < CONFIG.zoomThresholdSlowRefresh) {
-      msgs.push(t('hint_refresh_reduced', {n: this.current.refreshInterval * 3 / 1000}));
     }
     if (msgs.length > 0) {
       hint.textContent = '⚠ ' + msgs.join(' · ');

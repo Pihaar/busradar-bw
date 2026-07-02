@@ -24,6 +24,15 @@ log = logging.getLogger("busradar")
 
 # --- Constants ---
 TICK_PERIOD = 30.0
+# SSE push cadence. The HAFAS GPS-cadence is 30 s (TICK_PERIOD above), but
+# HAFAS with trainPosMode=CALC returns a freshly-computed interpolated
+# position on every call. Pushing every 10 s therefore gives clients a
+# distinctly new interpolated position three times per real GPS cycle,
+# which matches the v1.0.0 polling rate. REPORT_ONLY subscribers still
+# only see change every 30 s (HAFAS itself doesn't move faster) so
+# sse_handler drops 2 out of every 3 ticks for those subs to avoid
+# emitting identical payloads and spending HAFAS budget on them.
+SSE_PUSH_PERIOD = 10.0
 TICK_BUFFER = 1.0
 ACTIVE_CLIENT_WINDOW = 120.0
 ACTIVE_CALIB_INTERVAL = 300.0
@@ -277,13 +286,10 @@ async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: s
         if tracker.feed(positions, ts, min_changed=min_changed):
             wall_sec = time.localtime().tm_sec + (time.time() % 1)
             log.info("[tick_calibrator] tick at :%04.1f (%ds scan)", wall_sec, scan_seconds)
-            # Wake every SSE subscriber waiting on the fanout condition. Import is
-            # function-local so test files that mock or replace fanout still work.
-            try:
-                import fanout
-                await fanout.fire_tick()
-            except Exception:
-                log.exception("[tick_calibrator] fanout.fire_tick failed")
+            # Broadcast to SSE subscribers is now owned by sse_push_loop,
+            # which fires every SSE_PUSH_PERIOD seconds regardless of the
+            # calibrator. The calibrator only maintains last_tick_ts for
+            # /api/health metadata and cache-invalidation predictions.
             return True
         await asyncio.sleep(1.0)
     return False
@@ -385,3 +391,39 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
         except Exception as e:
             log.error("[tick_calibrator] error: %s", type(e).__name__)
             await asyncio.sleep(60)
+
+
+async def sse_push_loop(activity: ClientActivity):
+    """SSE broadcast pacemaker. Fires fanout.fire_tick() every SSE_PUSH_PERIOD
+    seconds while at least one subscriber is connected, so CALC-mode clients
+    receive a freshly-computed interpolated position on that cadence. When
+    no subscribers are around it sleeps on the ClientActivity wakeup and
+    resumes cheaply on the first join.
+
+    Decoupled from tick_calibrator so the push cadence (10 s) can be finer
+    than the underlying HAFAS GPS-cadence (30 s). The calibrator now only
+    detects the real HAFAS tick for metadata purposes.
+    """
+    log.info("[sse_push_loop] started (period=%.1fs)", SSE_PUSH_PERIOD)
+    while True:
+        try:
+            if not activity.is_active():
+                # No subscribers: block on the wakeup event forever (or until
+                # a subscriber joins). This is symmetrical with how the
+                # calibrator behaves in idle mode, avoiding wasted wakeups.
+                await activity.wait_for_wakeup(3600.0)
+                continue
+
+            await asyncio.sleep(SSE_PUSH_PERIOD)
+
+            try:
+                import fanout
+                await fanout.fire_tick()
+            except Exception:
+                log.exception("[sse_push_loop] fanout.fire_tick failed")
+        except asyncio.CancelledError:
+            log.info("[sse_push_loop] cancelled, shutting down")
+            raise
+        except Exception as e:
+            log.error("[sse_push_loop] error: %s", type(e).__name__)
+            await asyncio.sleep(5.0)

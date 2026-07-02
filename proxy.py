@@ -112,7 +112,7 @@ from sse_handler import (  # noqa: F401
     handle_select,
 )
 from tick import (
-    TickTracker, tick_calibrator,
+    TickTracker, tick_calibrator, sse_push_loop,
     _TICK_ENABLED, TICK_MAX_AGE,
 )
 
@@ -234,18 +234,22 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(schedule_daily_rebuild_wrapper(app))
 
     calib_task = None
+    push_task = None
     if _TICK_ENABLED:
         calib_task = asyncio.create_task(
             tick_calibrator(app, breaker, tick_tracker, client_activity,
                            HAFAS_ENDPOINT, _build_hafas_envelope)
         )
+        push_task = asyncio.create_task(sse_push_loop(client_activity))
 
     yield
 
-    if calib_task:
-        calib_task.cancel()
+    for _t in (push_task, calib_task):
+        if _t is None:
+            continue
+        _t.cancel()
         try:
-            await calib_task
+            await _t
         except (asyncio.CancelledError, Exception):
             pass
     await app.state.client.aclose()
