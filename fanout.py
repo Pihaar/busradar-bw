@@ -162,17 +162,59 @@ tick_seq: int = 0
 # stream in between pushes.
 push_seq: int = 0
 
+# Global fire_tick rate-limit: a viewport-POST can wake every subscriber
+# (up to MAX_SUBSCRIBERS_GLOBAL=500), each of whom re-fetches HAFAS for
+# their own bbox. An attacker oscillating a viewport across the quantize
+# boundary would broadcast N HAFAS fetches per POST, per second (bounded
+# only by per-IP rate limits). Global aggregate cap protects HAFAS-side
+# even when many legitimate users pan at once. Token bucket, continuous
+# refill: bucket size FIRE_TICK_BURST tokens, refill 1 token every
+# 1/FIRE_TICK_RATE seconds. When empty, extra fire_tick calls no-op —
+# subscribers still receive the next sse_push_loop tick within
+# SSE_PUSH_PERIOD (≤10 s) so responsiveness degrades gracefully.
+FIRE_TICK_RATE = 2.0     # tokens per second (global aggregate)
+FIRE_TICK_BURST = 5.0    # burst capacity
+_fire_tick_tokens: float = FIRE_TICK_BURST
+_fire_tick_last_refill: float = 0.0  # time.monotonic() when tokens last topped up
+_fire_tick_shed_count: int = 0       # instrumentation: sum of denials
+_fire_tick_shed_log_cooldown: float = 0.0  # last-warning timestamp
+
 
 async def fire_tick() -> int:
     """Bump the monotonic tick counter and wake every subscriber waiting on it.
 
     Called by handle_viewport when a subscriber's bbox actually changed
-    (invalidating the singleflight cache key). The Condition
-    notify_all() must run inside the `async with condition` block, otherwise
-    asyncio raises RuntimeError.
+    (invalidating the singleflight cache key). Rate-limited globally: an
+    attacker oscillating one viewport across the quantize boundary can
+    otherwise force N-sub HAFAS fetches per second, amplifying by up to
+    MAX_SUBSCRIBERS_GLOBAL. Falls back to the natural push cadence when
+    the aggregate bucket is empty.
     """
-    global tick_seq
+    global tick_seq, _fire_tick_tokens, _fire_tick_last_refill
+    global _fire_tick_shed_count, _fire_tick_shed_log_cooldown
     async with tick_condition:
+        now = time.monotonic()
+        # Continuous refill up to FIRE_TICK_BURST cap
+        if _fire_tick_last_refill == 0.0:
+            _fire_tick_last_refill = now
+        elapsed = now - _fire_tick_last_refill
+        if elapsed > 0:
+            _fire_tick_tokens = min(FIRE_TICK_BURST,
+                                    _fire_tick_tokens + elapsed * FIRE_TICK_RATE)
+            _fire_tick_last_refill = now
+        if _fire_tick_tokens < 1.0:
+            _fire_tick_shed_count += 1
+            # Log at most once per 60 s to keep the journal clean under
+            # a sustained storm; the count line reveals the aggregate
+            # damage since the last log.
+            if now - _fire_tick_shed_log_cooldown > 60.0:
+                log.warning(
+                    "[fanout] fire_tick shed=%d, bucket empty (rate=%.1f/s burst=%.0f)",
+                    _fire_tick_shed_count, FIRE_TICK_RATE, FIRE_TICK_BURST,
+                )
+                _fire_tick_shed_log_cooldown = now
+            return tick_seq
+        _fire_tick_tokens -= 1.0
         tick_seq += 1
         tick_condition.notify_all()
         return tick_seq
@@ -277,12 +319,15 @@ class SubscriberRegistry:
         """Allocate a new connection-id, enforce caps under lock, register."""
         ip = canonicalize_ip(ip)
         async with self._lock:
-            # Per-IP cap (skipped if ip is empty — e.g. unix socket / malformed)
-            if ip:
-                ip_set = self._per_ip.get(ip, set())
-                if len(ip_set) >= MAX_SUBSCRIBERS_PER_IP:
-                    _maybe_log_cap_reject("ip", ip, len(ip_set))
-                    raise CapExceeded("ip", MAX_SUBSCRIBERS_PER_IP)
+            # Per-IP cap. Empty IP (unix socket / malformed / proxy-stripped
+            # request.client) collapses to a single shared "noip" bucket so
+            # that a misconfigured trust boundary cannot bypass the cap and
+            # exhaust MAX_SUBSCRIBERS_GLOBAL slots.
+            bucket_key = ip if ip else ""
+            ip_set = self._per_ip.get(bucket_key, set())
+            if len(ip_set) >= MAX_SUBSCRIBERS_PER_IP:
+                _maybe_log_cap_reject("ip", ip, len(ip_set))
+                raise CapExceeded("ip", MAX_SUBSCRIBERS_PER_IP)
             # Global cap
             if len(self._subs) >= MAX_SUBSCRIBERS_GLOBAL:
                 _maybe_log_cap_reject("global", ip, len(self._subs))
@@ -291,8 +336,7 @@ class SubscriberRegistry:
             cid = secrets.token_urlsafe(CONNECTION_ID_BYTES)
             sub = Subscriber(connection_id=cid, ip=ip)
             self._subs[cid] = sub
-            if ip:
-                self._per_ip.setdefault(ip, set()).add(cid)
+            self._per_ip.setdefault(bucket_key, set()).add(cid)
 
             # Inflection-point logging (one-shot per process lifetime per direction)
             n = len(self._subs)
@@ -311,10 +355,12 @@ class SubscriberRegistry:
             sub = self._subs.pop(connection_id, None)
             if sub is None:
                 return
-            if sub.ip and sub.ip in self._per_ip:
-                self._per_ip[sub.ip].discard(connection_id)
-                if not self._per_ip[sub.ip]:
-                    del self._per_ip[sub.ip]
+            # Bucket key mirrors the subscribe() branch: empty IP maps to "".
+            bucket_key = sub.ip if sub.ip else ""
+            if bucket_key in self._per_ip:
+                self._per_ip[bucket_key].discard(connection_id)
+                if not self._per_ip[bucket_key]:
+                    del self._per_ip[bucket_key]
             # Reset one-shot inflection warn when dropping back below threshold
             if self._inflection_warned and len(self._subs) <= INFLECTION_SUBSCRIBERS // 2:
                 self._inflection_warned = False
@@ -347,10 +393,9 @@ registry = SubscriberRegistry()
 
 
 # === Slow-consumer detection ===
-# The SSE event_generator measures wall-clock around each yield batch in
-# proxy.py and bumps `sub.consecutive_drops` when a batch exceeds the slow
-# threshold. The queue-based dispatch path (`enqueue_event`) was removed —
-# this predicate is read-only.
+# The SSE event_generator in sse_handler.py measures wall-clock around each
+# yield batch and bumps `sub.consecutive_drops` when a batch exceeds the
+# slow threshold. This predicate is read-only.
 
 def should_disconnect_slow_consumer(sub: Subscriber) -> bool:
     """5+ consecutive slow yield batches means the consumer can't keep up.

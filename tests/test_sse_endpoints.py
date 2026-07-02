@@ -502,6 +502,54 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         await client.post("/api/stream/viewport", content=body, headers=headers)
         assert fired["count"] == 1
 
+    @pytest.mark.asyncio
+    async def test_posmode_only_change_does_not_fire_tick(self, client, fresh_registry, monkeypatch):
+        """Regression: PIV finding v1.2.1. A POST that flips posMode without
+        changing the quantized bbox must NOT wake all subscribers globally
+        (was: broadcast → 500× HAFAS fetch amplification). Skip anchor
+        resets via last_emitted_push_seq=None on the toggler's own sub;
+        their next natural push emits within 10 s."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        fired = {"count": 0}
+        original = fanout.fire_tick
+
+        async def spy():
+            fired["count"] += 1
+            return await original()
+
+        monkeypatch.setattr(fanout, "fire_tick", spy)
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        # First POST: bbox is new AND posMode default CALC → fire_tick fires once.
+        await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":49.0,"swLon":8.0,"neLat":49.6,"neLon":9.0,"posMode":"CALC"}',
+            headers=headers,
+        )
+        assert fired["count"] == 1
+        # Second POST: same bbox, only posMode changes → must NOT fire.
+        await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":49.0,"swLon":8.0,"neLat":49.6,"neLon":9.0,"posMode":"REPORT_ONLY"}',
+            headers=headers,
+        )
+        assert fired["count"] == 1
+        assert sub.pos_mode == "REPORT_ONLY"
+        # Anchor reset so the next push emits regardless of the mod-3 gate.
+        assert sub.last_emitted_push_seq is None
+
+    @pytest.mark.asyncio
+    async def test_post_rate_check_ip_denies_empty(self):
+        """PIV finding: empty IP was permitted (return True), letting a
+        misconfigured trusted-proxy path bypass the per-IP rate cap. Now
+        denied (return False) — deny-by-default under the /api rate
+        limit."""
+        from sse_handler import _post_rate_check_ip
+        assert _post_rate_check_ip("") is False
+
 
 class TestSelectIdempotentReclick:
     """Re-clicking the same selection (same jid) is a no-op: selection_seq
