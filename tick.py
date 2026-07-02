@@ -52,6 +52,11 @@ TICK_STATE_FILE = Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).p
 # tracked by fanout.SubscriberRegistry.
 
 _TICK_ENABLED = os.environ.get("BUSRADAR_TICK_CALIBRATOR", "on").lower().strip() != "off"
+# Independent flag: the calibrator (HAFAS GPS-cadence detection for
+# /api/health metadata) and the SSE push loop (broadcasts every 10 s to
+# wake subscribers) are now separate concerns. Tests + some diagnostics
+# want the calibrator off but SSE pushes on, or vice versa.
+_SSE_PUSH_ENABLED = os.environ.get("BUSRADAR_SSE_PUSH", "on").lower().strip() != "off"
 
 
 # --- Monotonic clock helper ---
@@ -286,10 +291,10 @@ async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: s
         if tracker.feed(positions, ts, min_changed=min_changed):
             wall_sec = time.localtime().tm_sec + (time.time() % 1)
             log.info("[tick_calibrator] tick at :%04.1f (%ds scan)", wall_sec, scan_seconds)
-            # Broadcast to SSE subscribers is now owned by sse_push_loop,
-            # which fires every SSE_PUSH_PERIOD seconds regardless of the
-            # calibrator. The calibrator only maintains last_tick_ts for
-            # /api/health metadata and cache-invalidation predictions.
+            # Broadcast to SSE subscribers is now owned by sse_push_loop
+            # (10 s cadence) and by handle_viewport (on bbox-change). The
+            # calibrator only maintains last_tick_ts for /api/health metadata
+            # and cache-invalidation predictions.
             return True
         await asyncio.sleep(1.0)
     return False
@@ -394,33 +399,40 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
 
 
 async def sse_push_loop(activity: ClientActivity):
-    """SSE broadcast pacemaker. Fires fanout.fire_tick() every SSE_PUSH_PERIOD
-    seconds while at least one subscriber is connected, so CALC-mode clients
-    receive a freshly-computed interpolated position on that cadence. When
-    no subscribers are around it sleeps on the ClientActivity wakeup and
-    resumes cheaply on the first join.
+    """SSE broadcast pacemaker. Fires fanout.fire_push_tick() every
+    SSE_PUSH_PERIOD seconds while at least one subscriber is connected, so
+    CALC-mode clients receive a freshly-computed interpolated position on
+    that cadence. When no subscribers are around it sleeps on the
+    ClientActivity wakeup and resumes cheaply on the first join.
 
     Decoupled from tick_calibrator so the push cadence (10 s) can be finer
     than the underlying HAFAS GPS-cadence (30 s). The calibrator now only
     detects the real HAFAS tick for metadata purposes.
     """
+    # Hoisted from the hot loop — fanout doesn't import tick, so no cycle.
+    import fanout
     log.info("[sse_push_loop] started (period=%.1fs)", SSE_PUSH_PERIOD)
     while True:
         try:
-            if not activity.is_active():
-                # No subscribers: block on the wakeup event forever (or until
-                # a subscriber joins). This is symmetrical with how the
-                # calibrator behaves in idle mode, avoiding wasted wakeups.
-                await activity.wait_for_wakeup(3600.0)
+            # Explicit subscriber gate — is_active() also returns True for
+            # ACTIVE_CLIENT_WINDOW=120 s after the last subscriber left,
+            # which would fire useless ticks. Real subscriber count only.
+            if activity._subscribers == 0:
+                # Block until a subscriber joins (wakeup_event set on 0→1).
+                # Bounded to 300 s so a bug in the wakeup mechanic surfaces
+                # within minutes in the log rather than after an hour.
+                await activity.wait_for_wakeup(300.0)
+                # Re-check after wake: subscriber could have left already
+                # in the sub-ms window between set() and our wake, or the
+                # timeout fired without a join. Loop head does the check.
                 continue
 
             await asyncio.sleep(SSE_PUSH_PERIOD)
 
             try:
-                import fanout
-                await fanout.fire_tick()
+                await fanout.fire_push_tick()
             except Exception:
-                log.exception("[sse_push_loop] fanout.fire_tick failed")
+                log.exception("[sse_push_loop] fanout.fire_push_tick failed")
         except asyncio.CancelledError:
             log.info("[sse_push_loop] cancelled, shutting down")
             raise

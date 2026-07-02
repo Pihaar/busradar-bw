@@ -113,7 +113,7 @@ from sse_handler import (  # noqa: F401
 )
 from tick import (
     TickTracker, tick_calibrator, sse_push_loop,
-    _TICK_ENABLED, TICK_MAX_AGE,
+    _TICK_ENABLED, _SSE_PUSH_ENABLED, TICK_MAX_AGE,
 )
 
 
@@ -214,44 +214,50 @@ async def lifespan(app: FastAPI):
     # can flip it. /api/health reads this so operators can tell whether a
     # multi-minute HAFAS-fanout rebuild is currently consuming the server.
     app.state.stops_rebuilding = False
+
+    # All long-lived background tasks are tracked so the lifespan cancels
+    # them cleanly on shutdown. Untracked tasks otherwise ran past
+    # app.state.client.aclose() and logged "client closed" tracebacks.
+    background_tasks: list[asyncio.Task] = []
+
     if skip_rebuild:
         log.warning("BUSRADAR_SKIP_STOPS_REBUILD=1 set — skipping startup stops rebuild")
     if cached:
         app.state.stops_data = cached
         log.info("Stops cache loaded: %d stops (stale=%s)", cached["count"], stale)
         if stale and not skip_rebuild:
-            # The cache file is from before today's 3am cutoff; daily scheduler
-            # may have missed it (server down at 3am, or first start of the day).
-            # Keep serving the stale data while the rebuild runs in background.
             log.info("Stops cache is stale, refreshing in background")
-            asyncio.create_task(_build_stops_on_startup(app))
+            background_tasks.append(asyncio.create_task(_build_stops_on_startup(app)))
     else:
         log.info("Stops cache missing or unreadable, building in background...")
         app.state.stops_data = {"stops": [], "count": 0}
         if not skip_rebuild:
-            asyncio.create_task(_build_stops_on_startup(app))
+            background_tasks.append(asyncio.create_task(_build_stops_on_startup(app)))
 
-    asyncio.create_task(schedule_daily_rebuild_wrapper(app))
+    background_tasks.append(asyncio.create_task(schedule_daily_rebuild_wrapper(app)))
 
-    calib_task = None
-    push_task = None
     if _TICK_ENABLED:
-        calib_task = asyncio.create_task(
+        background_tasks.append(asyncio.create_task(
             tick_calibrator(app, breaker, tick_tracker, client_activity,
                            HAFAS_ENDPOINT, _build_hafas_envelope)
-        )
-        push_task = asyncio.create_task(sse_push_loop(client_activity))
+        ))
+    if _SSE_PUSH_ENABLED:
+        background_tasks.append(asyncio.create_task(sse_push_loop(client_activity)))
 
     yield
 
-    for _t in (push_task, calib_task):
-        if _t is None:
-            continue
+    # Cancel in reverse creation order: push loop first (so it stops
+    # broadcasting), then calibrator, then rebuild tasks. Errors are
+    # logged separately from CancelledError so a real shutdown bug is
+    # visible in the journal rather than swallowed.
+    for _t in reversed(background_tasks):
         _t.cancel()
         try:
             await _t
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
+        except Exception:
+            log.exception("[lifespan] background task raised during shutdown")
     await app.state.client.aclose()
     log.info("httpx client closed")
 

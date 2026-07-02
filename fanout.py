@@ -140,29 +140,53 @@ class Subscriber:
     # Bbox-quantize of the viewport when /viewport was last accepted, so
     # /viewport POST can skip fire_tick() when nothing actually changed.
     last_viewport_bbox: tuple[int, int, int, int] | None = None
-    # REPORT_ONLY sub tick-skipping counter. sse_push_loop fires every 10 s,
-    # but HAFAS REPORT_ONLY positions only update every ~30 s, so we skip
-    # 2 out of every 3 ticks for these subs (first tick after subscribe is
-    # never skipped, so the map paints quickly).
-    report_only_ticks_seen: int = 0
+    # REPORT_ONLY skip anchor: push_seq at last emit (or None for "never").
+    # sse_push_loop fires every 10 s but HAFAS REPORT_ONLY positions only
+    # update every ~30 s, so we emit at most every 3rd push. Anchored to
+    # the GLOBAL push_seq (not a per-sub wake counter) so viewport-POST
+    # induced wakes from other users don't shift this sub's skip pattern.
+    # None means "next push always emits" — used both on initial subscribe
+    # and after any posMode toggle so the user sees new-mode data quickly.
+    last_emitted_push_seq: int | None = None
 
 
 # === Tick fanout primitives ===
 
 tick_condition: asyncio.Condition = asyncio.Condition()
 tick_seq: int = 0
+# push_seq is a subset of tick_seq: it increments only when sse_push_loop
+# triggers the fanout, not when handle_viewport does. REPORT_ONLY subscribers
+# use push_seq (mod 3) to decide whether to emit — anchoring to the global
+# push cadence rather than a per-sub wake-counter keeps the 3:1 skip
+# pattern deterministic even when other users' viewport POSTs wake the
+# stream in between pushes.
+push_seq: int = 0
 
 
 async def fire_tick() -> int:
     """Bump the monotonic tick counter and wake every subscriber waiting on it.
 
-    Called by `tick.feed()` when a new HAFAS tick is detected. The Condition
+    Called by handle_viewport when a subscriber's bbox actually changed
+    (invalidating the singleflight cache key). The Condition
     notify_all() must run inside the `async with condition` block, otherwise
     asyncio raises RuntimeError.
     """
     global tick_seq
     async with tick_condition:
         tick_seq += 1
+        tick_condition.notify_all()
+        return tick_seq
+
+
+async def fire_push_tick() -> int:
+    """Push-loop-owned variant: bumps push_seq as well as tick_seq. Called
+    from sse_push_loop at SSE_PUSH_PERIOD cadence. REPORT_ONLY subs anchor
+    their skip pattern on push_seq so viewport-POST-induced wakes don't
+    desync their emit cadence."""
+    global tick_seq, push_seq
+    async with tick_condition:
+        tick_seq += 1
+        push_seq += 1
         tick_condition.notify_all()
         return tick_seq
 
