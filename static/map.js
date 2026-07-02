@@ -263,24 +263,35 @@ export var mapModule = {
     if (!settings.current.showLocation) return;
     // URL-restore (hash carries lat/lon/z) means we must NOT jump the map
     // to the GPS fix — the user just clicked a shared link and wants that
-    // view. The dot itself is still expected though; the v1.1.1 fix that
-    // called setUserLocationMarker only inside the setView-branch missed
-    // the URL-restore case, so the dot stayed absent until the first SSE
-    // tick's _maybeRefreshUserLocation fired ~10 s later.
+    // view. The dot itself is still expected though.
     var suppressView = !!(location.hash && location.hash.length > 1);
     navigator.geolocation.getCurrentPosition(
       function(pos) {
-        // Re-check showLocation defensively: user could have toggled off
-        // during the async GPS acquisition window (up to 5 s).
         if (!settings.current.showLocation) return;
+        var lat = pos.coords.latitude;
+        var lon = pos.coords.longitude;
         if (!suppressView) {
-          state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
-          stopsLayer.loadAll(pos.coords.latitude, pos.coords.longitude, 5000);
+          state.map.setView([lat, lon], CONFIG.defaultZoom);
+          stopsLayer.loadAll(lat, lon, 5000);
         }
-        setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
+        // Set the marker AND retry a few times: for reasons that are
+        // still not fully understood, the first setUserLocationMarker
+        // call from this init-time callback occasionally leaves the
+        // dot invisible even though the GPS-button click (same fn,
+        // same args, later in the session) always works. Retries at
+        // 100ms/1s/5s cover the window without measurable cost —
+        // setUserLocationMarker is idempotent (setLatLng on an
+        // already-correct marker is essentially a no-op).
+        setUserLocationMarker(lat, lon);
+        setTimeout(function() { setUserLocationMarker(lat, lon); }, 100);
+        setTimeout(function() { setUserLocationMarker(lat, lon); }, 1000);
+        setTimeout(function() { setUserLocationMarker(lat, lon); }, 5000);
       },
       function() {},
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+      // Match the GPS-button options exactly. The prior asymmetry
+      // (enableHighAccuracy:false, maximumAge:60000) had no evidence
+      // for it and diverging from the working path adds surface area.
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
     );
   },
 };
@@ -318,6 +329,13 @@ export function setUserLocationMarker(lat, lon) {
   var icon = _ensureUserLocationPaneAndIcon();
   if (!icon) return;
   var ll = [lat, lon];
+  // Defensive: if the marker exists in state but is no longer attached
+  // to the map (leaflet's _map internal is null), it was detached by
+  // something we don't see. Drop the stale reference and re-create,
+  // otherwise setLatLng on a detached marker is invisible.
+  if (state._userLocationMarker && !state._userLocationMarker._map) {
+    state._userLocationMarker = null;
+  }
   if (state._userLocationMarker) {
     state._userLocationMarker.setLatLng(ll);
   } else {

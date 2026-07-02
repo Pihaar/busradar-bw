@@ -10,11 +10,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 function makeMarkerMock() {
-  return {
-    addTo: vi.fn(function () { return this; }),
+  const mock = {
+    addTo: vi.fn(function (map) { mock._map = map; return mock; }),
     remove: vi.fn(),
     setLatLng: vi.fn(),
+    _map: null,  // Leaflet-internal: set by addTo, cleared by remove/removeLayer
   };
+  return mock;
 }
 
 globalThis.L = {
