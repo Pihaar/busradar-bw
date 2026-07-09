@@ -313,17 +313,49 @@ export var mapModule = {
   },
 };
 
-// Diagnostic panel — visible only when the URL carries ?gpsdebug=1.
+// Diagnostic panel — visible only when either
+//   (a) the URL carries ?gpsdebug=1, or
+//   (b) localStorage.getItem("busradar_gpsdebug") is truthy.
 // Renders a small status pill in the bottom-left of the viewport showing
 // the last thing setUserLocationMarker / requestGPS did. Ships in-prod
 // because the bug reproduces on user devices we can't reach with
-// DevTools. Zero visual footprint when the flag isn't set.
+// DevTools. Zero visual footprint when neither flag is set.
+//
+// The localStorage flag exists because installed PWAs have no address
+// bar — you can't type ?gpsdebug=1 into them. Workflow: open the site
+// once in the regular browser with ?gpsdebug=1, which persists the
+// flag; the PWA (same origin, same localStorage) then picks it up.
+// Turn off with ?gpsdebug=0 (also in the regular browser).
 var _gpsDebugEl = null;
+var _gpsDebugChecked = false;
+var _gpsDebugEnabled = false;
+function _gpsDebugCheckEnabled() {
+  if (_gpsDebugChecked) return _gpsDebugEnabled;
+  _gpsDebugChecked = true;
+  try {
+    if (typeof URLSearchParams !== "undefined") {
+      var params = new URLSearchParams(location.search);
+      var urlFlag = params.get("gpsdebug");
+      if (urlFlag === "1") {
+        try { localStorage.setItem("busradar_gpsdebug", "1"); } catch (e) {}
+        _gpsDebugEnabled = true;
+        return true;
+      }
+      if (urlFlag === "0") {
+        try { localStorage.removeItem("busradar_gpsdebug"); } catch (e) {}
+        _gpsDebugEnabled = false;
+        return false;
+      }
+    }
+    try {
+      _gpsDebugEnabled = localStorage.getItem("busradar_gpsdebug") === "1";
+    } catch (e) {}
+  } catch (e) {}
+  return _gpsDebugEnabled;
+}
 function _gpsDebugSet(msg) {
   try {
-    if (typeof URLSearchParams === "undefined") return;
-    var params = new URLSearchParams(location.search);
-    if (params.get("gpsdebug") !== "1") return;
+    if (!_gpsDebugCheckEnabled()) return;
     if (!_gpsDebugEl) {
       _gpsDebugEl = document.createElement("div");
       _gpsDebugEl.id = "gps-debug";
