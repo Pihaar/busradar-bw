@@ -205,6 +205,16 @@
   de.location_denied = 'Standortzugriff verweigert';
   en.location_denied = 'Location access denied';
 
+  // Timeout is a distinct failure from denial: the browser has the
+  // permission but the underlying location resolver (on Android Chrome,
+  // Google Location Services) didn't answer in time. Showing "denied"
+  // for a timeout sends the user to the wrong setting.
+  de.location_timeout = 'Standort-Zeitüberschreitung — Standortdienst des Geräts prüfen';
+  en.location_timeout = 'Location timed out — check the device location service';
+
+  de.location_error = 'Standort konnte nicht ermittelt werden';
+  en.location_error = 'Could not determine location';
+
   de.setting_language = 'Sprache';
   en.setting_language = 'Language';
 
