@@ -115,9 +115,20 @@ settings._bindUI = function() {
           if (state._gpsControlContainer) state._gpsControlContainer.style.display = '';
           setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
           state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
-        }, function() {
+        }, function(err) {
           if (self._locationToggleNonce !== thisNonce) return;
-          showError(t('location_denied'));
+          // Map the geolocation error code to an accurate message.
+          // code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE,
+          // 3 = TIMEOUT. Showing "denied" for a timeout (the common
+          // Android-Chrome case where the site permission is granted
+          // but Google Location Services doesn't answer) misdirects
+          // the user to the wrong setting.
+          var code = err && err.code;
+          var key = code === 1 ? 'location_denied'
+                  : code === 3 ? 'location_timeout'
+                  : code === 2 ? 'location_unavailable'
+                  : 'location_error';
+          showError(t(key));
         }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
       } else {
         self._locationToggleNonce++;
