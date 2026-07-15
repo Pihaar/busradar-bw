@@ -108,6 +108,19 @@ export function startStream() {
     _gotFirstSubscribe = true;
     _reconnectAttempt = 0;
     _setSseState('open');
+    // Start the staleness clock at connect time. The stale-stream guard
+    // (1s ticker + visibilitychange) keys off state.lastUpdate, which was
+    // ONLY ever set by a vehicles event. A stream that connects but never
+    // delivers a first vehicles event — e.g. the calibrator is idle right
+    // after a server reboot (observed: tick_age_s ~1099) — left lastUpdate
+    // null forever, so `staleByTime` stayed falsy and the self-heal
+    // reconnect never fired. The tab sat with a dead stream, no markers,
+    // and clicks did nothing. Seeding lastUpdate here means "connected but
+    // no data within STALE_THRESHOLD_MS" is treated as stale too, so the
+    // force-reconnect path kicks in (bounded by its 15s cooldown). A
+    // healthy stream delivers its first tick well within the 45s window
+    // and overwrites this normally.
+    if (!state.lastUpdate) state.lastUpdate = Date.now();
     if (state.consecutiveErrors > 0) {
       state.consecutiveErrors = 0;
       clearPersistentError();
