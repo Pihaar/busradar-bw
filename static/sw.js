@@ -70,6 +70,34 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
+  // App code (our own .js / .css, plus the manifest) is NETWORK-FIRST:
+  // these change on every deploy and have no version query on their
+  // module-import URLs, so a cache-first strategy served stale bundles
+  // after a deploy until the cache was manually cleared — a reload alone
+  // (even via the update banner) kept getting old JS. Network-first means
+  // every load with connectivity gets the fresh file; the cache is only a
+  // fallback when offline. Immutable assets below stay cache-first.
+  var p = url.pathname;
+  var isVendor = p.indexOf('/vendor/') === 0;
+  var isAppCode = !isVendor && (p.endsWith('.js') || p.endsWith('.css') || p.endsWith('.webmanifest'));
+
+  if (isAppCode) {
+    event.respondWith(
+      fetch(event.request).then(function(resp) {
+        if (resp && resp.ok) {
+          var clone = resp.clone();
+          caches.open(CACHE).then(function(c) { c.put(event.request, clone); });
+        }
+        return resp;
+      }).catch(function() {
+        return caches.match(event.request);
+      })
+    );
+    return;
+  }
+
+  // Immutable / rarely-changing assets (fonts, icons, favicon, vendored
+  // Leaflet): cache-first is correct and keeps them instant + offline.
   event.respondWith(
     caches.match(event.request).then(function(cached) {
       if (cached) return cached;
