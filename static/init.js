@@ -344,6 +344,31 @@ if (document.readyState === 'loading') {
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js', {updateViaCache: 'none'})
+      .then(function(reg) {
+        // Warm PWAs (resumed from background, never navigated) don't
+        // re-run this registration, so they never check for a new SW and
+        // keep serving the old app version until a manual cache clear.
+        // Poke the browser to re-check whenever the app returns to the
+        // foreground.
+        document.addEventListener('visibilitychange', function() {
+          if (document.visibilityState === 'visible') {
+            reg.update().catch(function() {});
+          }
+        });
+      })
       .catch(function(e) { console.warn('SW registration failed:', e); });
+
+    // When a new SW takes control (after skipWaiting + clients.claim),
+    // reload ONCE so the page swaps to the freshly-cached assets. Guarded
+    // on there already being a controller, so the very first install on a
+    // fresh visit doesn't trigger a spurious reload.
+    if (navigator.serviceWorker.controller) {
+      var reloadedForSW = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function() {
+        if (reloadedForSW) return;
+        reloadedForSW = true;
+        location.reload();
+      });
+    }
   });
 }
