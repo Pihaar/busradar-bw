@@ -1227,15 +1227,20 @@ export var ui = {
       var newDur = Math.min(currentDur + 60, 1440);
       btn.textContent = t('loading');
       btn.disabled = true;
-      // Single-step on explicit user click: don't cascade further. The
-      // initial stop-open path uses autoExpand=true to walk forward until
-      // it finds any data; once the user is stepping manually they pay for
-      // each load by clicking again, which keeps the per-IP HAFAS budget
-      // under the rate-limit ceiling.
+      // Cascade like the initial stop-open expand: keep widening the
+      // window until new departures actually appear or we hit 1440.
+      // HAFAS `dur` is cumulative-from-now, so a single +60 step over an
+      // empty hour re-renders the identical list — the click looked like
+      // it did nothing and the user had to click once per empty hour to
+      // step past a service gap. Resetting the per-cascade counter gives
+      // the manual walk the same budget as the initial auto-expand; the
+      // per-IP rate-limit still bounds the burst.
       if (type === 'ARR') {
-        ui.loadArrivals(loc, stopExtId, newDur, false);
+        state._arrExpandCount = 0;
+        ui.loadArrivals(loc, stopExtId, newDur, true);
       } else {
-        ui.loadDepartures(loc, stopExtId, newDur, false);
+        state._depExpandCount = 0;
+        ui.loadDepartures(loc, stopExtId, newDur, true);
       }
     });
     li.appendChild(btn);
