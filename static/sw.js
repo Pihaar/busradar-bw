@@ -83,7 +83,13 @@ self.addEventListener('fetch', function(event) {
 
   if (isAppCode) {
     event.respondWith(
-      fetch(event.request).then(function(resp) {
+      // {cache: 'no-cache'} forces a conditional request (If-None-Match /
+      // If-Modified-Since) instead of letting the browser's HTTP cache
+      // answer from the 30-day max-age these files ship with. Without this
+      // the network-first fetch was silently served from the HTTP cache —
+      // stale app code — so a deploy still didn't reach the client. The
+      // server returns 304 (tiny) when unchanged, 200 fresh when changed.
+      fetch(event.request, {cache: 'no-cache'}).then(function(resp) {
         if (resp && resp.ok) {
           var clone = resp.clone();
           caches.open(CACHE).then(function(c) { c.put(event.request, clone); });
