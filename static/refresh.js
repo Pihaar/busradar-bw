@@ -236,7 +236,7 @@ document.addEventListener('visibilitychange', function () {
     startStream();
     return;
   }
-  if (state.lastUpdate && Date.now() - state.lastUpdate > STALE_THRESHOLD_MS) {
+  if (state.lastUpdate && Date.now() - state.lastUpdate > _staleThresholdMs()) {
     _forceReconnect('stale-on-visible');
   }
 });
@@ -265,10 +265,20 @@ function _forceReconnect(reason) {
 // page.route abort in tests) drops new outgoing fetches but lets the
 // existing SSE socket idle. Flip the dot to --offline so the user sees it.
 //
-// 45s is a generous floor: HAFAS ticks ~30s, and the first tick on a fresh
-// stream can be up to one tick away (so worst-case 30s + slack). At 45s we
-// flag a stale stream without flapping on normal tick-to-tick latency.
-const STALE_THRESHOLD_MS = 45000;
+// 45s is a generous floor for CALC mode, where the server pushes every
+// ~10s so lastUpdate is bumped with wide margin. In REPORT_ONLY ("Nur
+// GPS") the server skips 2 of every 3 pushes, so vehicles events arrive
+// only every ~30s — that leaves just 15s of slack under a 45s threshold,
+// and a single delayed tick (server load, HAFAS latency) would trip a
+// false force-reconnect. Widen the threshold to 75s in REPORT_ONLY so the
+// staleness detection matches the mode's real cadence.
+const STALE_THRESHOLD_CALC_MS = 45000;
+const STALE_THRESHOLD_REPORT_ONLY_MS = 75000;
+function _staleThresholdMs() {
+  return (settings.current && settings.current.posMode === 'REPORT_ONLY')
+    ? STALE_THRESHOLD_REPORT_ONLY_MS
+    : STALE_THRESHOLD_CALC_MS;
+}
 
 // Network-loss signal independent of the SSE stream. The browser's offline
 // event fires when navigator.onLine flips false (radio off, no carrier),
@@ -309,7 +319,7 @@ setInterval(function () {
   // --offline and let the next event clear it. Also reacts to the
   // navigator.onLine flag for instant offline feedback (test scaffold +
   // real-world radio-off scenarios where SSE doesn't immediately error).
-  var staleByTime = state.lastUpdate && Date.now() - state.lastUpdate > STALE_THRESHOLD_MS;
+  var staleByTime = state.lastUpdate && Date.now() - state.lastUpdate > _staleThresholdMs();
   var offlineByNavigator = typeof navigator !== 'undefined' && navigator.onLine === false;
   if (staleByTime || offlineByNavigator) {
     var dot = document.querySelector('.status-dot');
