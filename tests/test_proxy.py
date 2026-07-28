@@ -211,6 +211,17 @@ class TestServiceWorker:
         assert "busradar-" + _VERSION in body
 
     @pytest.mark.asyncio
+    async def test_sw_emits_single_service_worker_allowed(self, client):
+        # The app must be the SOLE emitter of Service-Worker-Allowed. nginx used
+        # to add a second identical copy; Gecko combines the two into "/, /", an
+        # invalid scope URI, and rejects SW registration with SecurityError
+        # ("operation is insecure"). Assert exactly one value so a future move
+        # of this header into the global middleware (which would re-duplicate it
+        # against nginx's per-location headers) fails loudly here.
+        resp = await client.get("/sw.js")
+        assert resp.headers.get_list("service-worker-allowed") == ["/"]
+
+    @pytest.mark.asyncio
     async def test_sw_skipwaiting_and_claim_present(self, client):
         resp = await client.get("/sw.js")
         body = resp.text
@@ -443,6 +454,16 @@ class TestSecurityHeaders:
         assert resp.headers.get("x-content-type-options") == "nosniff"
         assert resp.headers.get("x-frame-options") == "DENY"
         assert "strict-origin" in resp.headers.get("referrer-policy", "")
+
+    @pytest.mark.asyncio
+    async def test_service_worker_allowed_scoped_to_sw_route(self, client):
+        # Service-Worker-Allowed is set by the /sw.js asset only, NOT the global
+        # middleware. If it leaked onto every response, nginx's per-location
+        # add_header copies would collide with it and re-create the duplicate
+        # "/, /" that broke Firefox SW registration. Guard the non-SW routes.
+        for path in ("/", "/api/health"):
+            resp = await client.get(path)
+            assert "service-worker-allowed" not in resp.headers, path
 
 
 class TestCSPHash:
