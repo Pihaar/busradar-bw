@@ -134,7 +134,9 @@ fertige Auswertung (16 Tage, n=429 Fahrten).
 ## Deployment
 
 RPM/OBS-Paket via `deploy/busradar-bw.spec`, systemd-Units in `deploy/`, nginx-Vhost
-in `deploy/busradar.pihaar.de.conf`. Single-Worker uvicorn unter sysuser `busradar`.
+als Referenz-Snapshot in `deploy/busradar.pihaar.de.conf` (die live deployte Config ist
+Ansible-verwaltet; Source of Truth ist das Template im `machine-config`-Repo). Single-Worker
+uvicorn unter sysuser `busradar`.
 
 ## Lizenz / Rechtliches
 

@@ -322,11 +322,13 @@ async def _sanitized_exception_handler(request: Request, exc: Exception):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        # These are also set at the edge (nginx). Keeping them here too is
-        # deliberate defense-in-depth: identical duplicate values are harmless
-        # (unlike Service-Worker-Allowed, whose combined "/, /" value is parsed
-        # as a scope URI and broke SW registration in Firefox, so that one has a
-        # single owner). The app stays self-protecting even if run without nginx.
+        # nginx (the edge) is the single wire emitter of these three: it strips
+        # the app's copy via proxy_hide_header and re-adds its own, so responses
+        # carry exactly one of each (a duplicate "X-Frame-Options: DENY, DENY" is
+        # malformed and some browsers ignore it). The app still sets them so it
+        # self-protects if ever run without nginx. Service-Worker-Allowed is the
+        # inverse case: app-only, because duplicating it (nginx + app) yields the
+        # combined scope "/, /" that breaks Firefox service-worker registration.
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
