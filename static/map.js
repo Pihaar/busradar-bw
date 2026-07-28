@@ -125,6 +125,7 @@ export var mapModule = {
               link.style.opacity = '';
               state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
               setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
+              startLocationWatch();
             },
             function() {
               link.style.opacity = '';
@@ -304,6 +305,9 @@ export var mapModule = {
           setUserLocationMarker(lat, lon);
         }, 1000);
         setTimeout(function() { setUserLocationMarker(lat, lon); }, 5000);
+        // Start continuous tracking so the dot follows the user instead of
+        // sitting at the initial fix.
+        startLocationWatch();
       },
       function(err) {
         _gpsDebugSet("err:" + (err && err.code));
@@ -422,6 +426,33 @@ export function setUserLocationMarker(lat, lon) {
     _gpsDebugSet("setMarker: created @" + lat.toFixed(4) + "," + lon.toFixed(4)
                  + " map=" + !!state._userLocationMarker._map);
   }
+}
+
+// Live user-location tracking via watchPosition. The OS pushes a new fix
+// whenever the device actually moves, which is what a location dot wants —
+// far better than the old per-tick getCurrentPosition poll that, with its
+// battery-saving maximumAge:60000 / low-accuracy settings, only moved the
+// dot every ~30-60s and looked frozen on a moving phone. watchPosition is
+// also more power-efficient: no fixed polling, the OS coalesces updates and
+// only fires on actual movement.
+export function startLocationWatch() {
+  if (!settings.current.showLocation) return;
+  if (!navigator.geolocation || !navigator.geolocation.watchPosition) return;
+  if (state._geoWatchId != null) return;  // already watching
+  state._geoWatchId = navigator.geolocation.watchPosition(
+    function (pos) {
+      setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
+    },
+    function () {},
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+  );
+}
+
+export function stopLocationWatch() {
+  if (state._geoWatchId != null && navigator.geolocation && navigator.geolocation.clearWatch) {
+    navigator.geolocation.clearWatch(state._geoWatchId);
+  }
+  state._geoWatchId = null;
 }
 
 // === STOPS LAYER ===

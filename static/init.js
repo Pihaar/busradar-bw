@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { state, settings, t, applyI18n, parseCoord, parseZoom } from './state.js';
 import { urlState } from './api.js';
-import { mapModule, stopsLayer, setUserLocationMarker } from './map.js';
+import { mapModule, stopsLayer, setUserLocationMarker, startLocationWatch, stopLocationWatch } from './map.js';
 import { ui, search } from './ui.js';
 import { startStream, notifyViewportChange, refresh, showError, announce } from './refresh.js';
 
@@ -115,6 +115,7 @@ settings._bindUI = function() {
           if (state._gpsControlContainer) state._gpsControlContainer.style.display = '';
           setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
           state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
+          startLocationWatch();
         }, function(err) {
           if (self._locationToggleNonce !== thisNonce) return;
           // Map the geolocation error code to an accurate message.
@@ -136,6 +137,7 @@ settings._bindUI = function() {
         self._save();
         self._updateGroup('setting-location', 'off');
         if (state._gpsControlContainer) state._gpsControlContainer.style.display = 'none';
+        stopLocationWatch();
         if (state._userLocationMarker) {
           state._userLocationMarker.remove();
           state._userLocationMarker = null;

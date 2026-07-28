@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin } from './state.js';
 import { api } from './api.js';
-import { markers, stopsLayer, setUserLocationMarker } from './map.js';
+import { markers, stopsLayer } from './map.js';
 import { ui } from './ui.js';
 import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce, formatStatusText } from './status.js';
 
@@ -395,29 +395,6 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
-// GPS-dot refresh, throttled to ~30 s cadence. Multi-user context: each
-// getCurrentPosition with enableHighAccuracy=true wakes GPS hardware on
-// mobile, at 1000× the power cost of the cached-fix path. maximumAge:60000
-// with enableHighAccuracy=false accepts a cached fix within a minute,
-// which is more than accurate enough for a dot on a city-scale map.
-// The initial jump-to-GPS in map.js:requestGPS already uses the same
-// low-power settings, so the periodic refresh matches.
-var _gpsRefreshTickCounter = 0;
-export function _resetGpsRefreshCounter() {
-  // Test-only helper. Module-level counter across a whole app-lifetime
-  // is fine in prod but breaks vitest run-order assumptions.
-  _gpsRefreshTickCounter = 0;
-}
-export function _maybeRefreshUserLocation() {
-  if (!settings.current.showLocation) return;
-  if (!navigator.geolocation) return;
-  _gpsRefreshTickCounter++;
-  if (_gpsRefreshTickCounter % 3 !== 1) return;  // 1, 4, 7, ... ≈ every 30 s
-  navigator.geolocation.getCurrentPosition(function (pos) {
-    setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
-  }, function () {}, { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 });
-}
-
 // === Vehicle-payload handler ===
 // Receives `vehicles` SSE events. Updates markers, status, follow-bus pan,
 // and triggers URL-restore on first delivery. Detail-panel updates flow
@@ -457,7 +434,11 @@ function _handleVehiclesPayload(data) {
 
   markers.updateAll(vehicles);
   stopsLayer.update(vehicles);
-  _maybeRefreshUserLocation();
+  // The user-location dot is driven by a geolocation watchPosition
+  // (map.js:startLocationWatch), not by the tick, so it tracks movement
+  // independently of the SSE cadence and posMode. Previously it refreshed
+  // here every 3rd tick, which in REPORT_ONLY mode (vehicles events only
+  // every ~30s) compounded to a ~3-minute effective dot update.
   // markers.updateAll exposes the in-bbox count it just rendered; using
   // that keeps the status counter aligned with the actual marker set on
   // screen (vehicles.length would include the ring-but-not-bbox tail).
