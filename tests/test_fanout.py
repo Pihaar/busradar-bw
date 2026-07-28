@@ -35,6 +35,11 @@ def reset_module_state():
     yield
     fanout.tick_seq = 0
     fanout.push_seq = 0
+    # Reset the global fire_tick token bucket too, so a prior test (or a
+    # prior test *file*) that drained it can't make fire_tick shed here —
+    # test_fire_tick_bumps_seq is otherwise order-dependent on the bucket.
+    fanout._fire_tick_tokens = fanout.FIRE_TICK_BURST
+    fanout._fire_tick_last_refill = 0.0
 
 
 async def _fresh_condition():
@@ -43,6 +48,8 @@ async def _fresh_condition():
     fanout.tick_condition = asyncio.Condition()
     fanout.tick_seq = 0
     fanout.push_seq = 0
+    fanout._fire_tick_tokens = fanout.FIRE_TICK_BURST
+    fanout._fire_tick_last_refill = 0.0
 
 
 # === canonicalize_ip ===

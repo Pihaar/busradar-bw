@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from proxy import app, SSE_COOKIE_NAME
 import fanout
+import sse_handler
 
 
 class _NullCM:
@@ -175,7 +176,10 @@ class TestStreamViewport:
 
     @pytest.mark.asyncio
     async def test_rate_limit_per_subscriber(self, client, fresh_registry):
-        """5 rapid POSTs: first 3 pass (burst), 4th gets 429."""
+        """Per-subscriber burst is 15 (refill 5/s); a rapid run of 20 POSTs
+        lands 15 and 429s the rest. The per-IP bucket (burst 40) has room,
+        so the tripping layer is the per-subscriber one."""
+        sse_handler._post_rate_per_ip.clear()  # deterministic per-IP bucket
         sub = await fresh_registry.subscribe("127.0.0.1")
         headers = {
             "Origin": "http://localhost:8000",
@@ -185,15 +189,15 @@ class TestStreamViewport:
         body = '{"swLat":49,"swLon":8,"neLat":50,"neLon":9}'
         accepted = 0
         rate_limited = 0
-        for _ in range(5):
+        for _ in range(20):
             r = await client.post("/api/stream/viewport", content=body, headers=headers)
             if r.status_code == 200:
                 accepted += 1
             elif r.status_code == 429:
                 rate_limited += 1
                 assert r.json()["scope"] == "subscriber"
-        assert accepted == 3  # burst
-        assert rate_limited == 2
+        assert accepted == 15  # per-subscriber burst
+        assert rate_limited == 5
 
 
 # === POST /api/stream/select ===
@@ -396,37 +400,36 @@ class TestSelectRateLimit:
 
     @pytest.mark.asyncio
     async def test_rate_limit_kicks_in_after_burst(self, client, fresh_registry):
+        sse_handler._post_rate_per_ip.clear()  # deterministic per-IP bucket
         sub = await fresh_registry.subscribe("127.0.0.1")
         headers = {
             "Origin": "http://localhost:8000",
             "Content-Type": "application/json",
             "Cookie": f"__Host-busradar_sse={sub.connection_id}",
         }
-        bodies = [
-            '{"selection":{"kind":"journey","jid":"1|11111|0|80|22052026"}}',
-            '{"selection":{"kind":"journey","jid":"1|22222|0|80|22052026"}}',
-            '{"selection":{"kind":"journey","jid":"1|33333|0|80|22052026"}}',
-            '{"selection":{"kind":"journey","jid":"1|44444|0|80|22052026"}}',
-            '{"selection":{"kind":"journey","jid":"1|55555|0|80|22052026"}}',
-        ]
+        # 20 distinct valid journey selections. Per-subscriber burst 15 →
+        # 15 accepted, 5 rate-limited. Per-IP burst 40 has room, so the
+        # per-subscriber layer is the one that trips.
         accepted = 0
         rate_limited = 0
-        for b in bodies:
+        for i in range(20):
+            b = '{"selection":{"kind":"journey","jid":"1|%d|0|80|22052026"}}' % (100000 + i)
             r = await client.post("/api/stream/select", content=b, headers=headers)
             if r.status_code == 200:
                 accepted += 1
             elif r.status_code == 429:
                 rate_limited += 1
                 assert r.json()["scope"] == "subscriber"
-        assert accepted == 3  # burst capacity
-        assert rate_limited == 2
+        assert accepted == 15  # per-subscriber burst capacity
+        assert rate_limited == 5
 
     @pytest.mark.asyncio
     async def test_per_ip_rate_limit_closes_cookie_rotation_bypass(self, client, fresh_registry):
-        """Same IP spawns N subscribers, each with a fresh burst-3 bucket.
-        Without a per-IP cap an attacker could fire 60 POSTs (3 × 20 subs).
-        The per-IP bucket caps the cross-subscriber total."""
-        subs = [await fresh_registry.subscribe("127.0.0.1") for _ in range(15)]
+        """Same IP spawns N subscribers, each with a fresh per-sub bucket
+        (burst 15). Without a per-IP cap an attacker could fire 15×N POSTs.
+        The per-IP bucket (burst 40) caps the cross-subscriber total."""
+        sse_handler._post_rate_per_ip.clear()  # deterministic per-IP bucket
+        subs = [await fresh_registry.subscribe("127.0.0.1") for _ in range(20)]
         body = '{"selection":null}'
         accepted = 0
         for sub in subs:
@@ -435,15 +438,14 @@ class TestSelectRateLimit:
                 "Content-Type": "application/json",
                 "Cookie": f"__Host-busradar_sse={sub.connection_id}",
             }
-            for _ in range(3):  # try to drain each subscriber's burst
+            for _ in range(3):  # 20 subs × 3 = 60 attempts, well over per-IP burst
                 r = await client.post("/api/stream/select", content=body, headers=headers)
                 if r.status_code == 200:
                     accepted += 1
-        # With per-IP burst 30, total accepted is capped near 30. Without
-        # the per-IP cap an attacker would land 45 (15 × 3); the cap closes
-        # that bypass. Small margin for refill mid-test.
-        assert accepted <= 35, f"per-IP cap should limit total POSTs, got {accepted}"
-        assert accepted < 45, "without per-IP cap all 45 would have landed"
+        # Per-IP burst 40 caps the total near 40 (small margin for refill
+        # mid-test). Without the per-IP cap all 60 would land.
+        assert accepted <= 43, f"per-IP cap should limit total POSTs, got {accepted}"
+        assert accepted < 60, "without per-IP cap all 60 would have landed"
 
 
 class TestSelectNoFireTickAmplification:

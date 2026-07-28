@@ -285,21 +285,29 @@ def _err_response(code: str) -> JSONResponse:
 
 
 # Token-bucket for /api/stream POST endpoints. Two-layer protection:
-# - per-Subscriber: 1/s refill, burst 3. Stops a single connection from
-#   spamming its own session.
-# - per-IP: 1/s refill, burst 10. Closes the cookie-rotation bypass where
-#   one IP opens N subscribers (up to MAX_SUBSCRIBERS_PER_IP=20) and each
-#   gets a fresh per-subscriber bucket (would otherwise allow 60 POSTs/s).
+# - per-Subscriber: 5/s refill, burst 15. Stops a single connection from
+#   spamming its own session. This is the layer that 429'd normal map
+#   panning (old burst 3 / 1-per-s → the 4th quick pan got a 429); at
+#   burst 15 / 5-per-s it comfortably clears the ~4 POSTs/s ceiling the
+#   250ms viewport debounce allows while still capping a spam loop.
+# - per-IP: 6/s refill, burst 40. Closes the cookie-rotation bypass (one
+#   IP, up to MAX_SUBSCRIBERS_PER_IP=20 subscribers, each with its own
+#   per-sub bucket). This bucket is shared across /viewport, /select,
+#   /journey and /stationboard, so it also caps HAFAS-costly stationboard
+#   POST-spam — hence kept tighter than the per-sub layer. Burst 40
+#   absorbs the auto-expand cascade (up to ~24 /stationboard POSTs in a
+#   couple seconds) plus concurrent panning.
+#
+# Upstream (HAFAS) vehicle-fanout cost is separately bounded by the GLOBAL
+# fire_tick token bucket (2/s) + singleflight, so accepted viewport POSTs
+# can't amplify to HAFAS regardless of these limits.
 _post_rate_per_ip: dict[str, tuple[float, float]] = {}  # ip → (tokens, last_refill)
-# Burst sized to absorb a legitimate "open stop, watch auto-expand walk to
-# 24h" pulse without 429ing the user — the auto-expand on a quiet stop can
-# fire ~24 cascading POSTs in a couple of seconds against /api/stationboard.
-# Refill stays at 1 token/s so sustained rate is unchanged; the burst just
-# pushes the cliff out far enough that the cascade fits.
 # Env override (BUSRADAR_POST_RATE_BURST) is for the E2E suite, which
-# replays ~20 pages from the same 127.0.0.1 in two minutes and would
-# otherwise leave subsequent tests competing for an exhausted bucket.
-_POST_RATE_PER_IP_BURST = float(os.environ.get("BUSRADAR_POST_RATE_BURST", "30"))
+# replays ~20 pages from the same 127.0.0.1 in two minutes.
+_POST_RATE_PER_IP_BURST = float(os.environ.get("BUSRADAR_POST_RATE_BURST", "40"))
+_POST_RATE_PER_IP_REFILL = 6.0    # tokens/s
+_POST_RATE_SUB_BURST = 15.0
+_POST_RATE_SUB_REFILL = 5.0       # tokens/s
 _POST_RATE_PER_IP_MAX_KEYS = 4096
 
 
@@ -307,7 +315,8 @@ def _post_rate_check(sub) -> bool:
     """Returns True if a POST is allowed. State is per-Subscriber so two
     different IPs / cookies have independent buckets."""
     now = time.monotonic()
-    tokens = min(3.0, sub.post_rate_tokens + (now - sub.post_rate_last_refill))
+    tokens = min(_POST_RATE_SUB_BURST,
+                 sub.post_rate_tokens + (now - sub.post_rate_last_refill) * _POST_RATE_SUB_REFILL)
     sub.post_rate_last_refill = now
     if tokens >= 1.0:
         sub.post_rate_tokens = tokens - 1.0
@@ -346,7 +355,7 @@ def _post_rate_check_ip(ip: str) -> bool:
         tokens, last_refill = _POST_RATE_PER_IP_BURST, now
     else:
         tokens, last_refill = bucket
-    tokens = min(_POST_RATE_PER_IP_BURST, tokens + (now - last_refill))
+    tokens = min(_POST_RATE_PER_IP_BURST, tokens + (now - last_refill) * _POST_RATE_PER_IP_REFILL)
     if tokens >= 1.0:
         _post_rate_per_ip[ip] = (tokens - 1.0, now)
         return True

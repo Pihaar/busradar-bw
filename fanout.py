@@ -134,9 +134,11 @@ class Subscriber:
     # SSE_SLOW_YIELD_THRESHOLD_S (proxy.py); 5 consecutive trips → disconnect.
     consecutive_drops: int = 0
     # Per-subscriber token-bucket state for the /viewport and /select POST
-    # rate-limiters. Refill is continuous at 1 token/s, cap = 3 (burst).
+    # rate-limiters. Refill 5 tokens/s, cap 15 (burst) — see
+    # sse_handler._POST_RATE_SUB_* for the rationale (normal map panning
+    # debounces to ~4 POSTs/s and must never 429).
     post_rate_last_refill: float = field(default_factory=time.monotonic)
-    post_rate_tokens: float = 3.0
+    post_rate_tokens: float = 15.0
     # Bbox-quantize of the viewport when /viewport was last accepted, so
     # /viewport POST can skip fire_tick() when nothing actually changed.
     last_viewport_bbox: tuple[int, int, int, int] | None = None
