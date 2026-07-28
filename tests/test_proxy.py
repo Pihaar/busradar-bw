@@ -434,6 +434,7 @@ class TestSecurityHeaders:
         assert csp is not None
         assert "default-src 'self'" in csp
         assert "script-src 'self'" in csp
+        assert "worker-src 'self'" in csp  # explicit → SW registration not fallback-dependent
         assert "frame-ancestors 'none'" in csp
 
     @pytest.mark.asyncio

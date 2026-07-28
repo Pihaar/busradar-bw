@@ -329,6 +329,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'sha256-awVWMbWgk3dxKQpOaRlevanDj2peBlVkB83wOZKxfk4='; "
+            # Explicit worker-src so the service worker registration doesn't
+            # depend on the worker-src → script-src fallback. The fallback
+            # *should* allow a same-origin SW (script-src has 'self'), but
+            # some Firefox setups reject registration ("operation is
+            # insecure") when worker-src is only inherited; being explicit
+            # removes the ambiguity. 'self' = same-origin /sw.js only.
+            "worker-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org data:; "
             "connect-src 'self'; "
