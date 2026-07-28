@@ -571,6 +571,16 @@ async def handle_sse_stream(request: Request, app_version: str):
                     yield _format_keepalive()
                     continue
 
+                # Connected-count is emitted on EVERY tick wake (~10s),
+                # before the REPORT_ONLY skip below — otherwise in "Nur GPS"
+                # mode the counter only refreshed on the 1-in-3 emitted tick
+                # (~30s lag when someone joins/leaves). It's a tiny event and
+                # only fires when the count actually changed.
+                count = len(fanout.registry)
+                if count != last_connected_count:
+                    last_connected_count = count
+                    yield _format_sse("connected", {"count": count})
+
                 # REPORT_ONLY: skip 2 of every 3 push cycles. HAFAS's real
                 # GPS position only refreshes every ~30 s, so emitting on
                 # every 10 s SSE push would re-send identical payloads and
@@ -647,6 +657,11 @@ async def handle_sse_stream(request: Request, app_version: str):
 
                 # Always emit `connected` after a tick (coalesces with any
                 # add/remove that happened during this loop iteration).
+                # NOTE: the primary connected-count emit now happens before
+                # the REPORT_ONLY skip above (so the counter isn't 30s-laggy
+                # in "Nur GPS"). This second check catches a count change
+                # that occurred between that emit and the end of this
+                # (non-skipped) iteration — cheap and only fires on change.
                 count = len(fanout.registry)
                 if count != last_connected_count:
                     last_connected_count = count
