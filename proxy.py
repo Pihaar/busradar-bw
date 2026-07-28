@@ -322,6 +322,11 @@ async def _sanitized_exception_handler(request: Request, exc: Exception):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        # These are also set at the edge (nginx). Keeping them here too is
+        # deliberate defense-in-depth: identical duplicate values are harmless
+        # (unlike Service-Worker-Allowed, whose combined "/, /" value is parsed
+        # as a scope URI and broke SW registration in Firefox, so that one has a
+        # single owner). The app stays self-protecting even if run without nginx.
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
