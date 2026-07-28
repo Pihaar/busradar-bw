@@ -729,11 +729,15 @@ async def handle_viewport(request: Request):
     bbox_changed = sub.last_viewport_bbox != new_quantized
     posmode_changed = sub.pos_mode != payload.posMode
     sub.viewport = new_bbox
-    if posmode_changed:
-        # Reset the REPORT_ONLY skip anchor so a mode switch (either
-        # direction) surfaces immediately: last_emitted_push_seq=None means
-        # "next push always emits", regardless of where the global push_seq
-        # sits. The skip pattern re-anchors from that emit.
+    if bbox_changed or posmode_changed:
+        # Reset the REPORT_ONLY skip anchor so this explicit user action
+        # (pan/zoom or mode switch) emits on the very next wake instead of
+        # being swallowed by the 2-of-3 cadence skip. last_emitted_push_seq
+        # is anchored to the global push_seq, which fire_tick() below does
+        # NOT bump — so without this reset a pan in REPORT_ONLY woke the
+        # loop but the skip gate (push_seq - last < 3) suppressed the emit,
+        # and the new viewport's buses only appeared on the next 30s push.
+        # None means "next wake always emits", then it re-anchors.
         sub.last_emitted_push_seq = None
     sub.pos_mode = payload.posMode
     sub.last_viewport_bbox = new_quantized

@@ -550,6 +550,38 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         from sse_handler import _post_rate_check_ip
         assert _post_rate_check_ip("") is False
 
+    @pytest.mark.asyncio
+    async def test_bbox_pan_resets_report_only_skip_anchor(self, client, fresh_registry):
+        """Regression: a pan to a new viewport in REPORT_ONLY ("Nur GPS")
+        showed no buses until the next 30s push. handle_viewport's fire_tick
+        bumps tick_seq (wakes the loop) but not push_seq, so the REPORT_ONLY
+        skip gate (push_seq - last_emitted < 3) suppressed the emit for the
+        freshly-panned viewport. Fix: a bbox change resets
+        last_emitted_push_seq to None so the next wake emits immediately."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        sub.pos_mode = "REPORT_ONLY"
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        # Establish an initial viewport + anchor (simulate a settled stream).
+        await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":49.20,"swLon":8.60,"neLat":49.30,"neLon":8.70,"posMode":"REPORT_ONLY"}',
+            headers=headers,
+        )
+        sub.last_emitted_push_seq = 100  # loop has emitted and re-anchored
+        # Pan to a clearly different quantized bbox.
+        await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":49.28,"swLon":8.60,"neLat":49.38,"neLon":8.70,"posMode":"REPORT_ONLY"}',
+            headers=headers,
+        )
+        # Anchor reset → the woken loop bypasses the 2-of-3 skip and emits
+        # the new viewport's buses immediately instead of waiting ~30s.
+        assert sub.last_emitted_push_seq is None
+
 
 class TestSelectIdempotentReclick:
     """Re-clicking the same selection (same jid) is a no-op: selection_seq
