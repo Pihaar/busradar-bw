@@ -17,7 +17,12 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from typing import cast
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from tick import TickTracker
 
 CACHE_TTL = 9.5
 STOPS_CACHE_TTL = 86400.0
@@ -29,8 +34,8 @@ _LINE_SEARCH_CACHE_TTL = 30
 
 class _Cache:
     def __init__(self, ttl: float = CACHE_TTL, daily_reset_hour: int | None = None):
-        self._data: dict | None = None
-        self._key: tuple | None = None
+        self._data: dict[str, Any] | None = None
+        self._key: tuple[Any, ...] | None = None
         self._ts: float = 0
         self._mono_ts: float = 0.0
         self._jitter: float = 0.0
@@ -52,13 +57,15 @@ class _Cache:
             return now >= reset_today and cached_dt < reset_today
         return (time.time() - self._ts) >= self._ttl
 
-    async def get(self, key: tuple) -> dict | None:
+    async def get(self, key: tuple[Any, ...]) -> dict[str, Any] | None:
         async with self._lock:
             if self._key == key and not self._is_expired():
                 return self._data
             return None
 
-    async def get_tick_aware(self, key: tuple, tracker) -> dict | None:
+    async def get_tick_aware(
+        self, key: tuple[Any, ...], tracker: TickTracker
+    ) -> dict[str, Any] | None:
         """Return cached data if key matches and tick-based expiry hasn't passed. Thread-safe."""
         async with self._lock:
             if self._key != key or self._data is None:
@@ -69,7 +76,7 @@ class _Cache:
                 return self._data
             return None
 
-    async def set(self, key: tuple, data: dict):
+    async def set(self, key: tuple[Any, ...], data: dict[str, Any]) -> None:
         async with self._lock:
             self._key = key
             self._data = data
@@ -78,7 +85,7 @@ class _Cache:
             self._jitter = random.uniform(0, 0.5)
 
     @property
-    def stale_data(self) -> dict | None:
+    def stale_data(self) -> dict[str, Any] | None:
         return self._data
 
 
@@ -88,38 +95,38 @@ class _Cache:
 cache = _Cache(ttl=CACHE_TTL)
 stops_cache = _Cache(daily_reset_hour=3)
 
-_journey_cache: dict = {}
+_journey_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _journey_cache_lock = asyncio.Lock()
-_inflight_journey: dict[str, asyncio.Future] = {}
+_inflight_journey: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
-_stationboard_cache: dict = {}
+_stationboard_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 _stationboard_cache_lock = asyncio.Lock()
-_inflight_stationboard: dict[tuple, asyncio.Future] = {}
+_inflight_stationboard: dict[tuple[Any, ...], asyncio.Future[dict[str, Any]]] = {}
 
 # Off-ring follow: real-GPS JourneyGeoPos lookup, keyed on the quantized ring
 # center so concurrent followers of nearby off-ring buses collapse onto one
 # upstream call and re-fetch is capped by the short TTL. Keeps the follow path
 # inside the same dedup the viewport/journey paths use (see sse_handler).
-_follow_geopos_cache: dict = {}
+_follow_geopos_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 _follow_geopos_lock = asyncio.Lock()
-_inflight_follow_geopos: dict[tuple, asyncio.Future] = {}
+_inflight_follow_geopos: dict[tuple[Any, ...], asyncio.Future[dict[str, Any]]] = {}
 
 # Viewport-keyed singleflight map for the SSE vehicles fetch.
-_inflight: dict[tuple, asyncio.Future] = {}
+_inflight: dict[tuple[Any, ...], asyncio.Future[dict[str, Any]]] = {}
 
-_line_search_cache: dict = {}
+_line_search_cache: dict[str, tuple[float, Any]] = {}
 
 
 async def cached_singleflight(
-    cache: dict,
+    cache: dict[Any, tuple[float, dict[str, Any]]],
     lock: asyncio.Lock,
-    inflight: dict,
-    key,
+    inflight: dict[Any, asyncio.Future[dict[str, Any]]],
+    key: Any,
     ttl: float,
     evict_at: int,
     evict_keep: int,
-    fetch_fn,
-) -> dict:
+    fetch_fn: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
     """Generic cached + singleflight wrapper. Used by the SSE-side fetch
     helpers so that concurrent subscribers asking for the same key share
     one upstream call. Returns the cached/fresh value or {"error": "upstream"}
@@ -138,7 +145,7 @@ async def cached_singleflight(
     """
     cached = cache.get(key)
     if cached and (time.time() - cached[0]) < ttl:
-        return cast("dict", cached[1])
+        return cached[1]
 
     # Singleflight: if a fetch is in flight, await it under shield so a
     # piggybacker's own cancellation can't cancel the shared future.
@@ -156,7 +163,7 @@ async def cached_singleflight(
             pass
 
     loop = asyncio.get_running_loop()
-    fut: asyncio.Future = loop.create_future()
+    fut: asyncio.Future[dict[str, Any]] = loop.create_future()
     inflight[key] = fut
     try:
         res = await fetch_fn()

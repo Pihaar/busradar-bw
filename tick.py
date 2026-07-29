@@ -19,7 +19,16 @@ import math
 import os
 import time
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fastapi import FastAPI
+
+    from hafas import _CircuitBreaker
+
+    BuildEnvelope = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 log = logging.getLogger("busradar")
 
@@ -92,7 +101,7 @@ class ClientActivity:
     between subscriber unsubscribe and next subscribe.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_ts: float = 0.0
         self._subscribers: int = 0
         # Lazily created so the class can be instantiated outside an
@@ -104,10 +113,10 @@ class ClientActivity:
             self.wakeup_event = asyncio.Event()
         return self.wakeup_event
 
-    def touch(self):
+    def touch(self) -> None:
         self.last_ts = _mono()
 
-    def subscriber_joined(self):
+    def subscriber_joined(self) -> None:
         was_zero = self._subscribers == 0
         self._subscribers += 1
         self.last_ts = _mono()
@@ -117,7 +126,7 @@ class ClientActivity:
             # fresh subscriber lands within a tick window, not 30 min.
             self._ensure_event().set()
 
-    def subscriber_left(self):
+    def subscriber_left(self) -> None:
         # Defensive against double-unsubscribe; never go negative.
         if self._subscribers > 0:
             self._subscribers -= 1
@@ -150,7 +159,7 @@ class TickTracker:
     """GPS-Tick-Erkennung. Single-Writer: nur tick_calibrator() ruft feed() auf.
     All timestamps are time.monotonic() based (NTP-immune)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_tick_ts: float | None = None
         self._last_positions: dict[str, tuple[int, int]] = {}
 
@@ -219,7 +228,7 @@ class TickTracker:
             return True
         return False
 
-    def _persist_tick(self, ts: float):
+    def _persist_tick(self, ts: float) -> None:
         # Stores wall-to-mono offset for cross-restart reconstruction.
         # Also stores wall_ts directly so external consumers (logger) can compute
         # tick alignment without monotonic-clock awareness.
@@ -240,7 +249,7 @@ class TickTracker:
         except Exception:
             log.debug("[tick_calibrator] failed to persist tick state")
 
-    def load_persisted(self):
+    def load_persisted(self) -> None:
         try:
             if not TICK_STATE_FILE.exists():
                 return
@@ -263,7 +272,12 @@ class TickTracker:
 _CALIB_SEM = asyncio.Semaphore(1)
 
 
-async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dict | None:
+async def _calib_fetch(
+    app: FastAPI,
+    breaker: _CircuitBreaker,
+    hafas_endpoint: str,
+    build_envelope: BuildEnvelope,
+) -> dict[str, Any] | None:
     if breaker.is_open:
         return None
     async with _CALIB_SEM:
@@ -286,17 +300,17 @@ async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dic
             svc = data.get("svcResL", [{}])[0]
             if svc.get("err") != "OK":
                 return None
-            return cast("dict", svc.get("res", {}))
+            return cast("dict[str, Any]", svc.get("res", {}))
         except Exception:
             return None
 
 
 async def _run_calibration(
-    app,
-    breaker,
+    app: FastAPI,
+    breaker: _CircuitBreaker,
     tracker: TickTracker,
     hafas_endpoint: str,
-    build_envelope,
+    build_envelope: BuildEnvelope,
     scan_seconds: int,
     min_changed: int,
 ) -> bool:
@@ -308,7 +322,7 @@ async def _run_calibration(
         if res is None:
             await asyncio.sleep(1.0)
             continue
-        positions = {}
+        positions: dict[str, tuple[int, int]] = {}
         for j in res.get("jnyL", []):
             pos = j.get("pos") or {}
             if pos.get("x") and pos.get("y"):
@@ -327,13 +341,13 @@ async def _run_calibration(
 
 
 async def tick_calibrator(
-    app,
-    breaker,
+    app: FastAPI,
+    breaker: _CircuitBreaker,
     tracker: TickTracker,
     activity: ClientActivity,
     hafas_endpoint: str,
-    build_envelope,
-):
+    build_envelope: BuildEnvelope,
+) -> None:
     calib_failures = 0
     log.info("[tick_calibrator] started, waiting for first client")
     try:
@@ -478,7 +492,7 @@ def _push_grid_fire(pred: float, now: float) -> tuple[float, bool]:
     return wait, aligned
 
 
-async def sse_push_loop(activity: ClientActivity, tracker: TickTracker):
+async def sse_push_loop(activity: ClientActivity, tracker: TickTracker) -> None:
     """SSE broadcast pacemaker. Fires fanout.fire_push_tick() on a 10 s grid
     while at least one subscriber is connected, so CALC-mode clients receive a
     freshly-computed interpolated position on that cadence. When no subscribers

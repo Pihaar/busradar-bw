@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import cast
+from typing import Any, cast
 
 import httpx
 from fastapi import FastAPI
@@ -61,7 +61,7 @@ LID_PATTERN = re.compile(r"\AA=[0-9]+@[A-Za-z0-9_#|=.\-,:/(): @äöüÄÖÜß×]
 log = logging.getLogger("busradar")
 
 
-def _build_hafas_envelope(method: str, req: dict) -> dict:
+def _build_hafas_envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
     return {
         "auth": {"type": "AID", "aid": AUTH_AID},
         "client": {"type": "AND", "id": CLIENT_ID, "v": CLIENT_VERSION, "name": CLIENT_NAME},
@@ -73,17 +73,17 @@ def _build_hafas_envelope(method: str, req: dict) -> dict:
 
 
 class _CircuitBreaker:
-    def __init__(self):
+    def __init__(self) -> None:
         self.failures = 0
         self.last_failure_time = 0.0
 
-    def record_failure(self):
+    def record_failure(self) -> None:
         self.failures += 1
         self.last_failure_time = time.time()
         if self.failures == MAX_CONSECUTIVE_FAILURES:
             log.warning("[circuit_breaker] OPEN after %d failures", self.failures)
 
-    def record_success(self):
+    def record_success(self) -> None:
         if self.failures >= MAX_CONSECUTIVE_FAILURES:
             log.info("[circuit_breaker] CLOSED, upstream recovered")
         self.failures = 0
@@ -99,7 +99,7 @@ class _CircuitBreaker:
 breaker = _CircuitBreaker()
 
 
-async def _hafas_call_via_app(app: FastAPI, method: str, req: dict) -> dict:
+async def _hafas_call_via_app(app: FastAPI, method: str, req: dict[str, Any]) -> dict[str, Any]:
     """Call HAFAS using the app-state httpx client. The primary entry point —
     used by all SSE-side helpers that don't have a per-request object.
 
@@ -135,7 +135,7 @@ async def _hafas_call_via_app(app: FastAPI, method: str, req: dict) -> dict:
             return {"error": "upstream_error", "detail": "HAFAS service error"}
 
         breaker.record_success()
-        return cast("dict", svc_res.get("res", {}))
+        return cast("dict[str, Any]", svc_res.get("res", {}))
 
     except httpx.TimeoutException:
         breaker.record_failure()

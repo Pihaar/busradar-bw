@@ -14,11 +14,14 @@ import logging
 import math
 import os
 import time
+from collections.abc import Awaitable
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, TypeVar, cast
 
 import httpx
+
+_T = TypeVar("_T")
 
 HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
 AUTH_AID = "YOUR_AID"
@@ -45,7 +48,7 @@ GRID_STEP_KM = 5
 LOG = logging.getLogger("stops_builder")
 
 
-def _build_envelope(method: str, req: dict) -> dict:
+def _build_envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
     return {
         "auth": {"type": "AID", "aid": AUTH_AID},
         "client": {"type": "AND", "id": CLIENT_ID, "v": CLIENT_VERSION, "name": CLIENT_NAME},
@@ -56,7 +59,9 @@ def _build_envelope(method: str, req: dict) -> dict:
     }
 
 
-async def _hafas_call(client: httpx.AsyncClient, method: str, req: dict) -> dict | None:
+async def _hafas_call(
+    client: httpx.AsyncClient, method: str, req: dict[str, Any]
+) -> dict[str, Any] | None:
     payload = _build_envelope(method, req)
     try:
         resp = await client.post(HAFAS_ENDPOINT, json=payload)
@@ -67,7 +72,7 @@ async def _hafas_call(client: httpx.AsyncClient, method: str, req: dict) -> dict
         svc = data.get("svcResL", [{}])[0]
         if svc.get("err") != "OK":
             return None
-        return cast("dict", svc.get("res", {}))
+        return cast("dict[str, Any]", svc.get("res", {}))
     except Exception as e:
         LOG.warning("HAFAS call failed: %s", e)
         return None
@@ -75,7 +80,7 @@ async def _hafas_call(client: httpx.AsyncClient, method: str, req: dict) -> dict
 
 async def _fetch_stops_in_radius(
     client: httpx.AsyncClient, lat: float, lon: float, radius: int
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     req = {
         "ring": {
             "cCrd": {"x": round(lon * 1_000_000), "y": round(lat * 1_000_000)},
@@ -87,10 +92,10 @@ async def _fetch_stops_in_radius(
     res = await _hafas_call(client, "LocGeoPos", req)
     if not res:
         return []
-    return cast("list[dict]", res.get("locL", []))
+    return cast("list[dict[str, Any]]", res.get("locL", []))
 
 
-async def _discover_platforms(client: httpx.AsyncClient, lid: str) -> list[dict]:
+async def _discover_platforms(client: httpx.AsyncClient, lid: str) -> list[dict[str, Any]]:
     platforms = []
     seen = set()
 
@@ -160,7 +165,7 @@ def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return math.sqrt(dlat * dlat + dlon * dlon)
 
 
-def _parse_stop(loc: dict) -> dict | None:
+def _parse_stop(loc: dict[str, Any]) -> dict[str, Any] | None:
     crd = loc.get("crd", {})
     if crd.get("x", 0) == 0 or crd.get("y", 0) == 0:
         return None
@@ -185,7 +190,7 @@ def _parse_stop(loc: dict) -> dict | None:
     }
 
 
-async def build_stops_cache():
+async def build_stops_cache() -> dict[str, Any] | None:
     LOG.info("Building stops cache (concurrency=%d)...", HAFAS_CONCURRENCY)
     start = time.time()
 
@@ -198,15 +203,15 @@ async def build_stops_cache():
     ) as client:
         sem = asyncio.Semaphore(HAFAS_CONCURRENCY)
 
-        async def _bounded(coro):
+        async def _bounded(coro: Awaitable[_T]) -> _T:
             async with sem:
                 return await coro
 
-        all_stops = {}
+        all_stops: dict[str, dict[str, Any]] = {}
 
         # --- Stage 1: Grid scan ---
         step_deg = GRID_STEP_KM / 111.0
-        grid_points = []
+        grid_points: list[tuple[float, float]] = []
         lat = GRID_LAT_MIN
         while lat <= GRID_LAT_MAX:
             lon = GRID_LON_MIN
@@ -227,7 +232,7 @@ async def build_stops_cache():
             if isinstance(r, Exception):
                 errors1 += 1
                 continue
-            for loc in cast("list", r):
+            for loc in cast("list[dict[str, Any]]", r):
                 stop = _parse_stop(loc)
                 if stop and stop["extId"] not in all_stops:
                     all_stops[stop["extId"]] = stop
@@ -244,7 +249,7 @@ async def build_stops_cache():
         discover_stops = list(all_stops.values())
         done = [0]
 
-        async def _platforms_task(stop):
+        async def _platforms_task(stop: dict[str, Any]) -> None:
             sub_stops = await _bounded(_discover_platforms(client, stop["lid"]))
             for sub in sub_stops:
                 if sub["extId"] not in all_stops:
@@ -306,7 +311,9 @@ async def build_stops_cache():
     return cache_data
 
 
-async def _find_redundant_stops_parallel(client, sem, all_stops):
+async def _find_redundant_stops_parallel(
+    client: httpx.AsyncClient, sem: asyncio.Semaphore, all_stops: dict[str, dict[str, Any]]
+) -> set[str]:
     """Parallel version of redundancy check."""
     stops_list = list(all_stops.values())
     platform_stops = [s for s in stops_list if s["platform"]]
@@ -328,9 +335,9 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
             candidates.append((s, nearby_plats))
 
     LOG.info("Checking %d redundant stop candidates...", len(candidates))
-    redundant = set()
+    redundant: set[str] = set()
 
-    async def _check_redundant(s, plats):
+    async def _check_redundant(s: dict[str, Any], plats: list[dict[str, Any]]) -> None:
         async with sem:
             lid = f"A=1@L={s['extId']}@"
             req = {
@@ -374,7 +381,7 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
     return redundant
 
 
-def load_stops_cache() -> dict | None:
+def load_stops_cache() -> dict[str, Any] | None:
     """Load whatever stops cache exists. The "stale after 3am" cutoff that
     used to live here forced a synchronous-feeling startup rebuild every
     time the server restarted after 3am — which fans out hundreds of
@@ -389,13 +396,13 @@ def load_stops_cache() -> dict | None:
     if not CACHE_FILE.exists():
         return None
     try:
-        return cast("dict", json.loads(CACHE_FILE.read_text(encoding="utf-8")))
+        return cast("dict[str, Any]", json.loads(CACHE_FILE.read_text(encoding="utf-8")))
     except Exception as e:
         LOG.warning("stops_cache.json unreadable, treating as missing: %s", e)
         return None
 
 
-def is_stops_cache_stale(cached: dict | None = None) -> bool:
+def is_stops_cache_stale(cached: dict[str, Any] | None = None) -> bool:
     """True iff the cache was built before the most recent 3am tick (or is
     missing entirely). Pass the dict returned by load_stops_cache() to
     avoid a second file read (and the TOCTOU window where the daily
@@ -416,7 +423,7 @@ def is_stops_cache_stale(cached: dict | None = None) -> bool:
         return True
 
 
-async def schedule_daily_rebuild():
+async def schedule_daily_rebuild() -> None:
     while True:
         now = datetime.now()
         next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)

@@ -106,7 +106,7 @@ class StationSelection(BaseModel):
     def event_name(self) -> str:
         return "stationboard"
 
-    def cache_key(self) -> tuple:
+    def cache_key(self) -> tuple[str, str, int]:
         return (self.lid, self.board_type, self.dur)
 
 

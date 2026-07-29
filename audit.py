@@ -21,7 +21,7 @@ _audit_log_last: dict[str, float] = {}
 _AUDIT_RATE = 60.0
 
 
-def _audit(reason: str, ip: str, **extra) -> None:
+def _audit(reason: str, ip: str, **extra: object) -> None:
     """Rate-limit audit-warnings to 1/min per (reason, ip-hash)."""
     now = time.monotonic()
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:8] if ip else "noip"

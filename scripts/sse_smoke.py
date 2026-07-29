@@ -24,6 +24,7 @@ import json
 import resource
 import sys
 import time
+from typing import Any
 
 
 def _get_self_rss_kb() -> int:
@@ -31,7 +32,9 @@ def _get_self_rss_kb() -> int:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
-async def run_one(client_id: int, base_url: str, duration_s: float, results: list) -> None:
+async def run_one(
+    client_id: int, base_url: str, duration_s: float, results: list[dict[str, Any]]
+) -> None:
     """Open one EventSource, send a viewport POST, count received events."""
     try:
         import httpx
@@ -42,7 +45,7 @@ async def run_one(client_id: int, base_url: str, duration_s: float, results: lis
     start = time.monotonic()
     first_event_ts = None
     event_count = 0
-    cookie_jar: dict = {}
+    cookie_jar: dict[str, str] = {}
     error_msg = None
 
     try:
@@ -111,7 +114,7 @@ async def run_one(client_id: int, base_url: str, duration_s: float, results: lis
     )
 
 
-async def main():
+async def main() -> None:
     p = argparse.ArgumentParser(description="SSE smoke test for /api/stream/")
     p.add_argument("--url", required=True, help="Base URL, e.g. https://busradar.pihaar.de")
     p.add_argument("--clients", type=int, default=50, help="Concurrent EventSource connections")
@@ -126,7 +129,7 @@ async def main():
     print(f"smoke: starting {args.clients} clients against {args.url} for {args.duration}s")
     print(f"smoke: RSS baseline = {rss_before_kb} KiB")
 
-    results: list = []
+    results: list[dict[str, Any]] = []
     tasks = [
         asyncio.create_task(run_one(i, args.url.rstrip("/"), args.duration, results))
         for i in range(args.clients)

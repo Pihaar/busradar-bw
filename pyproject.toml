@@ -76,23 +76,29 @@ exclude_dirs = ["tests", "node_modules", "coverage", ".playwright-mcp"]
 skips = ["B311", "B110", "B404"]
 
 [tool.mypy]
-# Static type checking. Strong but reachable: not global --strict (which flags
-# ~190 missing annotations across the codebase and is a separate, later step).
-# This config catches real defects (None-derefs, bad returns, redundant casts)
-# without demanding a full annotation sweep.
+# Static type checking at full `--strict` on the shipped modules: every
+# function is annotated and every generic is parametrized, so a missing or
+# bare-`dict` annotation fails the run rather than passing silently.
 python_version = "3.12"       # dev floor; prod runs 3.13
+strict = true
 ignore_missing_imports = true # third-party stubs not installed in this env
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_return_any = true
-no_implicit_optional = true
-check_untyped_defs = true     # type-check bodies of unannotated functions too
+# proxy.py deliberately re-exports submodule symbols (audit/caches/hafas/…) so
+# the test suite can keep doing `from proxy import X` and patch
+# `proxy._hafas_call_via_app`; sse_handler reaches the same symbol via
+# `import proxy as _proxy`. Under strict's no-implicit-reexport that attribute
+# access is flagged, so implicit re-export stays on for this intentional shape.
+implicit_reexport = true
 
 [[tool.mypy.overrides]]
 # Offline analysis CLIs: throwaway reporting tooling built on dynamically-shaped
-# dicts. check_untyped_defs would demand annotations that add no safety here.
+# dicts. Full strict annotation coverage there adds no safety, so relax the
+# annotation-completeness checks (keep the rest of strict) for these two.
 module = ["line_analyze", "line_gps_analyze"]
 check_untyped_defs = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
 
 [tool.coverage.run]
 branch = true

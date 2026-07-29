@@ -22,16 +22,18 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 import fanout
 
@@ -198,7 +200,7 @@ tick_tracker = TickTracker()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Init-order guard: tick.py imports fanout and calls fanout.fire_tick()
     # from tick_calibrator. If fanout's module-level state was somehow not
     # set up before that fires, fail loud rather than silently miss ticks.
@@ -236,7 +238,7 @@ async def lifespan(app: FastAPI):
     # All long-lived background tasks are tracked so the lifespan cancels
     # them cleanly on shutdown. Untracked tasks otherwise ran past
     # app.state.client.aclose() and logged "client closed" tracebacks.
-    background_tasks: list[asyncio.Task] = []
+    background_tasks: list[asyncio.Task[None]] = []
 
     if skip_rebuild:
         log.warning("BUSRADAR_SKIP_STOPS_REBUILD=1 set — skipping startup stops rebuild")
@@ -293,7 +295,7 @@ async def lifespan(app: FastAPI):
     log.info("httpx client closed")
 
 
-async def _build_stops_on_startup(app: FastAPI):
+async def _build_stops_on_startup(app: FastAPI) -> None:
     import time as _t
 
     from stops_builder import build_stops_cache
@@ -304,7 +306,9 @@ async def _build_stops_on_startup(app: FastAPI):
         data = await build_stops_cache()
         app.state.stops_data = data
         log.info(
-            "Startup stops build complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0
+            "Startup stops build complete: %d stops in %.0fs",
+            cast("dict[str, Any]", data).get("count", 0),
+            _t.time() - t0,
         )
     except Exception as e:
         log.error("Startup stops build failed after %.0fs: %s", _t.time() - t0, e)
@@ -312,7 +316,7 @@ async def _build_stops_on_startup(app: FastAPI):
         app.state.stops_rebuilding = False
 
 
-async def schedule_daily_rebuild_wrapper(app: FastAPI):
+async def schedule_daily_rebuild_wrapper(app: FastAPI) -> None:
     import time as _t
 
     from stops_builder import build_stops_cache
@@ -334,7 +338,7 @@ async def schedule_daily_rebuild_wrapper(app: FastAPI):
             app.state.stops_data = data
             log.info(
                 "Daily stops rebuild complete: %d stops in %.0fs",
-                data.get("count", 0),
+                cast("dict[str, Any]", data).get("count", 0),
                 _t.time() - t0,
             )
         except Exception as e:
@@ -347,7 +351,7 @@ app = FastAPI(title="Busradar BW", lifespan=lifespan)
 
 
 @app.exception_handler(Exception)
-async def _sanitized_exception_handler(request: Request, exc: Exception):
+async def _sanitized_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Generic catch-all. Logs the traceback server-side but never returns
     it to the client (SEC-236, no information disclosure). Validation
     errors and HTTPException still get FastAPI's normal handling — this
@@ -362,7 +366,7 @@ async def _sanitized_exception_handler(request: Request, exc: Exception):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         # nginx (the edge) is the single wire emitter of these three: it strips
         # the app's copy via proxy_hide_header and re-adds its own, so responses
@@ -400,7 +404,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-def _calc_delay(stop: dict) -> int | None:
+def _calc_delay(stop: dict[str, Any]) -> int | None:
     for prefix in ("d", "a"):
         time_s = stop.get(f"{prefix}TimeS")
         time_r = stop.get(f"{prefix}TimeR")
@@ -419,7 +423,7 @@ def _calc_delay(stop: dict) -> int | None:
     return None
 
 
-def _flatten_vehicles(res: dict) -> list[dict]:
+def _flatten_vehicles(res: dict[str, Any]) -> list[dict[str, Any]]:
     common = res.get("common", {})
     prod_l = common.get("prodL", [])
     loc_l = common.get("locL", [])
@@ -486,7 +490,7 @@ def _flatten_vehicles(res: dict) -> list[dict]:
     return vehicles
 
 
-async def _discover_platforms(request: Request, lid: str) -> list[dict]:
+async def _discover_platforms(request: Request, lid: str) -> list[dict[str, Any]]:
     """Discover sub-platforms by querying DEP+ARR StationBoard and extracting locL entries."""
     platforms = []
     seen = set()
@@ -557,7 +561,7 @@ async def get_stops(
     lat: float = Query(default=49.2944, ge=47.0, le=55.0),
     lon: float = Query(default=8.6434, ge=5.0, le=16.0),
     radius: int = Query(default=5000, ge=100, le=20000),
-):
+) -> dict[str, Any]:
     import math
 
     stops_data = request.app.state.stops_data
@@ -580,7 +584,7 @@ async def search_stops(
     q: str = Query(min_length=2, max_length=100),
     lat: float = Query(default=None),
     lon: float = Query(default=None),
-):
+) -> dict[str, Any]:
     import math
 
     query_lower = q.lower()
@@ -620,8 +624,8 @@ class JourneyRequest(BaseModel):
         return v
 
 
-@app.post("/api/journey")
-async def get_journey(request: Request, body: JourneyRequest):
+@app.post("/api/journey", response_model=None)
+async def get_journey(request: Request, body: JourneyRequest) -> dict[str, Any] | JSONResponse:
     # Per-IP rate-limit so the unauthenticated POST surface can't be flooded.
     # Opt-in burst 10/s per IP (canonicalized) — matches SSE sidecar gates.
     if not _rate_check_request(request, sub=None):
@@ -686,8 +690,10 @@ class StationBoardRequest(BaseModel):
         return v
 
 
-@app.post("/api/stationboard")
-async def get_stationboard(request: Request, body: StationBoardRequest):
+@app.post("/api/stationboard", response_model=None)
+async def get_stationboard(
+    request: Request, body: StationBoardRequest
+) -> dict[str, Any] | JSONResponse:
     if not _rate_check_request(request, sub=None):
         return JSONResponse(
             status_code=429,
@@ -723,7 +729,7 @@ async def get_stationboard(request: Request, body: StationBoardRequest):
 
 
 @app.get("/api/health")
-async def health(request: Request):
+async def health(request: Request) -> dict[str, Any]:
     ts = tick_tracker.last_tick_ts
     mono_now = time.monotonic()
     result = {
@@ -748,11 +754,11 @@ async def health(request: Request):
     return result
 
 
-@app.get("/api/line_search")
+@app.get("/api/line_search", response_model=None)
 async def line_search(
     request: Request,
     q: str = Query(min_length=1, max_length=10),
-):
+) -> dict[str, Any] | JSONResponse:
     """Search for active bus lines BW-wide."""
     if not _rate_check_request(request, sub=None):
         return JSONResponse(
@@ -824,7 +830,7 @@ class TemplatedAsset:
         version: str,
         media_type: str,
         fallback_body: str,
-        extra_headers: dict | None = None,
+        extra_headers: dict[str, str] | None = None,
     ):
         self.path = path
         self.media_type = media_type
@@ -905,32 +911,32 @@ _INDEX_RENDERED = _index_asset.rendered
 
 
 @app.get("/api/stream/")
-async def sse_stream(request: Request):
+async def sse_stream(request: Request) -> Response:
     return await handle_sse_stream(request, _VERSION)
 
 
 @app.post("/api/stream/viewport")
-async def stream_viewport(request: Request):
+async def stream_viewport(request: Request) -> JSONResponse:
     return await handle_viewport(request)
 
 
 @app.post("/api/stream/select")
-async def stream_select(request: Request):
+async def stream_select(request: Request) -> JSONResponse:
     return await handle_select(request)
 
 
 @app.get("/sw.js")
-async def serve_sw():
+async def serve_sw() -> Response:
     return _sw_asset.response()
 
 
 @app.get("/")
-async def serve_root():
+async def serve_root() -> Response:
     return _index_asset.response()
 
 
 @app.get("/index.html")
-async def serve_index():
+async def serve_index() -> Response:
     return _index_asset.response()
 
 

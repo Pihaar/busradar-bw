@@ -24,11 +24,20 @@ import os
 import random
 import secrets
 import time
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import datetime
+from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 import fanout
 from audit import _audit
@@ -125,20 +134,20 @@ class ViewportPayload(BaseModel):
 
     @field_validator("neLat")
     @classmethod
-    def _check_lat_ordering(cls, v, info):
+    def _check_lat_ordering(cls, v: float, info: ValidationInfo) -> float:
         if "swLat" in info.data and v <= info.data["swLat"]:
             raise ValueError("neLat must be greater than swLat")
         return v
 
     @field_validator("neLon")
     @classmethod
-    def _check_lon_ordering(cls, v, info):
+    def _check_lon_ordering(cls, v: float, info: ValidationInfo) -> float:
         if "swLon" in info.data and v <= info.data["swLon"]:
             raise ValueError("neLon must be greater than swLon")
         return v
 
 
-def _format_sse(event: str | None, data: dict) -> str:
+def _format_sse(event: str | None, data: dict[str, Any]) -> str:
     """Serialize one SSE message. `event` may be None for default 'message',
     `data` is always JSON-encoded so the client side parses uniformly.
     Last-Event-ID is intentionally not supported — every reconnect is a
@@ -152,7 +161,7 @@ def _format_sse(event: str | None, data: dict) -> str:
     return "\n".join(parts)
 
 
-async def _noop_async(value):
+async def _noop_async[T](value: T) -> T:
     """asyncio.gather() requires actual coroutines; this returns the constant
     value so the parallel fetch shape stays clean when no fetch is needed."""
     return value
@@ -168,7 +177,7 @@ async def _fetch_vehicles_for_viewport(
     app: FastAPI,
     viewport: tuple[float, float, float, float],
     posMode: str,
-) -> dict:
+) -> dict[str, Any]:
     """Fetch one HAFAS snapshot for the given viewport. Uses bbox quantization
     so subscribers within ~1.1 km share the singleflight inflight key; under
     the same key, exactly one upstream HAFAS call runs regardless of how many
@@ -216,7 +225,7 @@ async def _fetch_vehicles_for_viewport(
             if _inflight.get(key) is existing:
                 _inflight.pop(key, None)
 
-    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
     _inflight[key] = fut
     try:
         # Cap _inflight via simple LRU-like eviction so a viewport-spam attack
@@ -318,7 +327,7 @@ _POST_RATE_SUB_REFILL = 5.0  # tokens/s
 _POST_RATE_PER_IP_MAX_KEYS = 4096
 
 
-def _post_rate_check(sub) -> bool:
+def _post_rate_check(sub: fanout.Subscriber) -> bool:
     """Returns True if a POST is allowed. State is per-Subscriber so two
     different IPs / cookies have independent buckets."""
     now = time.monotonic()
@@ -372,7 +381,7 @@ def _post_rate_check_ip(ip: str) -> bool:
     return False
 
 
-def _rate_check_request(request: Request, sub=None) -> bool:
+def _rate_check_request(request: Request, sub: fanout.Subscriber | None = None) -> bool:
     """Combined per-IP + per-subscriber rate-check for a POST. The IP is
     canonicalized so an IPv6 attacker with a routed /64 doesn't get 2^64
     fresh buckets. When `sub` is None (legacy unauth endpoints) only the
@@ -402,7 +411,7 @@ async def _read_body_with_limit(request: Request, limit: int) -> bytes | None:
     return bytes(buf)
 
 
-async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
+async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict[str, Any]:
     """Shared HAFAS journey fetch with cache. Singleflight collapses concurrent
     fetches for the same jid across subscribers onto a single upstream call."""
     # Resolve `_hafas_call_via_app` via the proxy module so that tests
@@ -425,7 +434,7 @@ async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
 
 async def _fetch_stationboard_for_subscriber(
     app: FastAPI, lid: str, board_type: str = "DEP", dur: int = 60
-) -> dict:
+) -> dict[str, Any]:
     """Shared HAFAS stationboard fetch with cache. Singleflight by
     (lid, board_type, dur) so concurrent subscribers for the same stop and
     side share whenever they want the same window. ARR pushes are enabled
@@ -471,7 +480,7 @@ class SelectPayload(BaseModel):
 
     @field_validator("selection")
     @classmethod
-    def validate_selection(cls, v):
+    def validate_selection(cls, v: fanout.Selection | None) -> fanout.Selection | None:
         if v is None:
             return None
         if isinstance(v, fanout.JourneySelection) and not JID_PATTERN.match(v.jid):
@@ -484,7 +493,9 @@ class SelectPayload(BaseModel):
 # Selection→fetcher dispatch table. Single source of truth for adding new
 # selection types — register here + add the Pydantic model in fanout.py and
 # the SSE loop picks it up via type(sel).
-async def _fetch_for_selection(app: FastAPI, sel: fanout.Selection) -> tuple[str, dict]:
+async def _fetch_for_selection(
+    app: FastAPI, sel: fanout.Selection
+) -> tuple[str | None, dict[str, Any] | None]:
     """Run the right HAFAS fetch for `sel` and return (event_name, payload).
     On upstream error returns ("error", {...}) so the caller can emit a
     sanitized error event without leaking taxonomy."""
@@ -509,7 +520,12 @@ _FOLLOW_QUANTIZE = 5000  # ~0.005 deg grid for the follow-lookup cache key
 _FOLLOW_GEOPOS_TTL = 8.0  # short TTL: real GPS updates ~30s; caps re-fetch + dedups followers
 
 
-async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
+async def _real_pos_for_offring_follow(
+    app: FastAPI,
+    jid: str,
+    detail_res: tuple[str, dict[str, Any]],
+    snap: object,
+) -> tuple[str, dict[str, Any]]:
     """REPORT_ONLY follow: JourneyDetails only returns an INTERPOLATED position.
     When the followed bus is OUTSIDE the viewport ring (so its real GPS position
     isn't in `snap`, the viewport vehicles payload), do one small REPORT_ONLY
@@ -546,7 +562,7 @@ async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
 
     import proxy as _proxy
 
-    async def _fetch():
+    async def _fetch() -> dict[str, Any]:
         return await _proxy._hafas_call_via_app(
             app,
             "JourneyGeoPos",
@@ -597,7 +613,7 @@ def _report_only_should_emit(now_tick_push: int, last: int | None) -> bool:
     return last is None or now_tick_push != last
 
 
-async def handle_sse_stream(request: Request, app_version: str):
+async def handle_sse_stream(request: Request, app_version: str) -> Response:
     """SSE endpoint handler. Subscribers receive `vehicles` events whenever a
     HAFAS tick is detected, plus `connected` count updates and `:keepalive`
     comments. State changes (viewport, selection) come in via the sidecar
@@ -653,7 +669,7 @@ async def handle_sse_stream(request: Request, app_version: str):
     # and stopped probing entirely, freezing the live view).
     client_activity.subscriber_joined()
 
-    async def event_generator():
+    async def event_generator() -> AsyncGenerator[str, None]:
         try:
             # First event: client knows the stream is live + the app version
             # + the SSE protocol version (incremented on incompatible changes).
@@ -726,7 +742,7 @@ async def handle_sse_stream(request: Request, app_version: str):
                 sel = sub.selection
                 sel_seq_at_start = sub.selection_seq
 
-                tasks: list = []
+                tasks: list[Awaitable[Any]] = []
                 tasks.append(
                     _fetch_vehicles_for_viewport(request.app, sub.viewport, sub.pos_mode)
                     if sub.viewport
@@ -860,7 +876,7 @@ async def handle_sse_stream(request: Request, app_version: str):
     return response
 
 
-async def handle_viewport(request: Request):
+async def handle_viewport(request: Request) -> JSONResponse:
     """Update the viewport the subscriber's next tick should fetch."""
     raw = await _read_body_with_limit(request, SSE_BODY_LIMIT)
     if raw is None:
@@ -921,7 +937,7 @@ async def handle_viewport(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-async def handle_select(request: Request):
+async def handle_select(request: Request) -> JSONResponse:
     """Tag a subscriber with a current journey or stationboard. The SSE loop
     then ships journey/stationboard events on every tick alongside vehicles
     until the subscriber selects 'none' or disconnects."""

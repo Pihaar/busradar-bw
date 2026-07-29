@@ -32,7 +32,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 
@@ -58,7 +58,7 @@ logging.basicConfig(
 log = logging.getLogger("line_logger")
 
 
-def envelope(method: str, req: dict) -> dict:
+def envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
     return {
         "auth": {"type": "AID", "aid": AUTH_AID},
         "client": {"type": "AND", "id": "DB-REGIO", "v": "3000000", "name": "DB Busradar BW"},
@@ -88,7 +88,7 @@ def get_tick_aligned_ts(now_wall: float) -> tuple[float, float | None]:
         return now_wall, None
 
 
-async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict]:
+async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict[str, Any]]:
     """Fetch all active vehicles in the ring, return flattened list."""
     payload = envelope(
         "JourneyGeoPos",
@@ -126,7 +126,7 @@ async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict]:
     return out
 
 
-async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict | None:
+async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict[str, Any] | None:
     """Fetch full journey with stop list."""
     payload = envelope("JourneyDetails", {"jid": jid, "getPolyline": False})
     try:
@@ -135,7 +135,7 @@ async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict | N
         data = resp.json()
         if data.get("err") != "OK":
             return None
-        return cast("dict", data.get("svcResL", [{}])[0].get("res", {}))
+        return cast("dict[str, Any]", data.get("svcResL", [{}])[0].get("res", {}))
     except Exception as e:
         log.warning("Journey fetch failed for %s: %s", jid[:30], type(e).__name__)
         return None
@@ -158,7 +158,7 @@ def calc_delay(time_s: str | None, time_r: str | None) -> int | None:
         return None
 
 
-def extract_stops(journey_res: dict) -> list[dict]:
+def extract_stops(journey_res: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten journey stops into our log schema."""
     journey = journey_res.get("journey", {})
     common = journey_res.get("common", {})
@@ -194,7 +194,7 @@ def log_file_for(date_str: str) -> Path:
     return LOG_DIR / f"line-{'_'.join(TARGET_LINES)}-{date_str}.jsonl"
 
 
-def write_final(record: dict) -> None:
+def write_final(record: dict[str, Any]) -> None:
     date = record["date"]
     path = log_file_for(date)
     with path.open("a", encoding="utf-8") as f:
@@ -208,9 +208,9 @@ def write_final(record: dict) -> None:
     )
 
 
-async def run():
+async def run() -> None:
     tracked: dict[
-        str, dict
+        str, dict[str, Any]
     ] = {}  # jid -> {first_seen, last_seen, line, direction, latest_stops, track, date}
     last_seen_in_api: dict[str, float] = {}
 
@@ -305,7 +305,7 @@ async def run():
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-def main():
+def main() -> None:
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
