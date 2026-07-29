@@ -5,7 +5,7 @@
  * not-started) and applyPushedStationboard (de-dup, lid mismatch, DEP/ARR
  * dispatch, auto-expand guard).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Stub leaflet globals before any module that imports map.js sees them.
 globalThis.L = {
@@ -39,7 +39,7 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload, _resendActiveSelection } = await import('../../static/refresh.js');
+const { _applyJourneyPayload, _resendActiveSelection, _followPanTo } = await import('../../static/refresh.js');
 const { state } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
 
@@ -273,5 +273,92 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     state.selectedStop = { name: 'no-lid-stop' };
     _resendActiveSelection();
     expect(api.selectStream).not.toHaveBeenCalled();
+  });
+});
+
+describe('_followPanTo + journey-driven follow (follow bus out of the viewport)', () => {
+  let panTo, setView, moveendCb, dist;
+  beforeEach(() => {
+    state._followPanning = false;
+    state._navigating = false;
+    state._followPanTimeout = null;
+    state.followBus = false;
+    state.selectedJid = null;
+    state.vehicles = new Map();
+    state.serverTimeStamp = Date.now();
+    state.serverTimeMin = 720;
+    panTo = vi.fn(); setView = vi.fn(); moveendCb = null; dist = 0;
+    uiMock.updateJourneyStopDelays.mockClear();
+    uiMock.drawRoute.mockClear();
+    state.map = {
+      getCenter: () => ({ distanceTo: () => dist }),
+      getZoom: () => 15,
+      panTo,
+      setView,
+      once: (ev, cb) => { moveendCb = cb; },
+    };
+  });
+  afterEach(() => { state.map = null; state.followBus = false; state.selectedJid = null; });
+
+  it('panTo for a moderate distance and clears _followPanning on moveend', () => {
+    dist = 500;
+    _followPanTo(49.5, 8.6);
+    expect(panTo).toHaveBeenCalledOnce();
+    expect(state._followPanning).toBe(true);
+    moveendCb();
+    expect(state._followPanning).toBe(false);
+  });
+
+  it('snaps with setView (no animation) for a large distance', () => {
+    dist = 5000;
+    _followPanTo(49.9, 8.6);
+    expect(setView).toHaveBeenCalledOnce();
+    expect(panTo).not.toHaveBeenCalled();
+    expect(state._followPanning).toBe(false);
+  });
+
+  it('no-op when the target is within 5 m', () => {
+    dist = 3;
+    _followPanTo(49.5, 8.6);
+    expect(panTo).not.toHaveBeenCalled();
+    expect(setView).not.toHaveBeenCalled();
+  });
+
+  it('no-op while a pan is already in flight', () => {
+    dist = 500;
+    state._followPanning = true;
+    _followPanTo(49.5, 8.6);
+    expect(panTo).not.toHaveBeenCalled();
+  });
+
+  it('no-op during a URL-restore navigation', () => {
+    dist = 500;
+    state._navigating = true;
+    _followPanTo(49.5, 8.6);
+    expect(panTo).not.toHaveBeenCalled();
+  });
+
+  it('no-op for null coordinates', () => {
+    dist = 500;
+    _followPanTo(null, 8.6);
+    expect(panTo).not.toHaveBeenCalled();
+  });
+
+  it('_applyJourneyPayload pans to the journey position when following, even off-ring', () => {
+    dist = 800;
+    state.followBus = true;
+    state.selectedJid = 'JF';
+    // Bus is NOT in state.vehicles (it left the ring/viewport) — the journey
+    // payload still carries its position and must drive the follow-pan.
+    _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
+    expect(panTo).toHaveBeenCalledOnce();
+  });
+
+  it('_applyJourneyPayload does NOT pan when not following', () => {
+    dist = 800;
+    state.followBus = false;
+    state.selectedJid = 'JF';
+    _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
+    expect(panTo).not.toHaveBeenCalled();
   });
 });

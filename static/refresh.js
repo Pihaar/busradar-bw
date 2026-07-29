@@ -427,6 +427,31 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
+// Pan the map to keep the followed bus centered. Shared by the vehicles
+// handler (in-ring) and the journey handler (viewport-independent, keeps the
+// follow working once the bus leaves the ring). No-op if a pan is already in
+// flight (_followPanning), during a URL-restore navigation (_navigating), or if
+// the target is within 5 m of the current center. Exported for tests.
+export function _followPanTo(lat, lon) {
+  if (!state.map || state._followPanning || state._navigating) return;
+  if (lat == null || lon == null) return;
+  const target = L.latLng(lat, lon);
+  const followDist = state.map.getCenter().distanceTo(target);
+  if (followDist <= 5) return;
+  state._followPanning = true;
+  if (followDist > 3000) {
+    // Big jump (bus already far off-screen): snap, don't animate across the map.
+    state.map.setView(target, state.map.getZoom(), { animate: false });
+    state._followPanning = false;
+  } else {
+    const panDur = 2;  // 2s default pan duration
+    state.map.panTo(target, { duration: panDur });
+    state.map.once('moveend', function () { state._followPanning = false; });
+    clearTimeout(state._followPanTimeout);
+    state._followPanTimeout = setTimeout(function () { state._followPanning = false; }, (panDur * 1000) + 500);
+  }
+}
+
 // === Vehicle-payload handler ===
 // Receives `vehicles` SSE events. Updates markers, status, follow-bus pan,
 // and triggers URL-restore on first delivery. Detail-panel updates flow
@@ -482,29 +507,18 @@ function _handleVehiclesPayload(data) {
   if (state.followBus && state.selectedJid) {
     const followEntry = state.vehicles.get(state.selectedJid);
     if (!followEntry) {
-      // Bus disappeared from BBox. The journey SSE event handles position
-      // correction when the bus is selected; if not selected, nothing to do.
+      // Selected bus is exempt from removal, so this is rare; if it truly
+      // vanished and isn't a not-yet-started journey, stop following.
       if (!state._notStartedJid) ui._disableFollow();
-    } else if (followEntry.missedCycles === 0
-               && !state._followPanning && !state._navigating) {
-      // Bus is visible — pan to it. Missed-cycles correction happens in the
-      // `journey` SSE handler from server-pushed position data.
-      const target = L.latLng(followEntry.data.lat, followEntry.data.lon);
-      const current = state.map.getCenter();
-      const followDist = current.distanceTo(target);
-      if (followDist > 5) {
-        state._followPanning = true;
-        if (followDist > 3000) {
-          state.map.setView(target, state.map.getZoom(), { animate: false });
-          state._followPanning = false;
-        } else {
-          const panDur = 2;  // 2s default pan duration
-          state.map.panTo(target, { duration: panDur });
-          state.map.once('moveend', function () { state._followPanning = false; });
-          clearTimeout(state._followPanTimeout);
-          state._followPanTimeout = setTimeout(function () { state._followPanning = false; }, (panDur * 1000) + 500);
-        }
-      }
+    } else if (followEntry.missedCycles === 0) {
+      // Bus is in the ring — pan to its vehicles-payload position (smooth,
+      // carries bearing). When the bus leaves the ring/viewport it drops to
+      // missedCycles>0 here and this pan is skipped; the `journey` SSE handler
+      // then drives the pan from the viewport-independent journey position, so
+      // the map keeps following the bus OFF-screen. (The ring is only ~viewport
+      // sized: max_dist = max(span)/2, so a bus leaving the viewport leaves the
+      // ring almost immediately.)
+      _followPanTo(followEntry.data.lat, followEntry.data.lon);
     }
   }
 
@@ -610,6 +624,15 @@ export function _applyJourneyPayload(jid, journeyData) {
       // Bus has pos but isn't in BBox (user panned away). Still update the
       // panel from the server-pushed data.
       ui.updateJourneyStopDelays(journeyData);
+    }
+    // Follow-bus: the journey position is authoritative for the selected bus
+    // and arrives every tick regardless of viewport/ring, so drive the pan from
+    // here too. This is what keeps the map following the bus once it has left
+    // the (only ~viewport-sized) ring, where the vehicles-handler pan can no
+    // longer see it. _followPanTo guards against double-panning (the vehicles
+    // pan sets _followPanning first while the bus is still in-ring).
+    if (state.followBus && state.selectedJid === jid) {
+      _followPanTo(jLat, jLon);
     }
     return;
   }
