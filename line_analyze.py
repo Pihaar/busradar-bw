@@ -7,6 +7,7 @@ per-stop delay statistics.
 Usage:
     python line_analyze.py [--line 725] [--days 7] [--dir /path/to/logs]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,9 +30,9 @@ def hhmmss_to_minutes(t: str | None) -> int | None:
 def load_records(log_dir: Path, line: str, days: int) -> list[dict]:
     cutoff = datetime.now() - timedelta(days=days)
     records = []
-    for path in sorted(log_dir.glob(f"line-*-*.jsonl")):
+    for path in sorted(log_dir.glob("line-*-*.jsonl")):
         try:
-            date_part = path.stem.split('-')[-1]
+            date_part = path.stem.split("-")[-1]
             file_date = datetime.strptime(date_part, "%Y%m%d")
         except ValueError:
             continue
@@ -159,22 +160,33 @@ def print_report(line: str, days: int, results: list[dict]) -> None:
         print(f"Direction: {res['direction']}")
         print(f"  Journeys analyzed: {res['journeys']}")
         sd, ed = res["start_delay"], res["end_delay"]
-        print(f"  Start delay  (n={sd['n']}): mean={sd.get('mean','-')} median={sd.get('median','-')} min={sd.get('min','-')} max={sd.get('max','-')}")
+        print(
+            f"  Start delay  (n={sd['n']}): mean={sd.get('mean', '-')} median={sd.get('median', '-')} min={sd.get('min', '-')} max={sd.get('max', '-')}"
+        )
         ed_punctual = res.get("end_punctual_count")
         ed_within_1 = res.get("end_within_1min_count")
         ed_within_4 = res.get("end_within_4min_count")
         ed_punctual_str = ""
-        if ed_punctual is not None and ed_within_1 is not None and ed_within_4 is not None and ed["n"] > 0:
+        if (
+            ed_punctual is not None
+            and ed_within_1 is not None
+            and ed_within_4 is not None
+            and ed["n"] > 0
+        ):
             pct0 = round(100 * ed_punctual / ed["n"], 1)
             pct1 = round(100 * ed_within_1 / ed["n"], 1)
             pct4 = round(100 * ed_within_4 / ed["n"], 1)
             ed_punctual_str = f"  (≤0 min: {ed_punctual}/{ed['n']} = {pct0}%, ≤1 min: {ed_within_1}/{ed['n']} = {pct1}%, ≤4 min: {ed_within_4}/{ed['n']} = {pct4}%)"
-        print(f"  End delay    (n={ed['n']}): mean={ed.get('mean','-')} median={ed.get('median','-')} min={ed.get('min','-')} max={ed.get('max','-')}{ed_punctual_str}")
+        print(
+            f"  End delay    (n={ed['n']}): mean={ed.get('mean', '-')} median={ed.get('median', '-')} min={ed.get('min', '-')} max={ed.get('max', '-')}{ed_punctual_str}"
+        )
         dp = res["duration_planned"]
         da = res["duration_actual"]
         if dp.get("n", 0) > 0 and da.get("n", 0) > 0:
             print(f"  Duration planned median: {dp['median']} min")
-            print(f"  Duration actual median:  {da['median']} min  (Δ {da['median'] - dp['median']:+} min)")
+            print(
+                f"  Duration actual median:  {da['median']} min  (Δ {da['median'] - dp['median']:+} min)"
+            )
 
         names = res["canonical_stops"]
         deps = res["delays_dep_per_stop"]
@@ -185,9 +197,11 @@ def print_report(line: str, days: int, results: list[dict]) -> None:
             d = deps[i]
             if d.get("n", 0) == 0:
                 continue
-            print(f"  {name[:40]:<40} {d['median']:>8} {d['mean']:>9} {d['min']:>5} {d['max']:>5} {d['n']:>4}")
+            print(
+                f"  {name[:40]:<40} {d['median']:>8} {d['mean']:>9} {d['min']:>5} {d['max']:>5} {d['n']:>4}"
+            )
 
-        print(f"\n  Verspätungs-Aufbau zwischen Halten (median Δ min, Fahrzeit):")
+        print("\n  Verspätungs-Aufbau zwischen Halten (median Δ min, Fahrzeit):")
         for i in range(len(segs)):
             s = segs[i]
             if s.get("n", 0) == 0:
@@ -195,17 +209,21 @@ def print_report(line: str, days: int, results: list[dict]) -> None:
             from_n = names[i][:25] if i < len(names) else "?"
             to_n = names[i + 1][:25] if i + 1 < len(names) else "?"
             arrow = "↑" if s["median"] > 0 else ("↓" if s["median"] < 0 else "·")
-            print(f"    {from_n:<27} → {to_n:<27} {arrow}{abs(s['median']):>3} (mean {s['mean']:+.1f}, min {s['min']:+}, max {s['max']:+}, n={s['n']})")
+            print(
+                f"    {from_n:<27} → {to_n:<27} {arrow}{abs(s['median']):>3} (mean {s['mean']:+.1f}, min {s['min']:+}, max {s['max']:+}, n={s['n']})"
+            )
 
         dwell = res.get("dwell_buildup", [])
         if dwell:
-            print(f"\n  Standzeit-Aufbau pro Halt (median Δ min, dep_delay − arr_delay):")
+            print("\n  Standzeit-Aufbau pro Halt (median Δ min, dep_delay − arr_delay):")
             for i, d in enumerate(dwell):
                 if d.get("n", 0) == 0:
                     continue
                 name = names[i][:35] if i < len(names) else "?"
                 arrow = "↑" if d["median"] > 0 else ("↓" if d["median"] < 0 else "·")
-                print(f"    {name:<37} {arrow}{abs(d['median']):>3} (mean {d['mean']:+.1f}, min {d['min']:+}, max {d['max']:+}, n={d['n']})")
+                print(
+                    f"    {name:<37} {arrow}{abs(d['median']):>3} (mean {d['mean']:+.1f}, min {d['min']:+}, max {d['max']:+}, n={d['n']})"
+                )
         print()
 
 
@@ -252,7 +270,9 @@ def main():
         if first_name == last_name and len(stops) > 4:
             # Show 2nd, 3rd, 4th stop to disambiguate loop direction
             preview = " → ".join(s["name"] for s in stops[1:4])
-            label = f"{common_dir}  [{len(seq)} Halte] ({first_name} → {preview} → ... → {first_name})"
+            label = (
+                f"{common_dir}  [{len(seq)} Halte] ({first_name} → {preview} → ... → {first_name})"
+            )
         else:
             label = f"{common_dir} ({first_name} → {last_name}, {len(seq)} Halte)"
         results.append(analyze_direction(records, seq, label))

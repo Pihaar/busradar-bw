@@ -9,6 +9,7 @@ Request handlers only read last_tick_ts (atomic float read, CPython GIL).
 
 Uses time.monotonic() internally for NTP-jump immunity.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,8 +19,6 @@ import math
 import os
 import time
 from pathlib import Path
-
-import httpx
 
 log = logging.getLogger("busradar")
 
@@ -46,7 +45,9 @@ TICK_NARROW_MIN_CHANGED = 2
 CALIB_MAX_FAILURES = 3
 CALIB_BACKOFF_SECONDS = 1800.0
 TICK_POSITIONS_CAP = 1000
-TICK_STATE_FILE = Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / ".tick_state"
+TICK_STATE_FILE = (
+    Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / ".tick_state"
+)
 
 # The connected-clients counter and its UUID-bound helpers used to live here.
 # After the SSE migration the counter is one SSE subscriber = one connection,
@@ -65,6 +66,7 @@ _mono = time.monotonic
 
 
 # --- Classes ---
+
 
 class ClientActivity:
     """Tracks whether the calibrator should keep probing HAFAS at the
@@ -139,9 +141,8 @@ class ClientActivity:
         try:
             await asyncio.wait_for(self.wakeup_event.wait(), timeout=timeout)
             return True
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return False
-
 
 
 class TickTracker:
@@ -223,13 +224,17 @@ class TickTracker:
         # tick alignment without monotonic-clock awareness.
         # After reboot monotonic resets; load_persisted() rejects stale via age check.
         try:
-            tmp = TICK_STATE_FILE.with_suffix('.tmp')
+            tmp = TICK_STATE_FILE.with_suffix(".tmp")
             now_wall = time.time()
-            tmp.write_text(json.dumps({
-                "mono_offset": now_wall - ts,
-                "wall_ts": now_wall,
-                "period": TICK_PERIOD,
-            }))
+            tmp.write_text(
+                json.dumps(
+                    {
+                        "mono_offset": now_wall - ts,
+                        "wall_ts": now_wall,
+                        "period": TICK_PERIOD,
+                    }
+                )
+            )
             tmp.rename(TICK_STATE_FILE)
         except Exception:
             log.debug("[tick_calibrator] failed to persist tick state")
@@ -252,6 +257,8 @@ class TickTracker:
                 log.info("[tick_calibrator] restored tick from state file (age=%.0fs)", age)
         except Exception:
             pass
+
+
 _CALIB_SEM = asyncio.Semaphore(1)
 
 
@@ -260,12 +267,16 @@ async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dic
         return None
     async with _CALIB_SEM:
         try:
-            payload = build_envelope("JourneyGeoPos", {
-                "ring": {"cCrd": TICK_DETECT_CENTER, "maxDist": TICK_DETECT_RADIUS_M},
-                "perSize": 60, "perStep": 5,
-                "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-                "trainPosMode": "REPORT_ONLY",
-            })
+            payload = build_envelope(
+                "JourneyGeoPos",
+                {
+                    "ring": {"cCrd": TICK_DETECT_CENTER, "maxDist": TICK_DETECT_RADIUS_M},
+                    "perSize": 60,
+                    "perStep": 5,
+                    "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+                    "trainPosMode": "REPORT_ONLY",
+                },
+            )
             resp = await app.state.client.post(hafas_endpoint, json=payload, timeout=5.0)
             resp.raise_for_status()
             data = resp.json()
@@ -279,8 +290,15 @@ async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dic
             return None
 
 
-async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: str,
-                           build_envelope, scan_seconds: int, min_changed: int) -> bool:
+async def _run_calibration(
+    app,
+    breaker,
+    tracker: TickTracker,
+    hafas_endpoint: str,
+    build_envelope,
+    scan_seconds: int,
+    min_changed: int,
+) -> bool:
     tracker._last_positions = {}
     for _ in range(scan_seconds):
         if breaker.is_open:
@@ -307,8 +325,14 @@ async def _run_calibration(app, breaker, tracker: TickTracker, hafas_endpoint: s
     return False
 
 
-async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientActivity,
-                          hafas_endpoint: str, build_envelope):
+async def tick_calibrator(
+    app,
+    breaker,
+    tracker: TickTracker,
+    activity: ClientActivity,
+    hafas_endpoint: str,
+    build_envelope,
+):
     calib_failures = 0
     log.info("[tick_calibrator] started, waiting for first client")
     try:
@@ -325,8 +349,15 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
     log.info("[tick_calibrator] cold-start scan")
     tracker.load_persisted()
     if tracker.last_tick_ts is None:
-        await _run_calibration(app, breaker, tracker, hafas_endpoint, build_envelope,
-                               scan_seconds=32, min_changed=TICK_MIN_CHANGED_BUSES)
+        await _run_calibration(
+            app,
+            breaker,
+            tracker,
+            hafas_endpoint,
+            build_envelope,
+            scan_seconds=32,
+            min_changed=TICK_MIN_CHANGED_BUSES,
+        )
 
     while True:
         try:
@@ -350,11 +381,10 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
                 # next_tick_prediction() already returns the soonest
                 # future tick; subtract 1 s of slack and floor at 1.
                 wait = max(1.0, (pred - 1.0) - _mono())
-                if wait > interval:
-                    # Safety net: if the prediction lands implausibly
-                    # far in the future, fall back to the configured
-                    # interval rather than vanishing for an hour.
-                    wait = interval
+                # Safety net: if the prediction lands implausibly far in the
+                # future, fall back to the configured interval rather than
+                # vanishing for an hour.
+                wait = min(wait, interval)
             else:
                 wait = interval
             # Idle long-sleep is interruptible: a new subscriber sets the
@@ -373,8 +403,11 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
                 continue
 
             if calib_failures >= CALIB_MAX_FAILURES:
-                log.warning("[tick_calibrator] %d failures, backing off %.0fs",
-                           calib_failures, CALIB_BACKOFF_SECONDS)
+                log.warning(
+                    "[tick_calibrator] %d failures, backing off %.0fs",
+                    calib_failures,
+                    CALIB_BACKOFF_SECONDS,
+                )
                 # D5: reactive backoff — check activity every 60s
                 for _ in range(int(CALIB_BACKOFF_SECONDS / 60)):
                     await asyncio.sleep(60)
@@ -383,14 +416,35 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
                 calib_failures = 0
                 continue
 
-            found = await _run_calibration(app, breaker, tracker, hafas_endpoint, build_envelope,
-                                           scan_seconds=3, min_changed=TICK_NARROW_MIN_CHANGED)
+            found = await _run_calibration(
+                app,
+                breaker,
+                tracker,
+                hafas_endpoint,
+                build_envelope,
+                scan_seconds=3,
+                min_changed=TICK_NARROW_MIN_CHANGED,
+            )
             if not found:
-                found = await _run_calibration(app, breaker, tracker, hafas_endpoint, build_envelope,
-                                               scan_seconds=11, min_changed=TICK_NARROW_MIN_CHANGED)
+                found = await _run_calibration(
+                    app,
+                    breaker,
+                    tracker,
+                    hafas_endpoint,
+                    build_envelope,
+                    scan_seconds=11,
+                    min_changed=TICK_NARROW_MIN_CHANGED,
+                )
             if not found:
-                found = await _run_calibration(app, breaker, tracker, hafas_endpoint, build_envelope,
-                                               scan_seconds=32, min_changed=TICK_MIN_CHANGED_BUSES)
+                found = await _run_calibration(
+                    app,
+                    breaker,
+                    tracker,
+                    hafas_endpoint,
+                    build_envelope,
+                    scan_seconds=32,
+                    min_changed=TICK_MIN_CHANGED_BUSES,
+                )
             if not found:
                 calib_failures += 1
                 log.info("[tick_calibrator] burst missed (failures=%d)", calib_failures)
@@ -418,7 +472,7 @@ def _push_grid_fire(pred: float, now: float) -> tuple[float, bool]:
     wait is clamped to [0, SSE_PUSH_PERIOD + TICK_BUFFER] as a safety net."""
     k = math.floor((now - TICK_BUFFER - pred) / SSE_PUSH_PERIOD) + 1
     fire = pred + k * SSE_PUSH_PERIOD + TICK_BUFFER
-    aligned = (k % 3 == 0)
+    aligned = k % 3 == 0
     wait = min(max(0.0, fire - now), SSE_PUSH_PERIOD + TICK_BUFFER)
     return wait, aligned
 
@@ -444,6 +498,7 @@ async def sse_push_loop(activity: ClientActivity, tracker: TickTracker):
     """
     # Hoisted from the hot loop — fanout doesn't import tick, so no cycle.
     import fanout
+
     log.info("[sse_push_loop] started (period=%.1fs)", SSE_PUSH_PERIOD)
     # Loop-local so it can't leak across the None<->prediction seam or across
     # coroutines. Reset to 0 whenever we (re)enter the phase-locked branch so
@@ -473,7 +528,7 @@ async def sse_push_loop(activity: ClientActivity, tracker: TickTracker):
                 # No calibration → free-running 10 s grid; flag every 3rd fire
                 # aligned so REPORT_ONLY still emits ~every 30 s.
                 wait = SSE_PUSH_PERIOD
-                aligned = (fallback_fires % 3 == 0)
+                aligned = fallback_fires % 3 == 0
                 fallback_fires += 1
 
             await asyncio.sleep(wait)

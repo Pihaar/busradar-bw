@@ -18,7 +18,6 @@ import time
 import httpx
 from fastapi import FastAPI
 
-
 HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
 AUTH_AID = "YOUR_AID"
 CLIENT_ID = "DB-REGIO"
@@ -47,7 +46,7 @@ CIRCUIT_BREAKER_COOLDOWN = 30.0
 #   cache-key surface bounded.
 JID_PATTERN = re.compile(r"\A[0-9|#A-Za-z@:_\-. ]+\Z")
 # LID format: real-world looks like `A=1@L=44278341@` or fully qualified
-# `A=1@O=Wiesloch-Walldorf Bahnhof@X=8664801@Y=49291306@U=80@L=44278341@i=A×de:08226:4252:1:A,b×BRN_304521@`.
+# `A=1@O=Wiesloch-Walldorf Bahnhof@X=8664801@Y=49291306@U=80@L=44278341@i=A×de:08226:4252:1:A,b×BRN_304521@`.  # noqa: E501
 # Keep the prefix tight (`A=<num>@`), end-anchor, accept the wider alphabet
 # observed in the wild: comma in the `i=` provider metadata, parens for
 # station names like "Köln(Hbf)" or "Frankfurt(Main)Hbf", slash for the

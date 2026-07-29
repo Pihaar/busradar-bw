@@ -5,9 +5,18 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from proxy import (app, breaker, cache, tick_tracker, _flatten_vehicles,
-                   _calc_delay, _inflight,
-                   _journey_cache, _stationboard_cache, _line_search_cache)
+from proxy import (
+    _calc_delay,
+    _flatten_vehicles,
+    _inflight,
+    _journey_cache,
+    _line_search_cache,
+    _stationboard_cache,
+    app,
+    breaker,
+    cache,
+    tick_tracker,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +28,7 @@ def reset_state():
     # here the third line_search test in this file sees a depleted bucket
     # and the assertion against 502 trips on a 429 instead.
     import sse_handler
+
     breaker.failures = 0
     breaker.last_failure_time = 0.0
     cache._key = None
@@ -56,8 +66,13 @@ MOCK_HAFAS_VEHICLES = {
     "common": {
         "prodL": [{"name": "Bus  721", "nameS": "721"}],
         "locL": [
-            {"name": "Stop A", "lid": "A=1@L=1@", "crd": {"x": 8660000, "y": 49340000},
-             "extId": "1", "gidL": ["b×de:1"]},
+            {
+                "name": "Stop A",
+                "lid": "A=1@L=1@",
+                "crd": {"x": 8660000, "y": 49340000},
+                "extId": "1",
+                "gidL": ["b×de:1"],
+            },
         ],
     },
     "jnyL": [
@@ -79,13 +94,23 @@ MOCK_HAFAS_STATIONBOARD = {
     "common": {
         "prodL": [{"name": "Bus  721", "nameS": "721"}],
         "locL": [
-            {"name": "Stop A", "lid": "A=1@L=6003411@", "crd": {"x": 8660000, "y": 49340000},
-             "extId": "6003411", "gidL": ["b×de:1"]},
+            {
+                "name": "Stop A",
+                "lid": "A=1@L=6003411@",
+                "crd": {"x": 8660000, "y": 49340000},
+                "extId": "6003411",
+                "gidL": ["b×de:1"],
+            },
         ],
     },
     "jnyL": [
-        {"jid": "j1", "prodX": 0, "dirTxt": "Dir", "date": "20260601",
-         "stbStop": {"locX": 0, "dTimeS": "130000", "dTimeR": "130200"}},
+        {
+            "jid": "j1",
+            "prodX": 0,
+            "dirTxt": "Dir",
+            "date": "20260601",
+            "stbStop": {"locX": 0, "dTimeS": "130000", "dTimeR": "130200"},
+        },
     ],
 }
 
@@ -185,8 +210,9 @@ class TestHafasCallMocked:
             return MOCK_HAFAS_STATIONBOARD
 
         with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            resp = await client.post("/api/stationboard",
-                                     json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60})
+            resp = await client.post(
+                "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60}
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert "jnyL" in data
@@ -197,8 +223,9 @@ class TestHafasCallMocked:
             return {"error": "upstream_error", "detail": "HAFAS error"}
 
         with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            resp = await client.post("/api/stationboard",
-                                     json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60})
+            resp = await client.post(
+                "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60}
+            )
         assert resp.status_code == 502
 
     @pytest.mark.asyncio
@@ -210,8 +237,12 @@ class TestHafasCallMocked:
             return MOCK_HAFAS_STATIONBOARD
 
         with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            await client.post("/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60})
-            await client.post("/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60})
+            await client.post(
+                "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60}
+            )
+            await client.post(
+                "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60}
+            )
         assert call_count[0] == 1
 
     @pytest.mark.asyncio
@@ -249,10 +280,26 @@ class TestHafasCallMocked:
 class TestGetStops:
     @pytest.fixture(autouse=True)
     def inject_stops(self):
-        app.state.stops_data = {"stops": [
-            {"name": "TestStop", "lid": "A=1@L=1@", "lat": 49.34, "lon": 8.66, "extId": "1", "platform": ""},
-            {"name": "FarStop", "lid": "A=1@L=2@", "lat": 49.50, "lon": 8.80, "extId": "2", "platform": ""},
-        ]}
+        app.state.stops_data = {
+            "stops": [
+                {
+                    "name": "TestStop",
+                    "lid": "A=1@L=1@",
+                    "lat": 49.34,
+                    "lon": 8.66,
+                    "extId": "1",
+                    "platform": "",
+                },
+                {
+                    "name": "FarStop",
+                    "lid": "A=1@L=2@",
+                    "lat": 49.50,
+                    "lon": 8.80,
+                    "extId": "2",
+                    "platform": "",
+                },
+            ]
+        }
         yield
         app.state.stops_data = {"stops": []}
 

@@ -25,7 +25,6 @@ import random
 import secrets
 import time
 from datetime import datetime
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -34,18 +33,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 import fanout
 from audit import _audit
 from caches import (
+    _JOURNEY_CACHE_TTL,
+    _STATIONBOARD_CACHE_TTL,
+    _follow_geopos_cache,
+    _follow_geopos_lock,
     _inflight,
+    _inflight_follow_geopos,
     _inflight_journey,
     _inflight_stationboard,
-    _inflight_follow_geopos,
     _journey_cache,
     _journey_cache_lock,
     _stationboard_cache,
     _stationboard_cache_lock,
-    _follow_geopos_cache,
-    _follow_geopos_lock,
-    _JOURNEY_CACHE_TTL,
-    _STATIONBOARD_CACHE_TTL,
     cached_singleflight,
 )
 from hafas import (
@@ -54,17 +53,18 @@ from hafas import (
 )
 from tick import ClientActivity
 
-
 log = logging.getLogger("busradar")
 
 
 # === SSE Stream ===
 
 ALLOWED_ORIGINS = tuple(
-    o.strip() for o in os.environ.get(
+    o.strip()
+    for o in os.environ.get(
         "BUSRADAR_ALLOWED_ORIGINS",
         "https://busradar.pihaar.de,http://localhost:8000,http://127.0.0.1:8000",
-    ).split(",") if o.strip()
+    ).split(",")
+    if o.strip()
 )
 # `__Host-` cookie prefix enforces three browser-side invariants:
 #   1. Secure attribute set (TLS only)
@@ -178,6 +178,7 @@ async def _fetch_vehicles_for_viewport(
     # call through the proxy module so test patches on `proxy._hafas_call_via_app`
     # reach this call site.
     import proxy as _proxy
+
     _flatten_vehicles = _proxy._flatten_vehicles
 
     sw_lat, sw_lon, ne_lat, ne_lon = viewport
@@ -254,7 +255,7 @@ async def _fetch_vehicles_for_viewport(
             _inflight.pop(key, None)
 
 
-def _lookup_subscriber(request: Request) -> tuple[Optional[fanout.Subscriber], Optional[str]]:
+def _lookup_subscriber(request: Request) -> tuple[fanout.Subscriber | None, str | None]:
     """Common subscriber-lookup for the sidecar POST endpoints.
 
     Returns (sub, error_code) where error_code is one of:
@@ -264,8 +265,11 @@ def _lookup_subscriber(request: Request) -> tuple[Optional[fanout.Subscriber], O
       'origin_mismatch' — Origin header check failed → 403
     """
     if not _check_origin(request):
-        _audit("origin-mismatch", _client_ip(request),
-               origin=request.headers.get("Origin", "<missing>"))
+        _audit(
+            "origin-mismatch",
+            _client_ip(request),
+            origin=request.headers.get("Origin", "<missing>"),
+        )
         return None, "origin_mismatch"
     cid = request.cookies.get(SSE_COOKIE_NAME)
     if not cid:
@@ -308,9 +312,9 @@ _post_rate_per_ip: dict[str, tuple[float, float]] = {}  # ip → (tokens, last_r
 # Env override (BUSRADAR_POST_RATE_BURST) is for the E2E suite, which
 # replays ~20 pages from the same 127.0.0.1 in two minutes.
 _POST_RATE_PER_IP_BURST = float(os.environ.get("BUSRADAR_POST_RATE_BURST", "40"))
-_POST_RATE_PER_IP_REFILL = 6.0    # tokens/s
+_POST_RATE_PER_IP_REFILL = 6.0  # tokens/s
 _POST_RATE_SUB_BURST = 15.0
-_POST_RATE_SUB_REFILL = 5.0       # tokens/s
+_POST_RATE_SUB_REFILL = 5.0  # tokens/s
 _POST_RATE_PER_IP_MAX_KEYS = 4096
 
 
@@ -318,8 +322,10 @@ def _post_rate_check(sub) -> bool:
     """Returns True if a POST is allowed. State is per-Subscriber so two
     different IPs / cookies have independent buckets."""
     now = time.monotonic()
-    tokens = min(_POST_RATE_SUB_BURST,
-                 sub.post_rate_tokens + (now - sub.post_rate_last_refill) * _POST_RATE_SUB_REFILL)
+    tokens = min(
+        _POST_RATE_SUB_BURST,
+        sub.post_rate_tokens + (now - sub.post_rate_last_refill) * _POST_RATE_SUB_REFILL,
+    )
     sub.post_rate_last_refill = now
     if tokens >= 1.0:
         sub.post_rate_tokens = tokens - 1.0
@@ -374,9 +380,7 @@ def _rate_check_request(request: Request, sub=None) -> bool:
     ip = fanout.canonicalize_ip(_client_ip(request))
     if not _post_rate_check_ip(ip):
         return False
-    if sub is not None and not _post_rate_check(sub):
-        return False
-    return True
+    return sub is None or _post_rate_check(sub)
 
 
 async def _read_body_with_limit(request: Request, limit: int) -> bytes | None:
@@ -404,6 +408,7 @@ async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
     # Resolve `_hafas_call_via_app` via the proxy module so that tests
     # patching `proxy._hafas_call_via_app` reach this call site too.
     import proxy as _proxy
+
     return await cached_singleflight(
         cache=_journey_cache,
         lock=_journey_cache_lock,
@@ -412,17 +417,22 @@ async def _fetch_journey_for_subscriber(app: FastAPI, jid: str) -> dict:
         ttl=_JOURNEY_CACHE_TTL,
         evict_at=200,
         evict_keep=100,
-        fetch_fn=lambda: _proxy._hafas_call_via_app(app, "JourneyDetails", {"jid": jid, "getPolyline": True}),
+        fetch_fn=lambda: _proxy._hafas_call_via_app(
+            app, "JourneyDetails", {"jid": jid, "getPolyline": True}
+        ),
     )
 
 
-async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str, board_type: str = "DEP", dur: int = 60) -> dict:
+async def _fetch_stationboard_for_subscriber(
+    app: FastAPI, lid: str, board_type: str = "DEP", dur: int = 60
+) -> dict:
     """Shared HAFAS stationboard fetch with cache. Singleflight by
     (lid, board_type, dur) so concurrent subscribers for the same stop and
     side share whenever they want the same window. ARR pushes are enabled
     via the StationSelection discriminator field on the SSE side; the legacy
     POST endpoint uses DEP with dur=60."""
     import proxy as _proxy
+
     cache_key = (lid, board_type, dur)
     return await cached_singleflight(
         cache=_stationboard_cache,
@@ -432,12 +442,16 @@ async def _fetch_stationboard_for_subscriber(app: FastAPI, lid: str, board_type:
         ttl=_STATIONBOARD_CACHE_TTL,
         evict_at=500,
         evict_keep=250,
-        fetch_fn=lambda: _proxy._hafas_call_via_app(app, "StationBoard", {
-            "stbLoc": {"lid": lid},
-            "type": board_type,
-            "dur": dur,
-            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-        }),
+        fetch_fn=lambda: _proxy._hafas_call_via_app(
+            app,
+            "StationBoard",
+            {
+                "stbLoc": {"lid": lid},
+                "type": board_type,
+                "dur": dur,
+                "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+            },
+        ),
     )
 
 
@@ -451,27 +465,26 @@ class SelectPayload(BaseModel):
         {"selection": {"kind": "stationboard", "lid": "A=1@L=..."}}
         {"selection": null}
     """
+
     model_config = ConfigDict(extra="forbid")
-    selection: Optional[fanout.Selection] = None
+    selection: fanout.Selection | None = None
 
     @field_validator("selection")
     @classmethod
     def validate_selection(cls, v):
         if v is None:
             return None
-        if isinstance(v, fanout.JourneySelection):
-            if not JID_PATTERN.match(v.jid):
-                raise ValueError("invalid jid")
-        elif isinstance(v, fanout.StationSelection):
-            if not LID_PATTERN.match(v.lid):
-                raise ValueError("invalid lid")
+        if isinstance(v, fanout.JourneySelection) and not JID_PATTERN.match(v.jid):
+            raise ValueError("invalid jid")
+        if isinstance(v, fanout.StationSelection) and not LID_PATTERN.match(v.lid):
+            raise ValueError("invalid lid")
         return v
 
 
 # Selection→fetcher dispatch table. Single source of truth for adding new
 # selection types — register here + add the Pydantic model in fanout.py and
 # the SSE loop picks it up via type(sel).
-async def _fetch_for_selection(app: FastAPI, sel: "fanout.Selection") -> tuple[str, dict]:
+async def _fetch_for_selection(app: FastAPI, sel: fanout.Selection) -> tuple[str, dict]:
     """Run the right HAFAS fetch for `sel` and return (event_name, payload).
     On upstream error returns ("error", {...}) so the caller can emit a
     sanitized error event without leaking taxonomy."""
@@ -484,13 +497,16 @@ async def _fetch_for_selection(app: FastAPI, sel: "fanout.Selection") -> tuple[s
         result = await _fetch_stationboard_for_subscriber(app, sel.lid, sel.board_type, sel.dur)
         if "error" in result:
             return ("error", {"reason": "upstream", "selection": "stationboard"})
-        return ("stationboard", {"lid": sel.lid, "boardType": sel.board_type, "stationboard": result})
+        return (
+            "stationboard",
+            {"lid": sel.lid, "boardType": sel.board_type, "stationboard": result},
+        )
     return (None, None)
 
 
-_FOLLOW_RING_M = 3000       # ring radius for the REPORT_ONLY off-ring follow lookup
-_FOLLOW_QUANTIZE = 5000     # ~0.005 deg grid for the follow-lookup cache key
-_FOLLOW_GEOPOS_TTL = 8.0    # short TTL: real GPS updates ~30s; caps re-fetch + dedups followers
+_FOLLOW_RING_M = 3000  # ring radius for the REPORT_ONLY off-ring follow lookup
+_FOLLOW_QUANTIZE = 5000  # ~0.005 deg grid for the follow-lookup cache key
+_FOLLOW_GEOPOS_TTL = 8.0  # short TTL: real GPS updates ~30s; caps re-fetch + dedups followers
 
 
 async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
@@ -531,13 +547,17 @@ async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
     import proxy as _proxy
 
     async def _fetch():
-        return await _proxy._hafas_call_via_app(app, "JourneyGeoPos", {
-            "ring": {"cCrd": {"x": qx, "y": qy}, "maxDist": _FOLLOW_RING_M},
-            "perSize": 120,
-            "perStep": 10,
-            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-            "trainPosMode": "REPORT_ONLY",
-        })
+        return await _proxy._hafas_call_via_app(
+            app,
+            "JourneyGeoPos",
+            {
+                "ring": {"cCrd": {"x": qx, "y": qy}, "maxDist": _FOLLOW_RING_M},
+                "perSize": 120,
+                "perStep": 10,
+                "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+                "trainPosMode": "REPORT_ONLY",
+            },
+        )
 
     try:
         geo = await cached_singleflight(
@@ -567,7 +587,7 @@ async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
     return ("journey", {**detail_res[1], "journey": new_result})
 
 
-def _report_only_should_emit(now_tick_push: int, last: Optional[int]) -> bool:
+def _report_only_should_emit(now_tick_push: int, last: int | None) -> bool:
     """REPORT_ONLY emit gate. Emit only when a tick-aligned push has happened
     since this subscriber's last emit (`now_tick_push != last`), or on the very
     first push for the subscriber (`last is None`). A non-tick-aligned push
@@ -660,9 +680,10 @@ async def handle_sse_stream(request: Request, app_version: str):
                 try:
                     async with fanout.tick_condition:
                         await asyncio.wait_for(
-                            fanout.tick_condition.wait_for(
-                                lambda: fanout.tick_seq > local_seq
-                            ),
+                            # B023: the lambda is consumed synchronously inside this
+                            # iteration (before local_seq is reassigned below), so it
+                            # captures the current value — no deferred-closure bug.
+                            fanout.tick_condition.wait_for(lambda: fanout.tick_seq > local_seq),  # noqa: B023
                             timeout=keepalive,
                         )
                     local_seq = fanout.tick_seq
@@ -708,11 +729,11 @@ async def handle_sse_stream(request: Request, app_version: str):
                 tasks: list = []
                 tasks.append(
                     _fetch_vehicles_for_viewport(request.app, sub.viewport, sub.pos_mode)
-                    if sub.viewport else _noop_async(None)
+                    if sub.viewport
+                    else _noop_async(None)
                 )
                 tasks.append(
-                    _fetch_for_selection(request.app, sel)
-                    if sel is not None else _noop_async(None)
+                    _fetch_for_selection(request.app, sel) if sel is not None else _noop_async(None)
                 )
 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -725,12 +746,15 @@ async def handle_sse_stream(request: Request, app_version: str):
                 # Done here, BEFORE yield_start, so this upstream await isn't
                 # charged to the slow-consumer backpressure window; the
                 # selection-seq guard below then re-checks after the await.
-                if (sub.pos_mode == "REPORT_ONLY"
-                        and isinstance(sel, fanout.JourneySelection)
-                        and isinstance(detail_res, tuple)
-                        and detail_res[0] == "journey"):
+                if (
+                    sub.pos_mode == "REPORT_ONLY"
+                    and isinstance(sel, fanout.JourneySelection)
+                    and isinstance(detail_res, tuple)
+                    and detail_res[0] == "journey"
+                ):
                     detail_res = await _real_pos_for_offring_follow(
-                        request.app, sel.jid, detail_res, snap)
+                        request.app, sel.jid, detail_res, snap
+                    )
 
                 # Wall-clock from here on measures the time the framework
                 # spent flushing yields to the client. A blocked socket-send
@@ -761,9 +785,15 @@ async def handle_sse_stream(request: Request, app_version: str):
                 # results for a selection the user has already swapped away
                 # from. Dispatch happens via _fetch_for_selection() which
                 # returns (event_name, payload) or ("error", ...).
-                if sel is not None and sub.selection_seq == sel_seq_at_start and sub.selection == sel:
+                if (
+                    sel is not None
+                    and sub.selection_seq == sel_seq_at_start
+                    and sub.selection == sel
+                ):
                     if isinstance(detail_res, Exception):
-                        yield _format_sse("error", {"reason": "upstream", "selection": sel.event_name()})
+                        yield _format_sse(
+                            "error", {"reason": "upstream", "selection": sel.event_name()}
+                        )
                     elif isinstance(detail_res, tuple):
                         event_name, payload = detail_res
                         if event_name:

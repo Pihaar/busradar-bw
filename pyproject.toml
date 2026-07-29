@@ -1,0 +1,65 @@
+# Tooling config. Ruff first; pytest/coverage config lives alongside once added.
+
+[tool.ruff]
+target-version = "py312"   # dev floor (prod runs 3.13); keeps syntax rules in range
+line-length = 100
+extend-exclude = ["node_modules", "coverage", ".playwright-mcp"]
+
+[tool.ruff.lint]
+# Sharpest baseline: enable the whole rule set, then drop the families that do
+# not fit this codebase. Each ignore carries its reason so the choice is auditable.
+select = ["ALL"]
+ignore = [
+  "D",        # pydocstyle: docstrings are used where useful, not mandated everywhere
+  "ANN",      # annotations are the job of the mypy/pyright pass, not ruff
+  "COM812",   # trailing-comma rule conflicts with the ruff formatter
+  "ISC001",   # implicit-str-concat rule conflicts with the ruff formatter
+  "CPY",      # no per-file copyright headers in this project
+  "T20",      # print() is legitimate in the proxy startup + the CLI analysis tools
+  "EM",       # exception-message string style — high churn, low value here
+  "TRY003",   # long messages in raise() — pairs with EM
+  "TRY400",   # logging.error vs .exception inside except — stylistic
+  "PLR2004",  # magic-value-comparison — too noisy for HAFAS numeric codes/thresholds
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",  # complexity metrics; refactor is out of scope
+  "C901",     # complex-structure — same
+  "BLE001",   # blind except: defensive broad catches are an intentional pattern here
+  "PLC0415",  # imports inside functions: intentional (lazy / import-cycle avoidance)
+  "PLW0603",  # global statement: module-level state is intentional
+  "SLF001",   # private-member access: internal helpers + tests touch _fields
+  "N806", "N815", "N816",  # HAFAS wire fields are mixed-case by protocol (locX, dTimeR…)
+  "RUF001", "RUF002", "RUF003",  # ambiguous-unicode: German text + emoji are expected
+  "DTZ",      # naive datetime is intentional (HAFAS local-time handling)
+  "FAST002",  # FastAPI non-annotated Depends() — style, not a defect
+  "FBT001", "FBT002",  # boolean positional args — pervasive, low value to churn
+  "TRY300",   # "move to else" — the try/return style here is clearer
+  "TC002", "TC003",  # move imports into TYPE_CHECKING block — churn, no runtime win
+  "S311",     # non-cryptographic random() — only used for jitter/backoff, never crypto
+  "S110", "S112",  # try-except-pass/continue: intentional defensive swallow (see BLE001)
+  "ERA001",   # commented-out-code: false-positives on explanatory comments
+  "PLW2901",  # loop-variable overwrite — deliberate in the analysis scripts
+  "ASYNC109", # timeout parameter on an async def — a deliberate part of the API
+  "UP042",    # keep explicit (str, Enum) rather than StrEnum for clarity
+  "N818",     # exception name without "Error" suffix — internal sentinel type
+  "N803",     # argument names mirror HAFAS/API params (posMode, …)
+  "ARG001", "ARG002", "ARG005",  # framework/callback/mock signatures need unused args
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: asserts are the point; fixtures/mocks carry unused args; composite asserts
+# and non-CapWords helper names are idiomatic here; long HAFAS fixtures; no package marker.
+"tests/**" = [
+  "S101", "INP001", "PT018", "N801", "N802", "N806", "PERF401",
+  "S310", "S607", "RUF059", "RUF012", "RUF006", "SIM105", "SIM118", "UP031",
+  "RET504", "PLR0915", "E501",
+]
+# Ad-hoc smoke/diagnostic scripts: not shipped, long diagnostic lines are fine.
+"scripts/**" = ["E501", "SIM117", "INP001"]
+# Offline analysis CLIs: long report/print lines, throwaway tooling.
+"line_analyze.py" = ["E501"]
+"line_gps_analyze.py" = ["E501"]
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "double"
+
+[tool.ruff.format]
+quote-style = "double"

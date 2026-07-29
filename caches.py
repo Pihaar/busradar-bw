@@ -18,7 +18,6 @@ import asyncio
 import random
 import time
 
-
 CACHE_TTL = 9.5
 STOPS_CACHE_TTL = 86400.0
 
@@ -43,12 +42,13 @@ class _Cache:
             return True
         if self._daily_reset_hour is not None:
             from datetime import datetime
+
             cached_dt = datetime.fromtimestamp(self._ts)
             now = datetime.now()
-            reset_today = now.replace(hour=self._daily_reset_hour, minute=0, second=0, microsecond=0)
-            if now >= reset_today and cached_dt < reset_today:
-                return True
-            return False
+            reset_today = now.replace(
+                hour=self._daily_reset_hour, minute=0, second=0, microsecond=0
+            )
+            return now >= reset_today and cached_dt < reset_today
         return (time.time() - self._ts) >= self._ttl
 
     async def get(self, key: tuple) -> dict | None:

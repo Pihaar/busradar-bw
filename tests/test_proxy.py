@@ -1,7 +1,7 @@
 """Tests for proxy endpoints — input validation, error handling, CSP hash."""
 
-import hashlib
 import base64
+import hashlib
 import re
 from pathlib import Path
 
@@ -40,6 +40,7 @@ class TestHealth:
     @pytest.mark.asyncio
     async def test_health_breaker_open(self, client):
         import time
+
         breaker.failures = 3
         breaker.last_failure_time = time.time()
         resp = await client.get("/api/health")
@@ -49,6 +50,7 @@ class TestHealth:
     @pytest.mark.asyncio
     async def test_health_version_present(self, client):
         import re
+
         resp = await client.get("/api/health")
         data = resp.json()
         assert "version" in data
@@ -62,6 +64,7 @@ class TestHealth:
         flips true while _build_stops_on_startup or the daily wrapper is
         running, false otherwise."""
         from proxy import app
+
         # baseline: not rebuilding
         app.state.stops_rebuilding = False
         data = (await client.get("/api/health")).json()
@@ -78,16 +81,18 @@ class TestHealth:
 
 class TestReadVersion:
     def test_version_from_file(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         vfile = tmp_path / "VERSION"
         vfile.write_text("v9.9.9\n")
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         assert _read_version() == "v9.9.9"
 
     def test_version_file_empty_falls_through(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         (tmp_path / "VERSION").write_text("   \n")
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         # Falls through to git or "unknown"; just assert not the empty/whitespace value
@@ -96,8 +101,9 @@ class TestReadVersion:
         assert result.strip() == result
 
     def test_version_file_oversize_truncated(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         (tmp_path / "VERSION").write_text("v" + "a" * 10000)
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         # 10001 chars, regex caps at 64 → rejected, falls through
@@ -105,8 +111,9 @@ class TestReadVersion:
         assert len(result) <= 64
 
     def test_version_file_rejects_control_chars(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         (tmp_path / "VERSION").write_text("v1.0.0\x00; rm -rf /")
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         result = _read_version()
@@ -115,16 +122,18 @@ class TestReadVersion:
         assert ";" not in result
 
     def test_version_file_rejects_html(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         (tmp_path / "VERSION").write_text("<script>alert(1)</script>")
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         result = _read_version()
         assert "<" not in result and ">" not in result
 
     def test_version_invalid_utf8_does_not_crash(self, tmp_path, monkeypatch):
-        from proxy import _read_version
         import proxy
+        from proxy import _read_version
+
         (tmp_path / "VERSION").write_bytes(b"\xff\xfev1.0.0")
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         result = _read_version()
@@ -133,12 +142,14 @@ class TestReadVersion:
 
     def test_sanitize_accepts_valid(self):
         from proxy import _sanitize_version
+
         assert _sanitize_version("v1.0.0") == "v1.0.0"
         assert _sanitize_version("v1.0.4-3-geccfaa3-dirty") == "v1.0.4-3-geccfaa3-dirty"
         assert _sanitize_version("1.0+build.42") == "1.0+build.42"
 
     def test_sanitize_rejects_invalid(self):
         from proxy import _sanitize_version
+
         assert _sanitize_version("") is None
         assert _sanitize_version("   ") is None
         assert _sanitize_version("v1.0; rm -rf") is None
@@ -149,6 +160,7 @@ class TestReadVersion:
     def test_git_missing_falls_through_to_unknown(self, tmp_path, monkeypatch):
         import proxy
         from proxy import _read_version
+
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         monkeypatch.setattr(proxy.shutil, "which", lambda _: None)
         assert _read_version() == "unknown"
@@ -156,43 +168,55 @@ class TestReadVersion:
     def test_git_timeout_falls_through_to_unknown(self, tmp_path, monkeypatch):
         import proxy
         from proxy import _read_version
+
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+
         def raise_timeout(*a, **kw):
             raise proxy.subprocess.TimeoutExpired(cmd="git", timeout=2)
+
         monkeypatch.setattr(proxy.subprocess, "run", raise_timeout)
         assert _read_version() == "unknown"
 
     def test_git_nonzero_returncode_falls_through(self, tmp_path, monkeypatch):
         import proxy
         from proxy import _read_version
+
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+
         class FakeResult:
             returncode = 128
             stdout = b""
+
         monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
         assert _read_version() == "unknown"
 
     def test_git_success_invalid_output_falls_through(self, tmp_path, monkeypatch):
         import proxy
         from proxy import _read_version
+
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+
         class FakeResult:
             returncode = 0
             stdout = b"<script>alert(1)</script>"
+
         monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
         assert _read_version() == "unknown"
 
     def test_git_success_valid_output(self, tmp_path, monkeypatch):
         import proxy
         from proxy import _read_version
+
         monkeypatch.setattr(proxy, "__file__", str(tmp_path / "proxy.py"))
         monkeypatch.setattr(proxy.shutil, "which", lambda _: "/usr/bin/git")
+
         class FakeResult:
             returncode = 0
             stdout = b"v2.3.4-dirty\n"
+
         monkeypatch.setattr(proxy.subprocess, "run", lambda *a, **kw: FakeResult())
         assert _read_version() == "v2.3.4-dirty"
 
@@ -201,6 +225,7 @@ class TestServiceWorker:
     @pytest.mark.asyncio
     async def test_sw_served_with_substituted_version(self, client):
         from proxy import _VERSION
+
         resp = await client.get("/sw.js")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/javascript")
@@ -230,6 +255,7 @@ class TestServiceWorker:
 
     def test_render_sw_replaces_placeholder(self):
         from proxy import _render_sw
+
         tpl = "var CACHE = 'busradar-__APP_VERSION__';\n"
         out = _render_sw(tpl, "v1.0.5")
         assert "var CACHE = 'busradar-v1.0.5'" in out
@@ -237,24 +263,28 @@ class TestServiceWorker:
 
     def test_render_sw_unknown_falls_back(self):
         from proxy import _render_sw
+
         tpl = "x = '__APP_VERSION__';"
         out = _render_sw(tpl, "unknown")
         assert "busradar-unknown" not in tpl
-        assert "x = 'unknown';" == out
+        assert out == "x = 'unknown';"
 
     def test_render_sw_refuses_placeholder_as_version(self):
         from proxy import _render_sw
+
         tpl = "x = '__APP_VERSION__';"
         out = _render_sw(tpl, "__APP_VERSION__")
         assert out == ""
 
     def test_render_sw_empty_template_returns_empty(self):
         from proxy import _render_sw
+
         assert _render_sw("", "v1.0") == ""
 
     @pytest.mark.asyncio
     async def test_sw_503_when_template_unavailable(self, client, monkeypatch):
         import proxy
+
         # v1.0.28 routed sw.js through proxy._sw_asset.response(); the
         # back-compat _SW_RENDERED module attribute is just a snapshot
         # from import time, not what the route reads at request time.
@@ -270,20 +300,22 @@ class TestServiceWorker:
         StaticFiles mount silently took over and served the raw template
         (with the literal __APP_VERSION__ placeholder)."""
         from proxy import _VERSION
+
         resp = await client.get("/")
         assert resp.status_code == 200
         assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         body = resp.text
         assert "__APP_VERSION__" not in body, "placeholder leaked into served HTML"
-        assert f'style.css?v={_VERSION}' in body or 'style.css?v=' in body
+        assert f"style.css?v={_VERSION}" in body or "style.css?v=" in body
 
     @pytest.mark.asyncio
     async def test_index_html_substitutes_style_css_version(self, client):
         from proxy import _VERSION
+
         resp = await client.get("/index.html")
         assert resp.status_code == 200
         assert "__APP_VERSION__" not in resp.text
-        assert f'style.css?v={_VERSION}' in resp.text or 'style.css?v=' in resp.text
+        assert f"style.css?v={_VERSION}" in resp.text or "style.css?v=" in resp.text
 
     @pytest.mark.asyncio
     async def test_root_is_idempotent_across_two_fetches(self, client):
@@ -304,6 +336,7 @@ class TestTemplatedAsset:
 
     def test_rendered_substitutes_placeholder(self, tmp_path):
         from proxy import TemplatedAsset
+
         f = tmp_path / "a.txt"
         f.write_text("hello __APP_VERSION__")
         asset = TemplatedAsset(f, "v1.2.3", "text/plain", "fallback")
@@ -311,9 +344,8 @@ class TestTemplatedAsset:
 
     def test_missing_file_yields_503_fallback(self, tmp_path):
         from proxy import TemplatedAsset
-        asset = TemplatedAsset(
-            tmp_path / "does-not-exist.txt", "v1.0", "text/plain", "missing\n"
-        )
+
+        asset = TemplatedAsset(tmp_path / "does-not-exist.txt", "v1.0", "text/plain", "missing\n")
         assert asset.template == ""
         assert asset.rendered == ""
         resp = asset.response()
@@ -323,6 +355,7 @@ class TestTemplatedAsset:
 
     def test_response_uses_no_cache_headers(self, tmp_path):
         from proxy import TemplatedAsset
+
         f = tmp_path / "a.txt"
         f.write_text("body")
         asset = TemplatedAsset(f, "v1.0", "application/json", "fallback")
@@ -333,10 +366,14 @@ class TestTemplatedAsset:
 
     def test_response_carries_extra_headers(self, tmp_path):
         from proxy import TemplatedAsset
+
         f = tmp_path / "sw.js"
         f.write_text("var v = '__APP_VERSION__';")
         asset = TemplatedAsset(
-            f, "v1.0", "application/javascript", "// down",
+            f,
+            "v1.0",
+            "application/javascript",
+            "// down",
             extra_headers={"Service-Worker-Allowed": "/"},
         )
         resp = asset.response()
@@ -344,6 +381,7 @@ class TestTemplatedAsset:
 
     def test_extra_headers_do_not_override_cache_control(self, tmp_path):
         from proxy import TemplatedAsset
+
         f = tmp_path / "a.txt"
         f.write_text("ok")
         # Caller tries to set Cache-Control: max-age=…; the no-cache
@@ -351,20 +389,27 @@ class TestTemplatedAsset:
         # version-rotating documents whose whole purpose is to be
         # re-fetched on every navigation.
         asset = TemplatedAsset(
-            f, "v1.0", "text/plain", "fb",
+            f,
+            "v1.0",
+            "text/plain",
+            "fb",
             extra_headers={"Cache-Control": "max-age=3600"},
         )
         resp = asset.response()
         # extra_headers iterates AFTER the no-cache default — that
         # means the caller's value wins. If we ever change the order,
         # this test surfaces the regression.
-        assert "no-cache" in resp.headers["cache-control"] or "max-age=3600" in resp.headers["cache-control"]
+        assert (
+            "no-cache" in resp.headers["cache-control"]
+            or "max-age=3600" in resp.headers["cache-control"]
+        )
 
     def test_placeholder_as_version_refuses_to_render(self, tmp_path):
         """A VERSION file that literally contains the placeholder string
         would no-op the substitution and serve invalid output. Defensive
         bail-out: render to empty so the response falls back to 503."""
-        from proxy import TemplatedAsset, _SW_PLACEHOLDER
+        from proxy import _SW_PLACEHOLDER, TemplatedAsset
+
         f = tmp_path / "a.txt"
         f.write_text(f"hello {_SW_PLACEHOLDER}")
         asset = TemplatedAsset(f, _SW_PLACEHOLDER, "text/plain", "fb")
@@ -373,6 +418,7 @@ class TestTemplatedAsset:
 
     def test_unknown_version_falls_back_to_string_unknown(self, tmp_path):
         from proxy import TemplatedAsset
+
         f = tmp_path / "a.txt"
         f.write_text("v=__APP_VERSION__")
         asset = TemplatedAsset(f, "unknown", "text/plain", "fb")
@@ -382,6 +428,7 @@ class TestTemplatedAsset:
         """The /sw.js route handler delegates to the shared helper —
         any future change to the helper must keep this wiring intact."""
         from proxy import _sw_asset
+
         resp = _sw_asset.response()
         assert resp.status_code == 200
         assert resp.media_type == "application/javascript"
@@ -389,6 +436,7 @@ class TestTemplatedAsset:
 
     def test_index_route_uses_templated_asset(self):
         from proxy import _index_asset
+
         resp = _index_asset.response()
         assert resp.status_code == 200
         assert resp.media_type == "text/html; charset=utf-8"
@@ -418,12 +466,16 @@ class TestInputValidation:
 
     @pytest.mark.asyncio
     async def test_stationboard_valid_lid(self, client):
-        resp = await client.post("/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60})
+        resp = await client.post(
+            "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "DEP", "dur": 60}
+        )
         assert resp.status_code in (200, 502)
 
     @pytest.mark.asyncio
     async def test_stationboard_invalid_type(self, client):
-        resp = await client.post("/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "INVALID"})
+        resp = await client.post(
+            "/api/stationboard", json={"lid": "A=1@L=6003411@", "type": "INVALID"}
+        )
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
@@ -472,13 +524,13 @@ class TestCSPHash:
         index_path = Path(__file__).parent.parent / "static" / "index.html"
         content = index_path.read_text()
 
-        match = re.search(r'<script>(.*?)</script>', content)
+        match = re.search(r"<script>(.*?)</script>", content)
         assert match, "No inline script found in index.html"
         script_body = match.group(1)
 
         computed_hash = base64.b64encode(
-            hashlib.sha256(script_body.encode('utf-8')).digest()
-        ).decode('ascii')
+            hashlib.sha256(script_body.encode("utf-8")).digest()
+        ).decode("ascii")
 
         proxy_path = Path(__file__).parent.parent / "proxy.py"
         proxy_content = proxy_path.read_text()
@@ -498,12 +550,54 @@ class TestSearchEndpoint:
     """Tests for /api/search with injected stops_data."""
 
     SAMPLE_STOPS = [
-        {"name": "Heidelberg Hbf", "lid": "A=1@L=8000156@", "lat": 49.4044, "lon": 8.6753, "extId": "8000156", "platform": ""},
-        {"name": "Heidelberg Bismarckplatz", "lid": "A=1@L=6002500@", "lat": 49.4098, "lon": 8.6847, "extId": "6002500", "platform": ""},
-        {"name": "Sandhausen Altes Rathaus", "lid": "A=1@L=6003411@", "lat": 49.3420, "lon": 8.6598, "extId": "6003411", "platform": ""},
-        {"name": "Sandhausen Neues Rathaus", "lid": "A=1@L=6003466@", "lat": 49.3435, "lon": 8.6590, "extId": "6003466", "platform": ""},
-        {"name": "St. Leon-Rot See", "lid": "A=1@L=6004111@", "lat": 49.2650, "lon": 8.6200, "extId": "6004111", "platform": ""},
-        {"name": "St. Leon-Rot See", "lid": "A=1@L=6004112@", "lat": 49.2650, "lon": 8.6200, "extId": "6004112", "platform": ""},
+        {
+            "name": "Heidelberg Hbf",
+            "lid": "A=1@L=8000156@",
+            "lat": 49.4044,
+            "lon": 8.6753,
+            "extId": "8000156",
+            "platform": "",
+        },
+        {
+            "name": "Heidelberg Bismarckplatz",
+            "lid": "A=1@L=6002500@",
+            "lat": 49.4098,
+            "lon": 8.6847,
+            "extId": "6002500",
+            "platform": "",
+        },
+        {
+            "name": "Sandhausen Altes Rathaus",
+            "lid": "A=1@L=6003411@",
+            "lat": 49.3420,
+            "lon": 8.6598,
+            "extId": "6003411",
+            "platform": "",
+        },
+        {
+            "name": "Sandhausen Neues Rathaus",
+            "lid": "A=1@L=6003466@",
+            "lat": 49.3435,
+            "lon": 8.6590,
+            "extId": "6003466",
+            "platform": "",
+        },
+        {
+            "name": "St. Leon-Rot See",
+            "lid": "A=1@L=6004111@",
+            "lat": 49.2650,
+            "lon": 8.6200,
+            "extId": "6004111",
+            "platform": "",
+        },
+        {
+            "name": "St. Leon-Rot See",
+            "lid": "A=1@L=6004112@",
+            "lat": 49.2650,
+            "lon": 8.6200,
+            "extId": "6004112",
+            "platform": "",
+        },
     ]
 
     @pytest.fixture(autouse=True)
@@ -562,7 +656,14 @@ class TestSearchEndpoint:
     async def test_result_cap_at_50(self, client):
         """Inject >50 matching stops, verify cap."""
         many_stops = [
-            {"name": f"TestStop {i}", "lid": f"A=1@L={i}@", "lat": 49.0 + i * 0.001, "lon": 8.0 + i * 0.001, "extId": str(i), "platform": ""}
+            {
+                "name": f"TestStop {i}",
+                "lid": f"A=1@L={i}@",
+                "lat": 49.0 + i * 0.001,
+                "lon": 8.0 + i * 0.001,
+                "extId": str(i),
+                "platform": "",
+            }
             for i in range(100)
         ]
         app.state.stops_data = {"stops": many_stops}

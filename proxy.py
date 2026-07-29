@@ -30,68 +30,68 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import fanout
+
 # Re-export submodule symbols so tests can keep using `from proxy import X`.
-# noqa: F401 — these names are deliberately imported into the proxy namespace.
 from audit import (  # noqa: F401
+    AUDIT_LOG_MAX_KEYS,
     _audit,
     _audit_log_last,
-    AUDIT_LOG_MAX_KEYS,
 )
 from caches import (  # noqa: F401
-    _Cache,
-    cache,
-    stops_cache,
-    cached_singleflight,
-    _inflight,
-    _journey_cache,
-    _journey_cache_lock,
-    _inflight_journey,
     _JOURNEY_CACHE_TTL,
-    _stationboard_cache,
-    _stationboard_cache_lock,
-    _inflight_stationboard,
-    _STATIONBOARD_CACHE_TTL,
-    _line_search_cache,
     _LINE_SEARCH_CACHE_TTL,
+    _STATIONBOARD_CACHE_TTL,
     CACHE_TTL,
     STOPS_CACHE_TTL,
+    _Cache,
+    _inflight,
+    _inflight_journey,
+    _inflight_stationboard,
+    _journey_cache,
+    _journey_cache_lock,
+    _line_search_cache,
+    _stationboard_cache,
+    _stationboard_cache_lock,
+    cache,
+    cached_singleflight,
+    stops_cache,
 )
 from hafas import (  # noqa: F401
-    HAFAS_ENDPOINT,
     AUTH_AID,
-    CLIENT_ID,
-    CLIENT_VERSION,
-    CLIENT_NAME,
-    EXT,
-    VER,
-    UPSTREAM_TIMEOUT,
-    MAX_CONSECUTIVE_FAILURES,
     CIRCUIT_BREAKER_COOLDOWN,
+    CLIENT_ID,
+    CLIENT_NAME,
+    CLIENT_VERSION,
+    EXT,
+    HAFAS_ENDPOINT,
     JID_PATTERN,
     LID_PATTERN,
+    MAX_CONSECUTIVE_FAILURES,
+    UPSTREAM_TIMEOUT,
+    VER,
     _build_hafas_envelope,
     _CircuitBreaker,
-    breaker,
     _hafas_call_via_app,
+    breaker,
 )
 from sse_handler import (  # noqa: F401
     ALLOWED_ORIGINS,
+    SSE_BODY_LIMIT,
     SSE_COOKIE_NAME,
     SSE_COOKIE_PATH,
     SSE_COOKIE_SECURE,
-    SSE_PROTOCOL_VERSION,
-    SSE_KEEPALIVE_MIN,
     SSE_KEEPALIVE_MAX,
-    SSE_BODY_LIMIT,
+    SSE_KEEPALIVE_MIN,
+    SSE_PROTOCOL_VERSION,
     SSE_SLOW_YIELD_THRESHOLD_S,
     SelectPayload,
     ViewportPayload,
-    _client_ip,
     _check_origin,
+    _client_ip,
     _err_response,
     _fetch_for_selection,
     _fetch_journey_for_subscriber,
@@ -107,15 +107,18 @@ from sse_handler import (  # noqa: F401
     _rate_check_request,
     _read_body_with_limit,
     client_activity,
+    handle_select,
     handle_sse_stream,
     handle_viewport,
-    handle_select,
 )
 from tick import (
-    TickTracker, tick_calibrator, sse_push_loop,
-    _TICK_ENABLED, _SSE_PUSH_ENABLED, TICK_MAX_AGE,
+    _SSE_PUSH_ENABLED,
+    _TICK_ENABLED,
+    TICK_MAX_AGE,
+    TickTracker,
+    sse_push_loop,
+    tick_calibrator,
 )
-
 
 _VERSION_RE = re.compile(r"^[A-Za-z0-9._+\-]{1,64}$")
 _VERSION_FILE_MAX = 256
@@ -148,14 +151,28 @@ def _read_version() -> str:
     git_bin = shutil.which("git")
     if git_bin:
         try:
-            r = subprocess.run(
-                [git_bin,
-                 "-c", "core.fsmonitor=",
-                 "-c", "core.sshCommand=",
-                 "-c", "core.pager=",
-                 "-c", "protocol.allow=never",
-                 "describe", "--tags", "--always", "--dirty"],
-                cwd=here, capture_output=True, timeout=2, check=False,
+            # git_bin is from shutil.which (trusted PATH lookup) and every argv
+            # entry is a fixed literal — no untrusted input reaches the process.
+            r = subprocess.run(  # noqa: S603
+                [
+                    git_bin,
+                    "-c",
+                    "core.fsmonitor=",
+                    "-c",
+                    "core.sshCommand=",
+                    "-c",
+                    "core.pager=",
+                    "-c",
+                    "protocol.allow=never",
+                    "describe",
+                    "--tags",
+                    "--always",
+                    "--dirty",
+                ],
+                cwd=here,
+                capture_output=True,
+                timeout=2,
+                check=False,
                 env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C"},
             )
             if r.returncode == 0:
@@ -206,7 +223,8 @@ async def lifespan(app: FastAPI):
     )
     log.info("httpx client started")
 
-    from stops_builder import load_stops_cache, is_stops_cache_stale
+    from stops_builder import is_stops_cache_stale, load_stops_cache
+
     cached = load_stops_cache()
     stale = is_stops_cache_stale(cached)
     skip_rebuild = os.environ.get("BUSRADAR_SKIP_STOPS_REBUILD") == "1"
@@ -237,10 +255,18 @@ async def lifespan(app: FastAPI):
     background_tasks.append(asyncio.create_task(schedule_daily_rebuild_wrapper(app)))
 
     if _TICK_ENABLED:
-        background_tasks.append(asyncio.create_task(
-            tick_calibrator(app, breaker, tick_tracker, client_activity,
-                           HAFAS_ENDPOINT, _build_hafas_envelope)
-        ))
+        background_tasks.append(
+            asyncio.create_task(
+                tick_calibrator(
+                    app,
+                    breaker,
+                    tick_tracker,
+                    client_activity,
+                    HAFAS_ENDPOINT,
+                    _build_hafas_envelope,
+                )
+            )
+        )
     if _SSE_PUSH_ENABLED:
         background_tasks.append(asyncio.create_task(sse_push_loop(client_activity, tick_tracker)))
 
@@ -259,7 +285,7 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(_t, timeout=5.0)
         except asyncio.CancelledError:
             pass
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("[lifespan] background task did not cancel within 5s")
         except Exception:
             log.exception("[lifespan] background task raised during shutdown")
@@ -268,14 +294,18 @@ async def lifespan(app: FastAPI):
 
 
 async def _build_stops_on_startup(app: FastAPI):
-    from stops_builder import build_stops_cache
     import time as _t
+
+    from stops_builder import build_stops_cache
+
     app.state.stops_rebuilding = True
     t0 = _t.time()
     try:
         data = await build_stops_cache()
         app.state.stops_data = data
-        log.info("Startup stops build complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0)
+        log.info(
+            "Startup stops build complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0
+        )
     except Exception as e:
         log.error("Startup stops build failed after %.0fs: %s", _t.time() - t0, e)
     finally:
@@ -283,10 +313,13 @@ async def _build_stops_on_startup(app: FastAPI):
 
 
 async def schedule_daily_rebuild_wrapper(app: FastAPI):
-    from stops_builder import build_stops_cache
     import time as _t
+
+    from stops_builder import build_stops_cache
+
     while True:
         from datetime import datetime, timedelta
+
         now = datetime.now()
         next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
         if now >= next_run:
@@ -299,7 +332,11 @@ async def schedule_daily_rebuild_wrapper(app: FastAPI):
         try:
             data = await build_stops_cache()
             app.state.stops_data = data
-            log.info("Daily stops rebuild complete: %d stops in %.0fs", data.get("count", 0), _t.time() - t0)
+            log.info(
+                "Daily stops rebuild complete: %d stops in %.0fs",
+                data.get("count", 0),
+                _t.time() - t0,
+            )
         except Exception as e:
             log.error("Daily stops rebuild failed after %.0fs: %s", _t.time() - t0, e)
         finally:
@@ -315,7 +352,12 @@ async def _sanitized_exception_handler(request: Request, exc: Exception):
     it to the client (SEC-236, no information disclosure). Validation
     errors and HTTPException still get FastAPI's normal handling — this
     only wraps unhandled exceptions from handlers."""
-    log.exception("[handler] unhandled exception in %s %s", request.method, request.url.path)
+    log.error(
+        "[handler] unhandled exception in %s %s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+    )
     return JSONResponse(status_code=500, content={"error": "internal"})
 
 
@@ -344,7 +386,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # removes the ambiguity. 'self' = same-origin /sw.js only.
             "worker-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org data:; "
+            "img-src 'self' https://*.basemaps.cartocdn.com "
+            "https://tile.openstreetmap.org https://*.tile.openstreetmap.org data:; "
             "connect-src 'self'; "
             "font-src 'self'; "
             "base-uri 'self'; "
@@ -409,32 +452,36 @@ def _flatten_vehicles(res: dict) -> list[dict]:
                     if len(parts) >= 5 and parts[4]:
                         platform = parts[4]
                         break
-            next_stops.append({
-                "name": loc.get("name", "?"),
-                "lid": loc.get("lid", ""),
-                "lat": loc.get("crd", {}).get("y", 0) / 1_000_000,
-                "lon": loc.get("crd", {}).get("x", 0) / 1_000_000,
-                "extId": loc.get("extId", ""),
-                "platform": platform,
-                "dTimeS": s.get("dTimeS"),
-                "dTimeR": s.get("dTimeR"),
-                "aTimeS": s.get("aTimeS"),
-                "aTimeR": s.get("aTimeR"),
-                "dProgType": s.get("dProgType"),
-            })
+            next_stops.append(
+                {
+                    "name": loc.get("name", "?"),
+                    "lid": loc.get("lid", ""),
+                    "lat": loc.get("crd", {}).get("y", 0) / 1_000_000,
+                    "lon": loc.get("crd", {}).get("x", 0) / 1_000_000,
+                    "extId": loc.get("extId", ""),
+                    "platform": platform,
+                    "dTimeS": s.get("dTimeS"),
+                    "dTimeR": s.get("dTimeR"),
+                    "aTimeS": s.get("aTimeS"),
+                    "aTimeR": s.get("aTimeR"),
+                    "dProgType": s.get("dProgType"),
+                }
+            )
 
-        vehicles.append({
-            "jid": j.get("jid", ""),
-            "line": prod.get("nameS", prod.get("name", "?")),
-            "lineFull": prod.get("name", "?"),
-            "direction": j.get("dirTxt", "?"),
-            "lat": pos.get("y", 0) / 1_000_000,
-            "lon": pos.get("x", 0) / 1_000_000,
-            "delay": delay,
-            "dirGeo": j.get("dirGeo"),
-            "progress": j.get("proc"),
-            "stops": next_stops,
-        })
+        vehicles.append(
+            {
+                "jid": j.get("jid", ""),
+                "line": prod.get("nameS", prod.get("name", "?")),
+                "lineFull": prod.get("name", "?"),
+                "direction": j.get("dirTxt", "?"),
+                "lat": pos.get("y", 0) / 1_000_000,
+                "lon": pos.get("x", 0) / 1_000_000,
+                "delay": delay,
+                "dirGeo": j.get("dirGeo"),
+                "progress": j.get("proc"),
+                "stops": next_stops,
+            }
+        )
 
     return vehicles
 
@@ -490,14 +537,16 @@ async def _discover_platforms(request: Request, lid: str) -> list[dict]:
                         platform = parts[4]
                     break
 
-            platforms.append({
-                "name": loc.get("name", "?"),
-                "lid": loc.get("lid", ""),
-                "lat": crd.get("y", 0) / 1_000_000,
-                "lon": crd.get("x", 0) / 1_000_000,
-                "extId": ext_id,
-                "platform": platform,
-            })
+            platforms.append(
+                {
+                    "name": loc.get("name", "?"),
+                    "lid": loc.get("lid", ""),
+                    "lat": crd.get("y", 0) / 1_000_000,
+                    "lon": crd.get("x", 0) / 1_000_000,
+                    "extId": ext_id,
+                    "platform": platform,
+                }
+            )
 
     return platforms
 
@@ -510,6 +559,7 @@ async def get_stops(
     radius: int = Query(default=5000, ge=100, le=20000),
 ):
     import math
+
     stops_data = request.app.state.stops_data
     all_stops = stops_data.get("stops", [])
 
@@ -550,9 +600,11 @@ async def search_stops(
             results.append(s)
 
     if lat is not None and lon is not None:
-        results.sort(key=lambda s: math.sqrt(
-            ((s["lat"] - lat) * 111) ** 2 + ((s["lon"] - lon) * 111 * 0.65) ** 2
-        ))
+        results.sort(
+            key=lambda s: math.sqrt(
+                ((s["lat"] - lat) * 111) ** 2 + ((s["lon"] - lon) * 111 * 0.65) ** 2
+            )
+        )
 
     return {"results": results[:50], "count": min(len(results), 50)}
 
@@ -766,8 +818,14 @@ class TemplatedAsset:
     which matches the existing deploy model (RPM + transactional-update
     + reboot)."""
 
-    def __init__(self, path: Path, version: str, media_type: str,
-                 fallback_body: str, extra_headers: dict | None = None):
+    def __init__(
+        self,
+        path: Path,
+        version: str,
+        media_type: str,
+        fallback_body: str,
+        extra_headers: dict | None = None,
+    ):
         self.path = path
         self.media_type = media_type
         self.fallback_body = fallback_body

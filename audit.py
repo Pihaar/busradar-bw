@@ -12,7 +12,6 @@ import hashlib
 import logging
 import time
 
-
 log = logging.getLogger("busradar")
 
 

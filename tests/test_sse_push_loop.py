@@ -2,16 +2,17 @@
 
 Covers cadence (fires fire_push_tick every SSE_PUSH_PERIOD), idle-block-on-
 no-subscribers, subscriber-join wakeup, and error-recovery."""
+
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 import fanout
 import tick
-from tick import ClientActivity, sse_push_loop, TickTracker, _push_grid_fire
+from tick import ClientActivity, TickTracker, _push_grid_fire, sse_push_loop
 
 
 @pytest.fixture
@@ -123,6 +124,7 @@ class TestCalibratorNoLongerBroadcasts:
         Regression guard: the string must not appear in the calibrator
         implementation. sse_push_loop uses fire_push_tick instead."""
         import inspect
+
         src = inspect.getsource(tick._run_calibration)
         assert "fire_tick" not in src, "calibrator must not broadcast"
         src2 = inspect.getsource(tick.tick_calibrator)
@@ -149,14 +151,14 @@ class TestPushGridFire:
             seq.append(_push_grid_fire(pred=30.0, now=now))
         # (wait, aligned): +1 aligned, then +10 spacing, aligned only on the
         # tick-coincident grid point.
-        assert seq[0] == (1.0, True)       # fire at t=1 (tick just passed)
-        assert seq[1] == (10.0, False)     # t=1 -> next fire t=11
-        assert seq[2] == (10.0, False)     # t=11 -> t=21
-        assert seq[3] == (10.0, True)      # t=21 -> t=31 (next tick +1)
+        assert seq[0] == (1.0, True)  # fire at t=1 (tick just passed)
+        assert seq[1] == (10.0, False)  # t=1 -> next fire t=11
+        assert seq[2] == (10.0, False)  # t=11 -> t=21
+        assert seq[3] == (10.0, True)  # t=21 -> t=31 (next tick +1)
 
     def test_join_just_before_tick(self):
         wait, aligned = _push_grid_fire(pred=30.0, now=29.0)
-        assert abs(wait - 2.0) < 1e-9      # next aligned fire at t=31
+        assert abs(wait - 2.0) < 1e-9  # next aligned fire at t=31
         assert aligned is True
 
     def test_grid_point_yields_strictly_future_fire(self):
@@ -231,7 +233,9 @@ class TestPushLoopAlignmentWiring:
         assert flags[3] is True
 
     @pytest.mark.asyncio
-    async def test_calibrated_tracker_produces_aligned_and_unaligned_fires(self, monkeypatch, fresh_fanout):
+    async def test_calibrated_tracker_produces_aligned_and_unaligned_fires(
+        self, monkeypatch, fresh_fanout
+    ):
         """With a known tick, the loop emits a mix of aligned and unaligned
         fires (proving it uses the phase-locked grid, not a flat fallback)."""
         # Shrink the whole timescale keeping the 3:1 ratio (30 = 3 x 10).
@@ -271,13 +275,16 @@ class TestPushLoopAlignmentWiring:
                 self._ts = tick._mono()
                 self._flip_after = flip_after
                 self._n = 0
+
             def next_tick_prediction(self):
                 self._n += 1
                 if self._n > self._flip_after:
                     return None  # calibration lost
                 now = tick._mono()
                 elapsed = now - self._ts
-                cycles = int(elapsed / tick.TICK_PERIOD) + (0 if elapsed % tick.TICK_PERIOD == 0 else 1)
+                cycles = int(elapsed / tick.TICK_PERIOD) + (
+                    0 if elapsed % tick.TICK_PERIOD == 0 else 1
+                )
                 return self._ts + max(1, cycles) * tick.TICK_PERIOD
 
         mock_fire = AsyncMock()

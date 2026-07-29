@@ -1,4 +1,5 @@
 """Tests for stops_builder.py — pure functions + integration with mocked HAFAS."""
+
 import asyncio
 import json
 from datetime import datetime
@@ -107,16 +108,28 @@ class TestLoadStopsCache:
         callers serve stale data while a background rebuild runs. The
         staleness signal moved to is_stops_cache_stale(cached)."""
         cache_file = tmp_path / "stops_cache.json"
-        cache_file.write_text(json.dumps({
-            "stops": [{"name": "old"}],
-            "built_at": "2026-05-22T02:00:00",
-        }))
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "stops": [{"name": "old"}],
+                    "built_at": "2026-05-22T02:00:00",
+                }
+            )
+        )
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
         fake_now = datetime(2026, 5, 23, 10, 0, 0)
-        monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
-            "now": staticmethod(lambda: fake_now),
-            "fromisoformat": datetime.fromisoformat,
-        }))
+        monkeypatch.setattr(
+            stops_builder,
+            "datetime",
+            type(
+                "FakeDT",
+                (),
+                {
+                    "now": staticmethod(lambda: fake_now),
+                    "fromisoformat": datetime.fromisoformat,
+                },
+            ),
+        )
         data = load_stops_cache()
         assert data is not None
         assert data["stops"] == [{"name": "old"}]
@@ -124,16 +137,28 @@ class TestLoadStopsCache:
 
     def test_fresh_cache_not_stale(self, tmp_path, monkeypatch):
         cache_file = tmp_path / "stops_cache.json"
-        cache_file.write_text(json.dumps({
-            "stops": [],
-            "built_at": "2026-05-23T04:00:00",
-        }))
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "stops": [],
+                    "built_at": "2026-05-23T04:00:00",
+                }
+            )
+        )
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
         fake_now = datetime(2026, 5, 23, 10, 0, 0)
-        monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
-            "now": staticmethod(lambda: fake_now),
-            "fromisoformat": datetime.fromisoformat,
-        }))
+        monkeypatch.setattr(
+            stops_builder,
+            "datetime",
+            type(
+                "FakeDT",
+                (),
+                {
+                    "now": staticmethod(lambda: fake_now),
+                    "fromisoformat": datetime.fromisoformat,
+                },
+            ),
+        )
         cached = load_stops_cache()
         assert stops_builder.is_stops_cache_stale(cached) is False
 
@@ -161,10 +186,18 @@ class TestLoadStopsCache:
         cache_file.write_text(json.dumps(data))
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
         fake_now = datetime(2026, 5, 23, 10, 0, 0)
-        monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
-            "now": staticmethod(lambda: fake_now),
-            "fromisoformat": datetime.fromisoformat,
-        }))
+        monkeypatch.setattr(
+            stops_builder,
+            "datetime",
+            type(
+                "FakeDT",
+                (),
+                {
+                    "now": staticmethod(lambda: fake_now),
+                    "fromisoformat": datetime.fromisoformat,
+                },
+            ),
+        )
         result = load_stops_cache()
         assert result is not None
         assert result["stops"][0]["name"] == "Test"
@@ -175,10 +208,18 @@ class TestLoadStopsCache:
         cache_file.write_text(json.dumps(data))
         monkeypatch.setattr(stops_builder, "CACHE_FILE", cache_file)
         fake_now = datetime(2026, 5, 23, 2, 30, 0)  # before 3:00
-        monkeypatch.setattr(stops_builder, "datetime", type("FakeDT", (), {
-            "now": staticmethod(lambda: fake_now),
-            "fromisoformat": datetime.fromisoformat,
-        }))
+        monkeypatch.setattr(
+            stops_builder,
+            "datetime",
+            type(
+                "FakeDT",
+                (),
+                {
+                    "now": staticmethod(lambda: fake_now),
+                    "fromisoformat": datetime.fromisoformat,
+                },
+            ),
+        )
         result = load_stops_cache()
         assert result is not None
 
@@ -196,8 +237,7 @@ class TestBounded:
 
         async def instrumented():
             current[0] += 1
-            if current[0] > peak[0]:
-                peak[0] = current[0]
+            peak[0] = max(peak[0], current[0])
             await asyncio.sleep(0.01)
             current[0] -= 1
 
@@ -240,7 +280,6 @@ class TestBuildStopsCacheErrorThreshold:
 
         async def failing_hafas(client, method, req):
             call_count[0] += 1
-            return None  # simulates all calls failing
 
         monkeypatch.setattr(stops_builder, "_hafas_call", failing_hafas)
         result = await build_stops_cache()

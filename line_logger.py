@@ -21,6 +21,7 @@ Output schema (one journey per line):
   ]
 }
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +30,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -50,7 +51,7 @@ LOG_DIR = Path(os.environ.get("LINE_LOGGER_DIR", "/var/lib/busradar/line-logs"))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.INFO,
 )
 log = logging.getLogger("line_logger")
@@ -60,7 +61,9 @@ def envelope(method: str, req: dict) -> dict:
     return {
         "auth": {"type": "AID", "aid": AUTH_AID},
         "client": {"type": "AND", "id": "DB-REGIO", "v": "3000000", "name": "DB Busradar BW"},
-        "ext": "DB.REGIO.1", "ver": "1.39", "lang": "de",
+        "ext": "DB.REGIO.1",
+        "ver": "1.39",
+        "lang": "de",
         "svcReqL": [{"meth": method, "req": req}],
     }
 
@@ -86,12 +89,16 @@ def get_tick_aligned_ts(now_wall: float) -> tuple[float, float | None]:
 
 async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict]:
     """Fetch all active vehicles in the ring, return flattened list."""
-    payload = envelope("JourneyGeoPos", {
-        "ring": {"cCrd": RING_CENTER, "maxDist": RING_RADIUS_M},
-        "perSize": 60, "perStep": 5,
-        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-        "trainPosMode": "REPORT_ONLY",
-    })
+    payload = envelope(
+        "JourneyGeoPos",
+        {
+            "ring": {"cCrd": RING_CENTER, "maxDist": RING_RADIUS_M},
+            "perSize": 60,
+            "perStep": 5,
+            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+            "trainPosMode": "REPORT_ONLY",
+        },
+    )
     resp = await client.post(HAFAS_ENDPOINT, json=payload, timeout=10.0)
     resp.raise_for_status()
     data = resp.json()
@@ -108,11 +115,13 @@ async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict]:
         line = prod.get("nameS", prod.get("name", "?"))
         if line not in TARGET_LINES:
             continue
-        out.append({
-            "jid": j.get("jid", ""),
-            "line": line,
-            "direction": j.get("dirTxt", "?"),
-        })
+        out.append(
+            {
+                "jid": j.get("jid", ""),
+                "line": line,
+                "direction": j.get("dirTxt", "?"),
+            }
+        )
     return out
 
 
@@ -125,8 +134,7 @@ async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict | N
         data = resp.json()
         if data.get("err") != "OK":
             return None
-        res = data.get("svcResL", [{}])[0].get("res", {})
-        return res
+        return data.get("svcResL", [{}])[0].get("res", {})
     except Exception as e:
         log.warning("Journey fetch failed for %s: %s", jid[:30], type(e).__name__)
         return None
@@ -165,17 +173,19 @@ def extract_stops(journey_res: dict) -> list[dict]:
                 if len(parts) >= 5 and parts[4]:
                     platform = parts[4]
                     break
-        stops.append({
-            "name": loc.get("name", "?"),
-            "extId": loc.get("extId", ""),
-            "platform": platform,
-            "dTimeS": s.get("dTimeS"),
-            "dTimeR": s.get("dTimeR"),
-            "aTimeS": s.get("aTimeS"),
-            "aTimeR": s.get("aTimeR"),
-            "delay_dep_min": calc_delay(s.get("dTimeS"), s.get("dTimeR")),
-            "delay_arr_min": calc_delay(s.get("aTimeS"), s.get("aTimeR")),
-        })
+        stops.append(
+            {
+                "name": loc.get("name", "?"),
+                "extId": loc.get("extId", ""),
+                "platform": platform,
+                "dTimeS": s.get("dTimeS"),
+                "dTimeR": s.get("dTimeR"),
+                "aTimeS": s.get("aTimeS"),
+                "aTimeR": s.get("aTimeR"),
+                "delay_dep_min": calc_delay(s.get("dTimeS"), s.get("dTimeR")),
+                "delay_arr_min": calc_delay(s.get("aTimeS"), s.get("aTimeR")),
+            }
+        )
     return stops
 
 
@@ -188,17 +198,30 @@ def write_final(record: dict) -> None:
     path = log_file_for(date)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    log.info("Finalized jid=%s line=%s dir=%s stops=%d",
-             record["jid"][:20], record["line"], record["direction"][:30], len(record["stops"]))
+    log.info(
+        "Finalized jid=%s line=%s dir=%s stops=%d",
+        record["jid"][:20],
+        record["line"],
+        record["direction"][:30],
+        len(record["stops"]),
+    )
 
 
 async def run():
-    tracked: dict[str, dict] = {}  # jid -> {first_seen, last_seen, line, direction, latest_stops, track, date}
+    tracked: dict[
+        str, dict
+    ] = {}  # jid -> {first_seen, last_seen, line, direction, latest_stops, track, date}
     last_seen_in_api: dict[str, float] = {}
 
-    async with httpx.AsyncClient(headers={"Content-Type": "application/json", "User-Agent": "BusradarLogger/1.0"}) as client:
+    async with httpx.AsyncClient(
+        headers={"Content-Type": "application/json", "User-Agent": "BusradarLogger/1.0"}
+    ) as client:
         log.info("Starting line logger for lines: %s", TARGET_LINES)
-        log.info("Polling every %ds, finalizing %ds after last sighting", POLL_INTERVAL_SECONDS, JOURNEY_GONE_GRACE_SECONDS)
+        log.info(
+            "Polling every %ds, finalizing %ds after last sighting",
+            POLL_INTERVAL_SECONDS,
+            JOURNEY_GONE_GRACE_SECONDS,
+        )
         log.info("Output dir: %s", LOG_DIR)
 
         while True:
@@ -225,7 +248,9 @@ async def run():
                         "latest_stops": [],
                         "track": [],
                     }
-                    log.info("New journey: %s line=%s dir=%s", jid[:20], v["line"], v["direction"][:40])
+                    log.info(
+                        "New journey: %s line=%s dir=%s", jid[:20], v["line"], v["direction"][:40]
+                    )
 
                 # Refresh stop details + record GPS position
                 details = await fetch_journey_details(client, jid)
@@ -251,7 +276,9 @@ async def run():
             for jid, info in tracked.items():
                 if jid in seen_now:
                     continue
-                last_seen = last_seen_in_api.get(jid, info.get("last_seen_ts", info["first_seen_ts"]))
+                last_seen = last_seen_in_api.get(
+                    jid, info.get("last_seen_ts", info["first_seen_ts"])
+                )
                 if now - last_seen >= JOURNEY_GONE_GRACE_SECONDS:
                     to_finalize.append(jid)
 

@@ -3,21 +3,26 @@
 Covers the contracts of /api/stream/, /api/stream/viewport, /api/stream/select.
 Pure unit-level (no real HAFAS), uses FastAPI TestClient via httpx.AsyncClient
 + an asgi-transport."""
+
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from proxy import app, SSE_COOKIE_NAME
 import fanout
 import proxy
 import sse_handler
+from proxy import SSE_COOKIE_NAME, app
 
 
 class _NullCM:
-    async def __aenter__(self): return self
-    async def __aexit__(self, *a): return None
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return None
 
 
 @pytest.fixture
@@ -33,13 +38,15 @@ def fresh_registry(monkeypatch):
     Resets the per-IP rate-limit bucket too, otherwise tests sharing the
     same client IP (127.0.0.1) bleed token state across the suite."""
     import asyncio as _a
+
     import proxy as _proxy
+
     new = fanout.SubscriberRegistry()
     monkeypatch.setattr(fanout, "registry", new)
     monkeypatch.setattr(fanout, "tick_condition", _a.Condition())
     monkeypatch.setattr(fanout, "tick_seq", 0)
     _proxy._post_rate_per_ip.clear()
-    yield new
+    return new
 
 
 @pytest.fixture
@@ -50,6 +57,7 @@ async def client():
 
 
 # === GET /api/stream/ ===
+
 
 class TestSSEStream:
     @pytest.mark.skip(reason="SSE stream test hangs under httpx-asgi; verified via curl smoke")
@@ -66,8 +74,10 @@ class TestSSEStream:
     async def test_cap_hit_returns_429_with_scope(self, client, fresh_registry, monkeypatch):
         """When subscribe() raises CapExceeded, the route returns 429 with
         the scope and a Retry-After header in the 30-90s range."""
+
         async def raise_cap(ip):
             raise fanout.CapExceeded("ip", 20)
+
         monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
         resp = await client.get("/api/stream/")
         assert resp.status_code == 429
@@ -80,6 +90,7 @@ class TestSSEStream:
 
 
 # === POST /api/stream/viewport ===
+
 
 class TestStreamViewport:
     @pytest.mark.asyncio
@@ -203,6 +214,7 @@ class TestStreamViewport:
 
 # === POST /api/stream/select ===
 
+
 class TestStreamSelect:
     @pytest.mark.asyncio
     async def test_select_journey_happy_path(self, client, fresh_registry):
@@ -308,7 +320,7 @@ class TestStreamSelect:
     async def test_select_enforces_origin_first(self, client, fresh_registry):
         resp = await client.post(
             "/api/stream/select",
-            content='{}',
+            content="{}",
             headers={"Origin": "https://evil.example"},
         )
         assert resp.status_code == 403
@@ -331,6 +343,7 @@ class TestStreamSelect:
 
 # === Regression coverage for the connected-clients refactor ===
 # (Counter-source switch, fire_tick wake-up, client_activity-via-SSE)
+
 
 class TestCounterSourceMigration:
     """Asserts that the SSE `connected` count is sourced from
@@ -381,10 +394,10 @@ class TestClientActivityFromSSE:
 
     @pytest.mark.skip(
         reason="httpx ASGITransport hangs on the SSE keepalive loop; same "
-               "root cause as TestSSEStream::test_first_event_is_subscribe_"
-               "with_version. Touch is verified end-to-end via curl smoke "
-               "test (/api/health.calibrator_mode flips to 'active' after one "
-               "SSE subscribe)."
+        "root cause as TestSSEStream::test_first_event_is_subscribe_"
+        "with_version. Touch is verified end-to-end via curl smoke "
+        "test (/api/health.calibrator_mode flips to 'active' after one "
+        "SSE subscribe)."
     )
     @pytest.mark.asyncio
     async def test_subscribe_touches_client_activity(self):
@@ -483,7 +496,9 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
     quantized bbox actually changed. Repeat-POST with same payload is a no-op."""
 
     @pytest.mark.asyncio
-    async def test_repeat_viewport_post_does_not_fire_tick(self, client, fresh_registry, monkeypatch):
+    async def test_repeat_viewport_post_does_not_fire_tick(
+        self, client, fresh_registry, monkeypatch
+    ):
         sub = await fresh_registry.subscribe("127.0.0.1")
         fired = {"count": 0}
         original = fanout.fire_tick
@@ -506,7 +521,9 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         assert fired["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_posmode_only_change_does_not_fire_tick(self, client, fresh_registry, monkeypatch):
+    async def test_posmode_only_change_does_not_fire_tick(
+        self, client, fresh_registry, monkeypatch
+    ):
         """Regression: PIV finding v1.2.1. A POST that flips posMode without
         changing the quantized bbox must NOT wake all subscribers globally
         (was: broadcast → 500× HAFAS fetch amplification). Skip anchor
@@ -551,6 +568,7 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         denied (return False) — deny-by-default under the /api rate
         limit."""
         from sse_handler import _post_rate_check_ip
+
         assert _post_rate_check_ip("") is False
 
     @pytest.mark.asyncio
@@ -639,12 +657,15 @@ class TestStreamCrossOriginRejection:
         assert resp.json()["error"] == "cross_origin"
 
     @pytest.mark.asyncio
-    async def test_same_origin_sec_fetch_site_does_not_403(self, client, fresh_registry, monkeypatch):
+    async def test_same_origin_sec_fetch_site_does_not_403(
+        self, client, fresh_registry, monkeypatch
+    ):
         # Force a CapExceeded so the route returns 429 *before* the SSE
         # streaming response opens; that lets us verify the Sec-Fetch-Site
         # branch without entering the keepalive loop (which hangs ASGI).
         async def raise_cap(ip):
             raise fanout.CapExceeded("ip", 20)
+
         monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
         resp = await client.get(
             "/api/stream/",
@@ -657,6 +678,7 @@ class TestStreamCrossOriginRejection:
         # Older browsers / curl don't send Sec-Fetch-Site at all — must accept.
         async def raise_cap(ip):
             raise fanout.CapExceeded("ip", 20)
+
         monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
         resp = await client.get("/api/stream/")
         assert resp.status_code == 429  # not 403
@@ -665,8 +687,10 @@ class TestStreamCrossOriginRejection:
     async def test_wrong_origin_rejected_on_get(self, client, fresh_registry, monkeypatch):
         """Defense-in-depth: GET /api/stream/ rejects Origin not in ALLOWED.
         Closes the gap when Sec-Fetch-Site is stripped by intermediaries."""
+
         async def raise_cap(ip):
             raise fanout.CapExceeded("ip", 20)
+
         monkeypatch.setattr(fresh_registry, "subscribe", raise_cap)
         resp = await client.get(
             "/api/stream/",
@@ -747,6 +771,7 @@ class TestLidPatternEndAnchored:
         full = "A=1@O=Wiesloch-Walldorf Bahnhof@X=8664801@Y=49291306@U=80@L=44278341@i=A×de:08226:4252:1:A,b×BRN_304521@"
         # Wire JSON: pass the raw string; httpx will escape it properly.
         import json
+
         body = json.dumps({"selection": {"kind": "stationboard", "lid": full}})
         resp = await client.post(
             "/api/stream/select",
@@ -826,7 +851,10 @@ class TestLidPatternEndAnchored:
         # exist in HAFAS. The hotfix widened LID_PATTERN; lock that in.
         sub = await fresh_registry.subscribe("127.0.0.1")
         import json
-        body = json.dumps({"selection": {"kind": "stationboard", "lid": "A=1@O=Köln(Hbf)@L=8000207@"}})
+
+        body = json.dumps(
+            {"selection": {"kind": "stationboard", "lid": "A=1@O=Köln(Hbf)@L=8000207@"}}
+        )
         resp = await client.post(
             "/api/stream/select",
             content=body,
@@ -1161,11 +1189,13 @@ class TestUnicodeDigitRejection:
 
     def test_jid_pattern_does_not_match_unicode_digits(self):
         from proxy import JID_PATTERN
+
         assert not JID_PATTERN.match("1|abc|0|80|٢٢٠٥٢٠٢٦")
         assert JID_PATTERN.match("1|abc|0|80|22052026")
 
     def test_lid_pattern_does_not_match_unicode_digits(self):
         from proxy import LID_PATTERN
+
         assert not LID_PATTERN.match("A=٢٢@L=6003411@")
         assert LID_PATTERN.match("A=1@L=6003411@")
 
@@ -1180,17 +1210,23 @@ class TestCircuitBreakerDoesNotTripOnInputErrors:
         import hafas
 
         class _MockResp:
-            def raise_for_status(self): pass
-            def json(self): return {"err": "BADREQ", "errTxt": "no such journey"}
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"err": "BADREQ", "errTxt": "no such journey"}
 
         class _MockClient:
-            async def post(self, url, json=None): return _MockResp()
+            async def post(self, url, json=None):
+                return _MockResp()
+
         hafas.breaker.failures = 0
         hafas.breaker.last_failure_time = 0.0
 
         class _MockApp:
             class state:
                 client = _MockClient()
+
         app = _MockApp()
 
         for _ in range(5):
@@ -1201,18 +1237,21 @@ class TestCircuitBreakerDoesNotTripOnInputErrors:
 
     @pytest.mark.asyncio
     async def test_network_errors_do_open_breaker(self):
-        import hafas
         import httpx as _httpx
+
+        import hafas
 
         class _MockClient:
             async def post(self, url, json=None):
                 raise _httpx.ConnectError("network down")
+
         hafas.breaker.failures = 0
         hafas.breaker.last_failure_time = 0.0
 
         class _MockApp:
             class state:
                 client = _MockClient()
+
         app = _MockApp()
 
         for _ in range(3):
@@ -1233,6 +1272,7 @@ class TestRESTErrorOpacity:
 
         async def fake_hafas(_app, _method, _req):
             return {"error": "upstream_unavailable", "detail": "secret-internal-detail"}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake_hafas)
         r = await client.post("/api/journey", json={"jid": "1|12345|0|80|22052026"})
         assert r.status_code == 502
@@ -1244,9 +1284,11 @@ class TestSSEProtocolVersionConstantMatch:
     stay in lock-step. Drift = silent reload-loops or stale tabs."""
 
     def test_client_and_server_versions_match(self):
-        from proxy import SSE_PROTOCOL_VERSION
-        from pathlib import Path
         import re
+        from pathlib import Path
+
+        from proxy import SSE_PROTOCOL_VERSION
+
         refresh_js = Path(__file__).resolve().parent.parent / "static" / "refresh.js"
         text = refresh_js.read_text()
         m = re.search(r"SSE_PROTOCOL_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
@@ -1260,8 +1302,9 @@ class TestDetailFetchSingleflight:
 
     @pytest.mark.asyncio
     async def test_journey_singleflight_collapses_concurrent_calls(self, monkeypatch):
-        from proxy import _fetch_journey_for_subscriber
         import proxy
+        from proxy import _fetch_journey_for_subscriber
+
         call_count = {"n": 0}
 
         async def fake_hafas(_app, _method, _req):
@@ -1274,10 +1317,9 @@ class TestDetailFetchSingleflight:
         proxy._journey_cache.clear()
         proxy._inflight_journey.clear()
 
-        results = await asyncio.gather(*[
-            _fetch_journey_for_subscriber(None, "1|99999|0|80|22052026")
-            for _ in range(5)
-        ])
+        results = await asyncio.gather(
+            *[_fetch_journey_for_subscriber(None, "1|99999|0|80|22052026") for _ in range(5)]
+        )
         # All five callers got the same payload
         assert all(r == results[0] for r in results)
         # But only one upstream call happened
@@ -1285,8 +1327,9 @@ class TestDetailFetchSingleflight:
 
     @pytest.mark.asyncio
     async def test_stationboard_singleflight_collapses_concurrent_calls(self, monkeypatch):
-        from proxy import _fetch_stationboard_for_subscriber
         import proxy
+        from proxy import _fetch_stationboard_for_subscriber
+
         call_count = {"n": 0}
 
         async def fake_hafas(_app, _method, _req):
@@ -1298,10 +1341,9 @@ class TestDetailFetchSingleflight:
         proxy._stationboard_cache.clear()
         proxy._inflight_stationboard.clear()
 
-        results = await asyncio.gather(*[
-            _fetch_stationboard_for_subscriber(None, "A=1@L=6003411@")
-            for _ in range(5)
-        ])
+        results = await asyncio.gather(
+            *[_fetch_stationboard_for_subscriber(None, "A=1@L=6003411@") for _ in range(5)]
+        )
         assert all(r == results[0] for r in results)
         assert call_count["n"] == 1
 
@@ -1311,8 +1353,8 @@ class TestDetailFetchSingleflight:
         fetches (matching viewport-singleflight semantics). Any opaque-error
         response dict must not carry the originator's exception detail —
         that's the security guarantee at the SSE wire boundary."""
-        from proxy import _fetch_journey_for_subscriber
         import proxy
+        from proxy import _fetch_journey_for_subscriber
 
         async def fake_hafas(_app, _method, _req):
             await asyncio.sleep(0.05)
@@ -1326,8 +1368,7 @@ class TestDetailFetchSingleflight:
         # alignment, each piggybacker falls through and starts its own fetch
         # after the originator raises — most or all then raise too.
         results = await asyncio.gather(
-            *[_fetch_journey_for_subscriber(None, "1|11111|0|80|22052026")
-              for _ in range(4)],
+            *[_fetch_journey_for_subscriber(None, "1|11111|0|80|22052026") for _ in range(4)],
             return_exceptions=True,
         )
         # Exceptions naturally carry their message — that's OK; the SSE loop's
@@ -1342,8 +1383,8 @@ class TestDetailFetchSingleflight:
     async def test_piggyback_does_not_hang_on_originator_cancellation(self, monkeypatch):
         """If the originator's task is cancelled mid-fetch, piggybackers must
         not hang on a never-resolved future. They should observe the cancel."""
-        from proxy import _fetch_journey_for_subscriber
         import proxy
+        from proxy import _fetch_journey_for_subscriber
 
         async def slow_hafas(_app, _method, _req):
             await asyncio.sleep(10)  # never returns within test timeout
@@ -1369,7 +1410,7 @@ class TestDetailFetchSingleflight:
         except asyncio.CancelledError:
             # Propagated cancellation is acceptable
             pass
-        except asyncio.TimeoutError:
+        except TimeoutError:
             piggy.cancel()
             pytest.fail("piggybacker hung on cancelled originator's future")
 
@@ -1380,8 +1421,8 @@ class TestDetailCacheEviction:
 
     @pytest.mark.asyncio
     async def test_journey_cache_caps_at_200(self, monkeypatch):
-        from proxy import _fetch_journey_for_subscriber
         import proxy
+        from proxy import _fetch_journey_for_subscriber
 
         async def fake_hafas(_app, _method, _req):
             return {"journey": {"jid": _req["jid"]}}
@@ -1396,8 +1437,8 @@ class TestDetailCacheEviction:
 
     @pytest.mark.asyncio
     async def test_stationboard_cache_caps_at_500(self, monkeypatch):
-        from proxy import _fetch_stationboard_for_subscriber
         import proxy
+        from proxy import _fetch_stationboard_for_subscriber
 
         async def fake_hafas(_app, _method, _req):
             return {"jnyL": []}
@@ -1416,8 +1457,8 @@ class TestDetailCacheEviction:
         write to the same `_journey_cache`. Concurrent eviction via `sorted(dict)`
         WITHOUT the lock used to risk `RuntimeError: dictionary changed size
         during iteration`. Both paths must now acquire `_journey_cache_lock`."""
-        from proxy import _fetch_journey_for_subscriber
         import proxy
+        from proxy import _fetch_journey_for_subscriber
 
         async def fake_hafas(_app, _method, _req):
             return {"journey": {"jid": _req["jid"]}}
@@ -1464,10 +1505,12 @@ class TestOffringFollowRealPos:
     @pytest.mark.asyncio
     async def test_in_ring_returns_unchanged_and_makes_no_extra_call(self, monkeypatch):
         called = False
+
         async def fake(*a, **k):
             nonlocal called
             called = True
             return {}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         detail = self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}})
         snap = {"vehicles": [{"jid": "J", "lat": 49.0, "lon": 8.0}]}
@@ -1485,9 +1528,12 @@ class TestOffringFollowRealPos:
             assert req["ring"]["cCrd"] == {"x": 8660000, "y": 49340000}
             assert req["ring"]["maxDist"] == sse_handler._FOLLOW_RING_M
             return {"jnyL": [{"jid": "J", "pos": {"x": 8665000, "y": 49345000}}]}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         cached = {"journey": {"pos": {"x": 8660000, "y": 49340000}, "stopL": []}}
-        out = await sse_handler._real_pos_for_offring_follow(None, "J", self._detail(cached), {"vehicles": []})
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail(cached), {"vehicles": []}
+        )
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
         # the cached/shared journey dict must NOT be mutated
         assert cached["journey"]["pos"] == {"x": 8660000, "y": 49340000}
@@ -1497,12 +1543,16 @@ class TestOffringFollowRealPos:
         # An off-grid center must be snapped to the nearest 5000-unit cell so
         # nearby followers collapse onto the same cache key.
         seen = {}
+
         async def fake(app, meth, req):
             seen["cCrd"] = req["ring"]["cCrd"]
             return {"jnyL": [{"jid": "J", "pos": {"x": 8665111, "y": 49345222}}]}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         cached = {"journey": {"pos": {"x": 8661200, "y": 49343900}}}
-        await sse_handler._real_pos_for_offring_follow(None, "J", self._detail(cached), {"vehicles": []})
+        await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail(cached), {"vehicles": []}
+        )
         q = sse_handler._FOLLOW_QUANTIZE
         assert seen["cCrd"] == {"x": round(8661200 / q) * q, "y": round(49343900 / q) * q}
 
@@ -1511,13 +1561,16 @@ class TestOffringFollowRealPos:
         # A vehicles-fetch that errored arrives as a non-dict (Exception/None);
         # treat it as "bus not in ring" and still resolve the real position.
         called = False
+
         async def fake(*a, **k):
             nonlocal called
             called = True
             return {"jnyL": [{"jid": "J", "pos": {"x": 8665000, "y": 49345000}}]}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), None)
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), None
+        )
         assert called is True
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
 
@@ -1525,9 +1578,14 @@ class TestOffringFollowRealPos:
     async def test_offring_bus_absent_from_geopos_keeps_interpolated(self, monkeypatch):
         async def fake(*a, **k):
             return {"jnyL": [{"jid": "OTHER", "pos": {"x": 1, "y": 2}}]}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+            None,
+            "J",
+            self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}),
+            {"vehicles": []},
+        )
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
 
     @pytest.mark.asyncio
@@ -1536,21 +1594,29 @@ class TestOffringFollowRealPos:
         # clobber the interpolated position with (0, 0).
         async def fake(*a, **k):
             return {"jnyL": [{"jid": "J", "pos": {"x": 0, "y": 0}}]}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+            None,
+            "J",
+            self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}),
+            {"vehicles": []},
+        )
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
 
     @pytest.mark.asyncio
     async def test_no_interpolated_center_makes_no_call(self, monkeypatch):
         called = False
+
         async def fake(*a, **k):
             nonlocal called
             called = True
             return {}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {}}}), {"vehicles": []})
+            None, "J", self._detail({"journey": {"pos": {}}}), {"vehicles": []}
+        )
         assert out[1]["journey"]["journey"]["pos"] == {}
         assert called is False
 
@@ -1558,18 +1624,28 @@ class TestOffringFollowRealPos:
     async def test_geopos_error_keeps_interpolated(self, monkeypatch):
         async def fake(*a, **k):
             return {"error": "upstream"}
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+            None,
+            "J",
+            self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}),
+            {"vehicles": []},
+        )
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
 
     @pytest.mark.asyncio
     async def test_geopos_exception_keeps_interpolated(self, monkeypatch):
         async def fake(*a, **k):
             raise RuntimeError("boom")
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         out = await sse_handler._real_pos_for_offring_follow(
-            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+            None,
+            "J",
+            self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}),
+            {"vehicles": []},
+        )
         assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
 
     @pytest.mark.asyncio
@@ -1577,19 +1653,30 @@ class TestOffringFollowRealPos:
         # Two followers whose interpolated centers land in the same quantized
         # cell must collapse onto one upstream GeoPos call.
         import asyncio
+
         calls = 0
+
         async def fake(*a, **k):
             nonlocal calls
             calls += 1
             await asyncio.sleep(0.02)
-            return {"jnyL": [
-                {"jid": "J", "pos": {"x": 8665000, "y": 49345000}},
-                {"jid": "K", "pos": {"x": 8666000, "y": 49346000}},
-            ]}
+            return {
+                "jnyL": [
+                    {"jid": "J", "pos": {"x": 8665000, "y": 49345000}},
+                    {"jid": "K", "pos": {"x": 8666000, "y": 49346000}},
+                ]
+            }
+
         monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
         # Same cell (both on-grid at the same point), different followed jids.
-        d_j = ("journey", {"jid": "J", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}})
-        d_k = ("journey", {"jid": "K", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}})
+        d_j = (
+            "journey",
+            {"jid": "J", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}},
+        )
+        d_k = (
+            "journey",
+            {"jid": "K", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}},
+        )
         out_j, out_k = await asyncio.gather(
             sse_handler._real_pos_for_offring_follow(None, "J", d_j, {"vehicles": []}),
             sse_handler._real_pos_for_offring_follow(None, "K", d_k, {"vehicles": []}),

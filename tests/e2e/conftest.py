@@ -32,8 +32,7 @@ def server():
         **os.environ,
         "BUSRADAR_COOKIE_SECURE": "0",
         "BUSRADAR_ALLOWED_ORIGINS": (
-            "https://busradar.pihaar.de,http://localhost:8000,"
-            "http://127.0.0.1:8000," + test_origin
+            "https://busradar.pihaar.de,http://localhost:8000,http://127.0.0.1:8000," + test_origin
         ),
         "BUSRADAR_SKIP_STOPS_REBUILD": "1",
         # The whole suite drives one IP (127.0.0.1) through ~20 page loads

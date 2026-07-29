@@ -36,7 +36,9 @@ class TestSAPDeutschland:
                 })
         """)
         for dep in data:
-            assert "St. Leon" not in dep["dir"], f"4427111 should not have St. Leon-Rot direction: {dep['dir']}"
+            assert "St. Leon" not in dep["dir"], (
+                f"4427111 should not have St. Leon-Rot direction: {dep['dir']}"
+            )
 
     def test_direction_filter_4407111(self, server, page):
         """Stop 4407111 shows only St. Leon-Rot-bound departures, never Heidelberg."""
@@ -57,7 +59,9 @@ class TestSAPDeutschland:
                 })
         """)
         for dep in data:
-            assert "Heidelberg" not in dep["dir"], f"4407111 should not have Heidelberg direction: {dep['dir']}"
+            assert "Heidelberg" not in dep["dir"], (
+                f"4407111 should not have Heidelberg direction: {dep['dir']}"
+            )
 
 
 class TestWieslochWalldorf:
@@ -93,7 +97,7 @@ class TestWieslochWalldorf:
         wrap is genuinely off-screen, with no defect on our side. Skip
         in that case instead of failing; the assertion fires only when
         we have a wrap dep within reach."""
-        from datetime import datetime
+
         page.goto(server + "/#stop=44278341")
         page.wait_for_timeout(3000)
         # Probe raw data to see if a wrap exists AT ALL within 24h.

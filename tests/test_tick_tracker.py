@@ -3,29 +3,29 @@
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tick import (
-    TickTracker,
-    ClientActivity,
-    _run_calibration,
-    _mono,
-    TICK_PERIOD,
-    TICK_MAX_AGE,
-    TICK_MIN_CHANGED_BUSES,
-    TICK_POSITIONS_CAP,
-    ACTIVE_CLIENT_WINDOW,
-    _TICK_ENABLED,
-)
 from proxy import (
-    tick_tracker,
-    breaker,
-    app,
     HAFAS_ENDPOINT,
     _build_hafas_envelope,
+    app,
+    breaker,
+    tick_tracker,
+)
+from tick import (
+    _TICK_ENABLED,
+    ACTIVE_CLIENT_WINDOW,
+    TICK_MAX_AGE,
+    TICK_MIN_CHANGED_BUSES,
+    TICK_PERIOD,
+    TICK_POSITIONS_CAP,
+    ClientActivity,
+    TickTracker,
+    _mono,
+    _run_calibration,
 )
 
 
@@ -201,6 +201,7 @@ class TestClientActivity:
         """The calibrator's idle-sleep should be interrupted as soon as
         a fresh subscriber joins, not wait for the 30-min IDLE interval."""
         import asyncio
+
         ca = ClientActivity()
         # Arm the wakeup primitive on the same event loop the wait runs on.
         ca._ensure_event()
@@ -237,12 +238,12 @@ class TestCalibratorWaitMath:
         # calibrator loop so a refactor that touches the math has to
         # touch this test too.
         wait = max(1.0, (pred - 1.0) - now)
-        if wait > interval:
-            wait = interval
+        wait = min(wait, interval)
         return wait
 
     def test_fresh_tick_waits_under_tick_period(self):
-        from tick import TICK_PERIOD, ACTIVE_CALIB_INTERVAL
+        from tick import ACTIVE_CALIB_INTERVAL, TICK_PERIOD
+
         # last_tick = now → pred = now + TICK_PERIOD
         pred = 30.0
         now = 0.0
@@ -252,6 +253,7 @@ class TestCalibratorWaitMath:
 
     def test_tick_just_passed_probes_almost_immediately(self):
         from tick import ACTIVE_CALIB_INTERVAL
+
         # last_tick = -1s, pred = +29s
         pred = 29.0
         now = 0.0
@@ -260,6 +262,7 @@ class TestCalibratorWaitMath:
 
     def test_pred_in_past_probes_within_a_second(self):
         from tick import ACTIVE_CALIB_INTERVAL
+
         # If next_tick_prediction returned a value that's already
         # slightly in the past (clock skew, scan-overrun), the wait
         # must floor at 1 s — never sleep negative.
@@ -270,6 +273,7 @@ class TestCalibratorWaitMath:
 
     def test_implausibly_far_pred_caps_at_interval(self):
         from tick import ACTIVE_CALIB_INTERVAL
+
         # Defensive cap. next_tick_prediction shouldn't return values
         # this far out, but if it does, the calibrator must still wake
         # within ACTIVE_CALIB_INTERVAL so SSE subscribers don't freeze.
@@ -282,7 +286,8 @@ class TestCalibratorWaitMath:
         """For every pred that next_tick_prediction() can legitimately
         return (0 < pred-now ≤ TICK_PERIOD), the wait must be ≤ TICK_PERIOD.
         Guards the SSE-fanout cadence promise."""
-        from tick import TICK_PERIOD, ACTIVE_CALIB_INTERVAL
+        from tick import ACTIVE_CALIB_INTERVAL, TICK_PERIOD
+
         for offset in range(1, int(TICK_PERIOD) + 1):
             wait = self._calc_wait(float(offset), 0.0, ACTIVE_CALIB_INTERVAL)
             assert wait <= TICK_PERIOD, f"offset={offset} → wait={wait}"
@@ -312,14 +317,23 @@ class TestCalibration:
         async def mock_fetch(app_, breaker_, endpoint_, envelope_):
             idx = min(call_count[0], len(positions_sequence) - 1)
             call_count[0] += 1
-            jny_l = [{"jid": k, "pos": {"x": v[0], "y": v[1]}} for k, v in positions_sequence[idx].items()]
+            jny_l = [
+                {"jid": k, "pos": {"x": v[0], "y": v[1]}}
+                for k, v in positions_sequence[idx].items()
+            ]
             return {"jnyL": jny_l}
 
         mock_app = MagicMock()
         with patch("tick._calib_fetch", side_effect=mock_fetch):
-            found = await _run_calibration(mock_app, breaker, tick_tracker,
-                                           HAFAS_ENDPOINT, _build_hafas_envelope,
-                                           scan_seconds=5, min_changed=TICK_MIN_CHANGED_BUSES)
+            found = await _run_calibration(
+                mock_app,
+                breaker,
+                tick_tracker,
+                HAFAS_ENDPOINT,
+                _build_hafas_envelope,
+                scan_seconds=5,
+                min_changed=TICK_MIN_CHANGED_BUSES,
+            )
 
         assert found is True
         assert tick_tracker.last_tick_ts is not None
@@ -330,9 +344,15 @@ class TestCalibration:
         breaker.last_failure_time = time.time()
         mock_app = MagicMock()
 
-        found = await _run_calibration(mock_app, breaker, tick_tracker,
-                                       HAFAS_ENDPOINT, _build_hafas_envelope,
-                                       scan_seconds=5, min_changed=3)
+        found = await _run_calibration(
+            mock_app,
+            breaker,
+            tick_tracker,
+            HAFAS_ENDPOINT,
+            _build_hafas_envelope,
+            scan_seconds=5,
+            min_changed=3,
+        )
         assert found is False
 
         breaker.failures = 0
@@ -347,9 +367,15 @@ class TestCalibration:
 
         mock_app = MagicMock()
         with patch("tick._calib_fetch", side_effect=mock_fetch):
-            found = await _run_calibration(mock_app, breaker, tick_tracker,
-                                           HAFAS_ENDPOINT, _build_hafas_envelope,
-                                           scan_seconds=3, min_changed=3)
+            found = await _run_calibration(
+                mock_app,
+                breaker,
+                tick_tracker,
+                HAFAS_ENDPOINT,
+                _build_hafas_envelope,
+                scan_seconds=3,
+                min_changed=3,
+            )
 
         assert found is False
 
@@ -376,6 +402,7 @@ class TestCalibFetch:
     @pytest.mark.asyncio
     async def test_returns_none_when_breaker_open(self):
         from tick import _calib_fetch
+
         mock_breaker = MagicMock()
         mock_breaker.is_open = True
         result = await _calib_fetch(MagicMock(), mock_breaker, "http://x", lambda m, r: {})
@@ -400,7 +427,9 @@ class TestCalibFetch:
         mock_app = MagicMock()
         mock_app.state.client = mock_client
 
-        result = await _calib_fetch(mock_app, mock_breaker, "http://x", lambda m, r: {"payload": True})
+        result = await _calib_fetch(
+            mock_app, mock_breaker, "http://x", lambda m, r: {"payload": True}
+        )
         assert result == {"jnyL": [{"jid": "j1", "pos": {"x": 1, "y": 2}}]}
 
     @pytest.mark.asyncio
@@ -460,7 +489,7 @@ class TestCalibFetch:
 class TestTickCalibratorLoop:
     @pytest.mark.asyncio
     async def test_waits_for_client_then_calibrates(self):
-        from tick import tick_calibrator, ClientActivity, TickTracker
+        from tick import ClientActivity, TickTracker, tick_calibrator
 
         tracker = TickTracker()
         activity = ClientActivity()
@@ -475,9 +504,11 @@ class TestTickCalibratorLoop:
         mock_app = MagicMock()
 
         with patch("tick._run_calibration", side_effect=mock_run_calib):
-            task = asyncio.create_task(tick_calibrator(
-                mock_app, mock_breaker, tracker, activity, "http://x", lambda m, r: {}
-            ))
+            task = asyncio.create_task(
+                tick_calibrator(
+                    mock_app, mock_breaker, tracker, activity, "http://x", lambda m, r: {}
+                )
+            )
             await asyncio.sleep(0.2)
             task.cancel()
             try:
@@ -489,16 +520,16 @@ class TestTickCalibratorLoop:
 
     @pytest.mark.asyncio
     async def test_cancellation_during_wait(self):
-        from tick import tick_calibrator, ClientActivity, TickTracker
+        from tick import ClientActivity, TickTracker, tick_calibrator
 
         tracker = TickTracker()
         activity = ClientActivity()
         mock_breaker = MagicMock()
 
         mock_app = MagicMock()
-        task = asyncio.create_task(tick_calibrator(
-            mock_app, mock_breaker, tracker, activity, "http://x", lambda m, r: {}
-        ))
+        task = asyncio.create_task(
+            tick_calibrator(mock_app, mock_breaker, tracker, activity, "http://x", lambda m, r: {})
+        )
         await asyncio.sleep(0.1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -521,6 +552,7 @@ class TestPersistence:
 
     def test_load_persisted_valid(self, tmp_path, monkeypatch):
         import json as json_mod
+
         state_file = tmp_path / ".tick_state"
         monkeypatch.setattr("tick.TICK_STATE_FILE", state_file)
 
@@ -536,6 +568,7 @@ class TestPersistence:
 
     def test_load_persisted_stale(self, tmp_path, monkeypatch):
         import json as json_mod
+
         state_file = tmp_path / ".tick_state"
         monkeypatch.setattr("tick.TICK_STATE_FILE", state_file)
 
@@ -566,6 +599,7 @@ class TestPersistence:
 
     def test_load_persisted_missing_key(self, tmp_path, monkeypatch):
         import json as json_mod
+
         state_file = tmp_path / ".tick_state"
         state_file.write_text(json_mod.dumps({"wrong_key": 123}))
         monkeypatch.setattr("tick.TICK_STATE_FILE", state_file)
@@ -582,4 +616,3 @@ class TestPersistence:
         tracker = TickTracker()
         # Should not raise
         tracker._persist_tick(_mono())
-

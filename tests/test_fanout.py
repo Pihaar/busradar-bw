@@ -1,16 +1,18 @@
 """Tests for fanout.py — SubscriberRegistry + tick fanout primitives.
 
 Covers canonicalisation, queue policy, cap behaviour, and bucket counts."""
+
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 import fanout
 from fanout import (
-    CapExceeded,
     MAX_SUBSCRIBERS_PER_IP,
     SLOW_CONSUMER_DROP_THRESHOLD,
+    CapExceeded,
     Subscriber,
     SubscriberRegistry,
     canonicalize_ip,
@@ -56,13 +58,16 @@ async def _fresh_condition():
 
 # === canonicalize_ip ===
 
+
 class TestCanonicalizeIp:
     def test_ipv4_passes_through(self):
         assert canonicalize_ip("192.168.1.5") == "192.168.1.5"
 
     def test_ipv6_collapses_to_64(self):
         # /64 prefix → all 64-bit-suffix hosts share a key
-        assert canonicalize_ip("2001:db8:1234:5678::1") == canonicalize_ip("2001:db8:1234:5678:ffff::abcd")
+        assert canonicalize_ip("2001:db8:1234:5678::1") == canonicalize_ip(
+            "2001:db8:1234:5678:ffff::abcd"
+        )
 
     def test_ipv6_distinct_prefixes_stay_distinct(self):
         assert canonicalize_ip("2001:db8:1::1") != canonicalize_ip("2001:db8:2::1")
@@ -77,6 +82,7 @@ class TestCanonicalizeIp:
 
 
 # === quantize_bbox ===
+
 
 class TestQuantizeBbox:
     def test_identical_bbox_quantize_identical(self):
@@ -96,6 +102,7 @@ class TestQuantizeBbox:
 
 
 # === SubscriberRegistry — subscribe / unsubscribe / caps ===
+
 
 class TestRegistry:
     @pytest.mark.asyncio
@@ -146,7 +153,7 @@ class TestRegistry:
         # All these IPs share /64; cap counts them as one IP-bucket
         prefix = "2001:db8:1::"
         for i in range(MAX_SUBSCRIBERS_PER_IP):
-            await reg.subscribe(f"{prefix}{i+1:x}")
+            await reg.subscribe(f"{prefix}{i + 1:x}")
         with pytest.raises(CapExceeded) as exc:
             await reg.subscribe(f"{prefix}beef")
         assert exc.value.scope == "ip"
@@ -175,6 +182,7 @@ class TestRegistry:
 
 
 # === Tick fanout ===
+
 
 class TestTickFanout:
     @pytest.mark.asyncio
@@ -230,9 +238,7 @@ class TestTickFanout:
 
         async def waiter(local_seq_at_start: int):
             async with fanout.tick_condition:
-                await fanout.tick_condition.wait_for(
-                    lambda: fanout.tick_seq > local_seq_at_start
-                )
+                await fanout.tick_condition.wait_for(lambda: fanout.tick_seq > local_seq_at_start)
                 received_seqs.append(fanout.tick_seq)
 
         local_at_start = fanout.tick_seq
@@ -245,6 +251,7 @@ class TestTickFanout:
 
 # === Slow consumer ===
 
+
 class TestSlowConsumer:
     def test_slow_consumer_threshold(self):
         sub = Subscriber(connection_id="x", ip="")
@@ -256,6 +263,7 @@ class TestSlowConsumer:
 
 
 # === Named test cases from the SSE plan ===
+
 
 class TestNamedPlanCases:
     @pytest.mark.asyncio
@@ -329,6 +337,7 @@ class TestNamedPlanCases:
         independent `selection` state. Cache collision doesn't mean state
         collision."""
         from fanout import JourneySelection, StationSelection
+
         a = await reg.subscribe("10.0.0.1")
         b = await reg.subscribe("10.0.0.2")
         # Same quantized bbox
@@ -355,6 +364,7 @@ class TestNamedPlanCases:
 
 # === CapExceeded payload ===
 
+
 class TestCapExceeded:
     def test_carries_scope_and_limit(self):
         e = CapExceeded("global", 500)
@@ -365,6 +375,7 @@ class TestCapExceeded:
 
 
 # === Subscriber REPORT_ONLY skip-anchor state ===
+
 
 class TestReportOnlySkipAnchor:
     def test_default_last_emitted_tick_push_seq_is_none(self):
@@ -422,13 +433,17 @@ class TestReportOnlySkipAnchor:
         sub.last_emitted_tick_push_seq = tick_push_at_start
         # 3 viewport-wake events during which tick_push_seq stays at 10.
         for _ in range(3):
-            skip = sub.last_emitted_tick_push_seq is not None and tick_push_at_start == sub.last_emitted_tick_push_seq
+            skip = (
+                sub.last_emitted_tick_push_seq is not None
+                and tick_push_at_start == sub.last_emitted_tick_push_seq
+            )
             assert skip, "viewport-POST wake with unchanged tick_push_seq must skip"
             # Loop continues without touching last_emitted_tick_push_seq.
         assert sub.last_emitted_tick_push_seq == tick_push_at_start
 
 
 # === fire_push_tick semantics ===
+
 
 class TestFirePushTick:
     @pytest.mark.asyncio
@@ -460,6 +475,7 @@ class TestFirePushTick:
 
 # === fire_tick rate limit (global aggregate) ===
 
+
 class TestFireTickRateLimit:
     @pytest.mark.asyncio
     async def test_burst_then_shed(self, reset_module_state, monkeypatch):
@@ -486,6 +502,7 @@ class TestFireTickRateLimit:
 
 
 # === Registry empty-IP cap ===
+
 
 class TestEmptyIpCap:
     @pytest.mark.asyncio

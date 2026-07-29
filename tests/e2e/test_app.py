@@ -18,7 +18,9 @@ class TestMapLoad:
     def test_marker_scale_at_zoom_16(self, app_page):
         """Markers have correct scale at zoom 16."""
         page = app_page
-        scale = page.evaluate("() => getComputedStyle(document.getElementById('map')).getPropertyValue('--marker-scale').trim()")
+        scale = page.evaluate(
+            "() => getComputedStyle(document.getElementById('map')).getPropertyValue('--marker-scale').trim()"
+        )
         assert scale == "1.12"
 
 
@@ -61,7 +63,10 @@ class TestSwipeTabs:
 
     def test_swipe_noop_in_journey_mode(self, server, page):
         """Swiping does nothing when a bus/journey is selected."""
-        page.goto(server + "/#jid=2%7C%23VN%231%23ST%231779401151%23PI%230%23ZI%2336676%23TA%230%23DA%23220526%231S%2344700111%231T%232339%23LS%234407364%23LT%2310016%23PU%2380%23RT%231%23CA%23GB%23ZE%2334%23ZB%23Bus%20%20%2034%23PC%235%23FR%2344700111%23FT%232339%23TO%234407364%23TT%2310016%23")
+        page.goto(
+            server
+            + "/#jid=2%7C%23VN%231%23ST%231779401151%23PI%230%23ZI%2336676%23TA%230%23DA%23220526%231S%2344700111%231T%232339%23LS%234407364%23LT%2310016%23PU%2380%23RT%231%23CA%23GB%23ZE%2334%23ZB%23Bus%20%20%2034%23PC%235%23FR%2344700111%23FT%232339%23TO%234407364%23TT%2310016%23"
+        )
         page.wait_for_timeout(5000)
         dep_tab = page.locator("#tab-departures")
         assert not dep_tab.is_visible(), "Should be in journey mode (departures tab hidden)"
@@ -96,8 +101,8 @@ class TestSwipeTabs:
 
         assert not dep_tab.is_visible(), (
             "Clicking a visible bus should enter journey mode. "
-            "PHANTOM ENDED BUG. Console [ENDED] logs:\n" +
-            "\n".join(ended_logs if ended_logs else ["(no [ENDED] logs captured)"])
+            "PHANTOM ENDED BUG. Console [ENDED] logs:\n"
+            + "\n".join(ended_logs or ["(no [ENDED] logs captured)"])
         )
 
 
@@ -128,11 +133,13 @@ class TestHafasMessages:
         forced to spin up just to do the discovery."""
         import json
         import urllib.request
+
         candidate_lines = ["725", "719", "758", "723", "713", "754", "732"]
         for line in candidate_lines:
             try:
                 resp = urllib.request.urlopen(
-                    server + "/api/line_search?q=" + line, timeout=15,
+                    server + "/api/line_search?q=" + line,
+                    timeout=15,
                 )
                 data = json.loads(resp.read())
             except Exception:
@@ -157,15 +164,27 @@ class TestHafasMessages:
                     continue
                 common = jdata.get("common", {})
                 rem_l = common.get("remL", [])
-                ignore = {'ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic'}
+                ignore = {"ae", "au", "az", "ai", "ac", "ib", "ic"}
                 for msg in msg_l:
                     if msg.get("type") == "REM":
-                        rem = rem_l[msg.get("remX", -1)] if 0 <= msg.get("remX", -1) < len(rem_l) else None
-                        if rem and rem.get("txtN") and (rem.get("code", "") or "").strip().lower() not in ignore:
+                        rem = (
+                            rem_l[msg.get("remX", -1)]
+                            if 0 <= msg.get("remX", -1) < len(rem_l)
+                            else None
+                        )
+                        if (
+                            rem
+                            and rem.get("txtN")
+                            and (rem.get("code", "") or "").strip().lower() not in ignore
+                        ):
                             return jid
                     elif msg.get("type") == "HIM":
                         him_l = common.get("himL", [])
-                        him = him_l[msg.get("himX", -1)] if 0 <= msg.get("himX", -1) < len(him_l) else None
+                        him = (
+                            him_l[msg.get("himX", -1)]
+                            if 0 <= msg.get("himX", -1) < len(him_l)
+                            else None
+                        )
                         if him and him.get("head"):
                             return jid
         return None
@@ -181,8 +200,10 @@ class TestHafasMessages:
         if not bus_with_messages_jid:
             pytest.skip("No bus with visible messages currently active")
         from urllib.parse import quote
-        page.goto(server + "/#jid=" + quote(bus_with_messages_jid, safe=''),
-                  wait_until="domcontentloaded")
+
+        page.goto(
+            server + "/#jid=" + quote(bus_with_messages_jid, safe=""), wait_until="domcontentloaded"
+        )
         page.wait_for_timeout(5000)
 
         banners = page.locator(".journey-msg-banner")

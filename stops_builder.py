@@ -27,7 +27,9 @@ CLIENT_NAME = "DB Busradar BW"
 EXT = "DB.REGIO.1"
 VER = "1.39"
 
-CACHE_FILE = Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / "stops_cache.json"
+CACHE_FILE = (
+    Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / "stops_cache.json"
+)
 HAFAS_CONCURRENCY = 5
 
 # Coverage area derived from actual bus positions (JourneyGeoPos maxDist=200km)
@@ -70,7 +72,9 @@ async def _hafas_call(client: httpx.AsyncClient, method: str, req: dict) -> dict
         return None
 
 
-async def _fetch_stops_in_radius(client: httpx.AsyncClient, lat: float, lon: float, radius: int) -> list[dict]:
+async def _fetch_stops_in_radius(
+    client: httpx.AsyncClient, lat: float, lon: float, radius: int
+) -> list[dict]:
     req = {
         "ring": {
             "cCrd": {"x": round(lon * 1_000_000), "y": round(lat * 1_000_000)},
@@ -135,14 +139,16 @@ async def _discover_platforms(client: httpx.AsyncClient, lid: str) -> list[dict]
                         platform = parts[4]
                     break
 
-            platforms.append({
-                "name": loc.get("name", "?"),
-                "lid": loc.get("lid", ""),
-                "lat": crd.get("y", 0) / 1_000_000,
-                "lon": crd.get("x", 0) / 1_000_000,
-                "extId": ext_id,
-                "platform": platform,
-            })
+            platforms.append(
+                {
+                    "name": loc.get("name", "?"),
+                    "lid": loc.get("lid", ""),
+                    "lat": crd.get("y", 0) / 1_000_000,
+                    "lon": crd.get("x", 0) / 1_000_000,
+                    "extId": ext_id,
+                    "platform": platform,
+                }
+            )
 
     return platforms
 
@@ -184,10 +190,11 @@ async def build_stops_cache():
 
     async with httpx.AsyncClient(
         timeout=30.0,
-        limits=httpx.Limits(max_connections=HAFAS_CONCURRENCY, max_keepalive_connections=HAFAS_CONCURRENCY),
+        limits=httpx.Limits(
+            max_connections=HAFAS_CONCURRENCY, max_keepalive_connections=HAFAS_CONCURRENCY
+        ),
         headers={"Content-Type": "application/json", "User-Agent": "BusradarBW-StopsBuilder/1.0"},
     ) as client:
-
         sem = asyncio.Semaphore(HAFAS_CONCURRENCY)
 
         async def _bounded(coro):
@@ -208,7 +215,10 @@ async def build_stops_cache():
             lat += step_deg
 
         results = await asyncio.gather(
-            *[_bounded(_fetch_stops_in_radius(client, la, lo, int(GRID_STEP_KM * 1000))) for la, lo in grid_points],
+            *[
+                _bounded(_fetch_stops_in_radius(client, la, lo, int(GRID_STEP_KM * 1000)))
+                for la, lo in grid_points
+            ],
             return_exceptions=True,
         )
         errors1 = 0
@@ -221,8 +231,13 @@ async def build_stops_cache():
                 if stop and stop["extId"] not in all_stops:
                     all_stops[stop["extId"]] = stop
 
-        LOG.info("Grid: %d stops, %d errors from %d calls in %.0fs",
-                 len(all_stops), errors1, len(grid_points), time.time() - start)
+        LOG.info(
+            "Grid: %d stops, %d errors from %d calls in %.0fs",
+            len(all_stops),
+            errors1,
+            len(grid_points),
+            time.time() - start,
+        )
 
         # --- Stage 2: Platform discovery ---
         discover_stops = list(all_stops.values())
@@ -236,15 +251,18 @@ async def build_stops_cache():
             done[0] += 1  # safe: single-threaded asyncio, no await between check and assign
             if done[0] % 500 == 0:
                 LOG.info("  Platforms: %d/%d", done[0], len(discover_stops))
-            return None
 
         results2 = await asyncio.gather(
             *[_platforms_task(s) for s in discover_stops],
             return_exceptions=True,
         )
         errors2 = sum(1 for r in results2 if isinstance(r, Exception))
-        LOG.info("Platforms done: %d processed, %d errors in %.0fs",
-                 len(discover_stops), errors2, time.time() - start)
+        LOG.info(
+            "Platforms done: %d processed, %d errors in %.0fs",
+            len(discover_stops),
+            errors2,
+            time.time() - start,
+        )
 
         # --- Stage 3: Redundancy filter ---
         redundant = await _find_redundant_stops_parallel(client, sem, all_stops)
@@ -256,8 +274,12 @@ async def build_stops_cache():
         total_calls = len(grid_points) + len(discover_stops)
         total_errors = errors1 + errors2
         if total_calls > 0 and total_errors / total_calls > 0.10:
-            LOG.error("Build aborted: %.1f%% error rate (%d/%d). Cache NOT written.",
-                      total_errors / total_calls * 100, total_errors, total_calls)
+            LOG.error(
+                "Build aborted: %.1f%% error rate (%d/%d). Cache NOT written.",
+                total_errors / total_calls * 100,
+                total_errors,
+                total_calls,
+            )
             return None
 
         final_stops = list(all_stops.values())
@@ -269,12 +291,16 @@ async def build_stops_cache():
             "build_time_sec": round(time.time() - start, 1),
         }
 
-        CACHE_FILE.with_suffix('.tmp').write_text(
+        CACHE_FILE.with_suffix(".tmp").write_text(
             json.dumps(cache_data, ensure_ascii=False), encoding="utf-8"
         )
-        CACHE_FILE.with_suffix('.tmp').rename(CACHE_FILE)
-        LOG.info("Stops cache built: %d stops in %.1fs, saved to %s",
-                 len(final_stops), time.time() - start, CACHE_FILE)
+        CACHE_FILE.with_suffix(".tmp").rename(CACHE_FILE)
+        LOG.info(
+            "Stops cache built: %d stops in %.1fs, saved to %s",
+            len(final_stops),
+            time.time() - start,
+            CACHE_FILE,
+        )
 
     return cache_data
 
@@ -291,7 +317,11 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
         for p in platform_stops:
             if _dist_m(s["lat"], s["lon"], p["lat"], p["lon"]) > 300:
                 continue
-            if s["name"] in p["name"] or p["name"].split(" (")[0] in s["name"] or p["name"] in s["name"]:
+            if (
+                s["name"] in p["name"]
+                or p["name"].split(" (")[0] in s["name"]
+                or p["name"] in s["name"]
+            ):
                 nearby_plats.append(p)
         if nearby_plats:
             candidates.append((s, nearby_plats))
@@ -310,7 +340,7 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
             }
             res = await _hafas_call(client, "StationBoard", req)
             if not res:
-                return None
+                return
 
             jny_l = res.get("jnyL", [])
             loc_l = res.get("common", {}).get("locL", [])
@@ -334,7 +364,7 @@ async def _find_redundant_stops_parallel(client, sem, all_stops):
 
             if not (own_lines - plat_lines):
                 redundant.add(s["extId"])
-            return None
+            return
 
     await asyncio.gather(
         *[_check_redundant(s, plats) for s, plats in candidates],
@@ -391,9 +421,14 @@ async def schedule_daily_rebuild():
         next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
         if now >= next_run:
             from datetime import timedelta
+
             next_run += timedelta(days=1)
         wait_seconds = (next_run - now).total_seconds()
-        LOG.info("Next stops cache rebuild at %s (in %.0f min)", next_run.strftime("%H:%M"), wait_seconds / 60)
+        LOG.info(
+            "Next stops cache rebuild at %s (in %.0f min)",
+            next_run.strftime("%H:%M"),
+            wait_seconds / 60,
+        )
         await asyncio.sleep(wait_seconds)
         try:
             await build_stops_cache()
@@ -402,5 +437,7 @@ async def schedule_daily_rebuild():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     asyncio.run(build_stops_cache())

@@ -15,12 +15,12 @@ Exit codes:
 
 Stdlib-only — depends on httpx for HTTP/2 + SSE-friendly streaming.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-import os
 import resource
 import sys
 import time
@@ -46,7 +46,9 @@ async def run_one(client_id: int, base_url: str, duration_s: float, results: lis
     error_msg = None
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)) as ac:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+        ) as ac:
             async with ac.stream("GET", f"{base_url}/api/stream/") as resp:
                 if resp.status_code != 200:
                     error_msg = f"HTTP {resp.status_code}"
@@ -65,11 +67,15 @@ async def run_one(client_id: int, base_url: str, duration_s: float, results: lis
                         if not viewport_posted and cookie_jar:
                             # Sandhausen-ish bbox; slightly offset per client so quantize doesn't fully collapse
                             offset = (client_id % 10) * 0.001
-                            payload = json.dumps({
-                                "swLat": 49.3 + offset, "swLon": 8.6 + offset,
-                                "neLat": 49.4 + offset, "neLon": 8.7 + offset,
-                                "posMode": "CALC",
-                            })
+                            payload = json.dumps(
+                                {
+                                    "swLat": 49.3 + offset,
+                                    "swLon": 8.6 + offset,
+                                    "neLat": 49.4 + offset,
+                                    "neLon": 8.7 + offset,
+                                    "posMode": "CALC",
+                                }
+                            )
                             try:
                                 await ac.post(
                                     f"{base_url}/api/stream/viewport",
@@ -93,14 +99,16 @@ async def run_one(client_id: int, base_url: str, duration_s: float, results: lis
 
     elapsed = time.monotonic() - start
     first_event_latency = (first_event_ts - start) if first_event_ts else None
-    results.append({
-        "id": client_id,
-        "ok": error_msg is None and event_count > 0,
-        "events": event_count,
-        "elapsed_s": elapsed,
-        "first_event_s": first_event_latency,
-        "error": error_msg,
-    })
+    results.append(
+        {
+            "id": client_id,
+            "ok": error_msg is None and event_count > 0,
+            "events": event_count,
+            "elapsed_s": elapsed,
+            "first_event_s": first_event_latency,
+            "error": error_msg,
+        }
+    )
 
 
 async def main():
@@ -109,7 +117,9 @@ async def main():
     p.add_argument("--clients", type=int, default=50, help="Concurrent EventSource connections")
     p.add_argument("--duration", type=float, default=600.0, help="Test duration in seconds")
     p.add_argument("--rss-limit-mb", type=float, default=50.0, help="Max acceptable RSS delta")
-    p.add_argument("--latency-budget-s", type=float, default=5.0, help="p95 first-event latency budget")
+    p.add_argument(
+        "--latency-budget-s", type=float, default=5.0, help="p95 first-event latency budget"
+    )
     args = p.parse_args()
 
     rss_before_kb = _get_self_rss_kb()
@@ -131,7 +141,9 @@ async def main():
     latencies = sorted(r["first_event_s"] for r in ok if r["first_event_s"] is not None)
     p95 = latencies[int(len(latencies) * 0.95)] if latencies else float("inf")
 
-    print(f"smoke: ok={len(ok)}/{args.clients}, failed={len(failed)}, p95 first-event={p95:.2f}s, RSS delta={rss_delta_mb:.1f} MiB")
+    print(
+        f"smoke: ok={len(ok)}/{args.clients}, failed={len(failed)}, p95 first-event={p95:.2f}s, RSS delta={rss_delta_mb:.1f} MiB"
+    )
     for f in failed[:10]:
         print(f"  failure[{f['id']}]: events={f['events']}, error={f['error']}")
 
@@ -140,10 +152,16 @@ async def main():
         print(f"smoke: FAIL — {len(failed)} client(s) errored", file=sys.stderr)
         exit_code = 1
     if p95 > args.latency_budget_s:
-        print(f"smoke: FAIL — p95 latency {p95:.2f}s > budget {args.latency_budget_s}s", file=sys.stderr)
+        print(
+            f"smoke: FAIL — p95 latency {p95:.2f}s > budget {args.latency_budget_s}s",
+            file=sys.stderr,
+        )
         exit_code = 1
     if rss_delta_mb > args.rss_limit_mb:
-        print(f"smoke: FAIL — RSS delta {rss_delta_mb:.1f} MiB > limit {args.rss_limit_mb} MiB", file=sys.stderr)
+        print(
+            f"smoke: FAIL — RSS delta {rss_delta_mb:.1f} MiB > limit {args.rss_limit_mb} MiB",
+            file=sys.stderr,
+        )
         exit_code = 1
     if exit_code == 0:
         print("smoke: PASS")
