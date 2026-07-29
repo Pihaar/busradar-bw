@@ -100,8 +100,9 @@ source = ["proxy", "sse_handler", "fanout", "tick", "caches", "hafas", "stops_bu
 
 [tool.coverage.report]
 show_missing = true
-# fail_under = 100 is enabled once the branch gap (currently ~67%) is closed;
-# leaving it off until then keeps a plain `pytest --cov` run from failing while
-# the coverage sweep is in progress.
+# 100% branch coverage on the shipped modules is enforced: `pytest --cov`
+# (or `coverage report`) fails below it. Reached by tests/*, with two justified
+# `# pragma: no cover` (tick.py unreachable cycles==0, stops_builder __main__).
+fail_under = 100
 
 

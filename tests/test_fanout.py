@@ -540,3 +540,188 @@ class TestEmptyIpCap:
         await reg.unsubscribe(subs[0].connection_id)
         # Slot freed — next subscribe must succeed.
         await reg.subscribe("")
+
+
+# === Selection models ===
+
+
+class TestSelectionModels:
+    def test_journey_selection_event_and_key(self):
+        from fanout import JourneySelection
+
+        j = JourneySelection(jid="J1")
+        assert j.event_name() == "journey"
+        assert j.cache_key() == "J1"
+
+    def test_station_selection_event_and_key(self):
+        from fanout import StationSelection
+
+        s = StationSelection(lid="L1", board_type="ARR", dur=120)
+        assert s.event_name() == "stationboard"
+        assert s.cache_key() == ("L1", "ARR", 120)
+
+    def test_station_selection_default_dep_dur_60(self):
+        from fanout import StationSelection
+
+        s = StationSelection(lid="L1")
+        assert s.board_type == "DEP"
+        assert s.dur == 60
+
+    def test_station_selection_dur_not_multiple_of_60_rejected(self):
+        import pytest
+        from pydantic import ValidationError
+
+        from fanout import StationSelection
+
+        with pytest.raises(ValidationError):
+            StationSelection(lid="L1", dur=90)
+
+    def test_station_selection_dur_multiple_of_60_accepted(self):
+        from fanout import StationSelection
+
+        assert StationSelection(lid="L1", dur=180).dur == 180
+
+
+# === Global cap + inflection logging ===
+
+
+class TestGlobalCapAndInflection:
+    @pytest.mark.asyncio
+    async def test_global_cap_rejects(self, monkeypatch):
+        import fanout as fanout_mod
+
+        reg = SubscriberRegistry()
+        # Shrink caps so the test is cheap: raise per-IP cap so global fires
+        # first, lower global cap to 2.
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_PER_IP", 1000)
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_GLOBAL", 2)
+        await reg.subscribe("10.0.0.1")
+        await reg.subscribe("10.0.0.2")
+        with pytest.raises(CapExceeded) as exc:
+            await reg.subscribe("10.0.0.3")
+        assert exc.value.scope == "global"
+
+    @pytest.mark.asyncio
+    async def test_inflection_subscribers_warns_once(self, monkeypatch, caplog):
+        import fanout as fanout_mod
+
+        reg = SubscriberRegistry()
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_PER_IP", 10_000)
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_GLOBAL", 10_000)
+        monkeypatch.setattr(fanout_mod, "INFLECTION_SUBSCRIBERS", 2)
+        with caplog.at_level("WARNING", logger="busradar"):
+            await reg.subscribe("10.0.0.1")
+            await reg.subscribe("10.0.0.2")
+            await reg.subscribe("10.0.0.3")  # n=3 > 2 → warn once
+            await reg.subscribe("10.0.0.4")  # already warned → no second warn
+        warns = [r for r in caplog.records if "inflection_point subscribers" in r.message]
+        assert len(warns) == 1
+
+    @pytest.mark.asyncio
+    async def test_inflection_resets_below_half(self, monkeypatch):
+        import fanout as fanout_mod
+
+        reg = SubscriberRegistry()
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_PER_IP", 10_000)
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_GLOBAL", 10_000)
+        monkeypatch.setattr(fanout_mod, "INFLECTION_SUBSCRIBERS", 4)
+        subs = [await reg.subscribe(f"10.0.0.{i}") for i in range(5)]  # n=5 > 4 → warned
+        assert reg._inflection_warned is True
+        # Drop to <= INFLECTION_SUBSCRIBERS//2 == 2 → resets flag.
+        for s in subs[:3]:
+            await reg.unsubscribe(s.connection_id)
+        assert reg._inflection_warned is False
+
+
+# === Cap-reject rate-limited logging ===
+
+
+class TestCapRejectLog:
+    def test_logs_once_then_rate_limited(self, monkeypatch, caplog):
+        import fanout as fanout_mod
+
+        fanout_mod._cap_reject_log_last.clear()
+        t = [1000.0]
+        monkeypatch.setattr(fanout_mod.time, "monotonic", lambda: t[0])
+        with caplog.at_level("WARNING", logger="busradar"):
+            fanout_mod._maybe_log_cap_reject("ip", "1.2.3.4", 20)
+            # Second call within CAP_REJECT_LOG_RATE → suppressed.
+            fanout_mod._maybe_log_cap_reject("ip", "1.2.3.4", 21)
+        recs = [r for r in caplog.records if "cap-reject" in r.message]
+        assert len(recs) == 1
+
+    def test_logs_again_after_window(self, monkeypatch, caplog):
+        import fanout as fanout_mod
+
+        fanout_mod._cap_reject_log_last.clear()
+        t = [1000.0]
+        monkeypatch.setattr(fanout_mod.time, "monotonic", lambda: t[0])
+        with caplog.at_level("WARNING", logger="busradar"):
+            fanout_mod._maybe_log_cap_reject("global", "5.6.7.8", 500)
+            t[0] += fanout_mod.CAP_REJECT_LOG_RATE + 1
+            fanout_mod._maybe_log_cap_reject("global", "5.6.7.8", 501)
+        recs = [r for r in caplog.records if "cap-reject" in r.message]
+        assert len(recs) == 2
+
+    def test_empty_ip_uses_noip(self, monkeypatch, caplog):
+        import fanout as fanout_mod
+
+        fanout_mod._cap_reject_log_last.clear()
+        monkeypatch.setattr(fanout_mod.time, "monotonic", lambda: 2000.0)
+        with caplog.at_level("WARNING", logger="busradar"):
+            fanout_mod._maybe_log_cap_reject("ip", "", 20)
+        assert any("ip_hash=noip" in r.message for r in caplog.records)
+
+
+# === Viewport inflection ===
+
+
+class TestViewportInflection:
+    @pytest.mark.asyncio
+    async def test_warns_once_then_resets(self, monkeypatch, caplog):
+        import fanout as fanout_mod
+
+        reg = SubscriberRegistry()
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_PER_IP", 10_000)
+        monkeypatch.setattr(fanout_mod, "MAX_SUBSCRIBERS_GLOBAL", 10_000)
+        monkeypatch.setattr(fanout_mod, "INFLECTION_VIEWPORTS", 2)
+        # 3 subscribers each with a distinct quantized bbox.
+        subs = []
+        for i in range(3):
+            s = await reg.subscribe(f"10.0.0.{i}")
+            s.last_viewport_bbox = (i, i, i, i)
+            subs.append(s)
+        with caplog.at_level("WARNING", logger="busradar"):
+            reg.maybe_warn_viewport_inflection()  # distinct=3 > 2 → warn
+            reg.maybe_warn_viewport_inflection()  # already warned → no repeat
+        warns = [r for r in caplog.records if "distinct_viewports" in r.message]
+        assert len(warns) == 1
+        assert reg._inflection_viewports_warned is True
+        # Drop distinct count to <= INFLECTION_VIEWPORTS//2 == 1 → resets.
+        subs[1].last_viewport_bbox = None
+        subs[2].last_viewport_bbox = None
+        reg.maybe_warn_viewport_inflection()
+        assert reg._inflection_viewports_warned is False
+
+    @pytest.mark.asyncio
+    async def test_ignores_none_bboxes(self):
+        reg = SubscriberRegistry()
+        s = await reg.subscribe("10.0.0.1")
+        s.last_viewport_bbox = None  # excluded from distinct count
+        # Below threshold → no warn, flag stays False, no crash.
+        reg.maybe_warn_viewport_inflection()
+        assert reg._inflection_viewports_warned is False
+
+
+class TestUnsubscribeDefensive:
+    @pytest.mark.asyncio
+    async def test_unsubscribe_when_bucket_already_gone(self):
+        """Defensive branch 389->394: the subscriber is in _subs but its per-IP
+        bucket was already removed. unsubscribe must not crash and still drop
+        the subscriber."""
+        reg = SubscriberRegistry()
+        sub = await reg.subscribe("10.0.0.1")
+        # Simulate the bucket having been cleaned up out-of-band.
+        reg._per_ip.clear()
+        await reg.unsubscribe(sub.connection_id)
+        assert reg.get(sub.connection_id) is None

@@ -437,7 +437,7 @@ async def schedule_daily_rebuild():
             LOG.error("Stops cache rebuild failed: %s", e)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover  # CLI entrypoint, not exercised by tests
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )

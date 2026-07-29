@@ -165,7 +165,7 @@ class TickTracker:
         if elapsed <= 0:
             return ts + TICK_PERIOD
         cycles = int(elapsed / TICK_PERIOD) + (0 if elapsed % TICK_PERIOD == 0 else 1)
-        if cycles == 0:
+        if cycles == 0:  # pragma: no cover  # unreachable: elapsed>0 here so cycles>=1
             cycles = 1
         return ts + cycles * TICK_PERIOD
 
