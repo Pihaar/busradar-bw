@@ -14,6 +14,10 @@ Requires:       (python314 or python313 or python311 or python3 >= 3.9)
 # Pydantic v2 (with field_validator) is required; FastAPI bundles v2 since 0.100.
 # Older distro packages ship Pydantic v1, which fails at import time.
 Requires:       ((python314-fastapi >= 0.100) or (python313-fastapi >= 0.100) or (python311-fastapi >= 0.100) or (python3-fastapi >= 0.100))
+# Starlette is a transitive FastAPI dep, but pin its CVE-fixed floor explicitly:
+# 1.3.1 fixes CVE-2026-48710/-54282/-54283/-48817/-48818. Prevents a distro
+# resolution from pulling a vulnerable Starlette 0.x/1.0.x under a loose FastAPI.
+Requires:       ((python314-starlette >= 1.3.1) or (python313-starlette >= 1.3.1) or (python311-starlette >= 1.3.1) or (python3-starlette >= 1.3.1))
 Requires:       ((python314-uvicorn >= 0.20) or (python313-uvicorn >= 0.20) or (python311-uvicorn >= 0.20) or (python3-uvicorn >= 0.20))
 Requires:       ((python314-httpx >= 0.24) or (python313-httpx >= 0.24) or (python311-httpx >= 0.24) or (python3-httpx >= 0.24))
 %systemd_requires

@@ -1,5 +1,12 @@
-fastapi==0.128.8
-uvicorn==0.39.0
+fastapi==0.140.13
+# starlette arrives transitively via fastapi (which supports 1.x since 0.133.0),
+# but fastapi's floor still permits starlette 1.0.0. Pin the CVE-fixed line
+# explicitly: CVE-2026-48710 / -54282 / -54283 / -48817 / -48818 are all fixed
+# by starlette 1.3.1. FastAPI recommends not pinning starlette, but this floor
+# override keeps the dependency set audit-clean. 0.140.13 + 1.3.1 is the tested
+# combo (and what production already runs).
+starlette>=1.3.1
+uvicorn==0.42.0
 httpx==0.28.1
 # Pydantic comes in transitively via fastapi, but pin it explicitly so the
 # deployed version matches what was tested. field_validator + ValidationError
