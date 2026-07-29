@@ -1152,6 +1152,14 @@ export var ui = {
     }).catch(function(err) {
       state._autoExpandingDep = false;
       if (err.name === 'AbortError') return;
+      // Don't wipe an already-shown list on a transient error / rate-limit
+      // (a load-more cascade across a service gap can trip the per-IP limit).
+      // Keep the departures and restore the load-more button so the user can
+      // retry; only show the error state when nothing was displayed yet.
+      if (ui.departureList.querySelector('.departure-item')) {
+        ui.addLoadMoreButton('departure-list', loc, stopExtId, state._stationDepDur || dur, 'DEP');
+        return;
+      }
       ui.departureList.replaceChildren(_createStateItem('empty-state', t('departures_unavailable')));
     });
   },
@@ -1196,7 +1204,15 @@ export var ui = {
     }).catch(function(err) {
       state._autoExpandingArr = false;
       if (err.name === 'AbortError') return;
-      document.getElementById('arrival-list').replaceChildren(_createStateItem('empty-state', t('arrivals_unavailable')));
+      // See loadDepartures: keep an already-shown list on a transient error /
+      // rate-limit and restore the load-more button; only show the error state
+      // when nothing was displayed yet.
+      var arrEl = document.getElementById('arrival-list');
+      if (arrEl.querySelector('.departure-item')) {
+        ui.addLoadMoreButton('arrival-list', loc, stopExtId, state._stationArrDur || dur, 'ARR');
+        return;
+      }
+      arrEl.replaceChildren(_createStateItem('empty-state', t('arrivals_unavailable')));
     });
   },
 
@@ -1350,10 +1366,15 @@ export var ui = {
       return true;
     });
 
-    arrList.replaceChildren();
+    var frag = document.createDocumentFragment();
 
     if (jnyL.length === 0) {
       var arrDurMin = state._stationArrDur || 60;
+      // Same as departures: a widened window that finds nothing new keeps the
+      // arrivals already shown instead of wiping them to an empty-state.
+      if (arrDurMin > 60 && arrList.querySelector('.departure-item')) {
+        return filteredByExtId;
+      }
       var arrEmptyText = arrDurMin >= 1440 ? t('arr_empty_24h') : arrDurMin >= 120 ? t('arr_empty_hours', {n: Math.round(arrDurMin / 60)}) : t('arr_empty_minutes', {n: arrDurMin});
       arrList.replaceChildren(_createStateItem('empty-state', arrEmptyText));
       return filteredByExtId;
@@ -1433,15 +1454,16 @@ export var ui = {
       li.appendChild(destEl);
       li.appendChild(timeEl);
       li.appendChild(delayEl);
-      arrList.appendChild(li);
+      frag.appendChild(li);
     });
     if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
       hintLi.style.fontSize = '11px';
       hintLi.textContent = t('hafas_limit_hint');
-      arrList.appendChild(hintLi);
+      frag.appendChild(hintLi);
     }
+    arrList.replaceChildren(frag);
     return filteredByExtId;
   },
 
@@ -1495,7 +1517,12 @@ export var ui = {
       });
     }
 
-    this.departureList.replaceChildren();
+    // Build into a fragment and only commit it below when there is something
+    // to show. Clearing the live list up-front (old behavior) meant any empty
+    // or errored render wiped the departures already on screen — e.g. pressing
+    // "load more" past the last bus into a service gap replaced the list with
+    // an empty-state.
+    var frag = document.createDocumentFragment();
 
     var seenKeys = {};
     jnyL = jnyL.filter(function(jny) {
@@ -1509,6 +1536,14 @@ export var ui = {
 
     if (jnyL.length === 0) {
       var depDurMin = state._stationDepDur || 60;
+      // A WIDENED window (load-more / auto-expand across a service gap) that
+      // finds nothing new must NOT wipe the departures already shown — keep
+      // them; loadDepartures then adds the terminal "no more" note via
+      // addLoadMoreButton. Only paint the empty-state for the default window
+      // (nothing upcoming soon) or when the list was empty to begin with.
+      if (depDurMin > 60 && ui.departureList.querySelector('.departure-item')) {
+        return filteredByExtId;
+      }
       var depEmptyText = depDurMin >= 1440 ? t('dep_empty_24h') : depDurMin >= 120 ? t('dep_empty_hours', {n: Math.round(depDurMin / 60)}) : t('dep_empty_minutes', {n: depDurMin});
       this.departureList.replaceChildren(_createStateItem('empty-state', depEmptyText));
       return filteredByExtId;
@@ -1588,15 +1623,16 @@ export var ui = {
       li.appendChild(destEl);
       li.appendChild(timeEl);
       li.appendChild(delayEl);
-      ui.departureList.appendChild(li);
+      frag.appendChild(li);
     });
     if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
       hintLi.style.fontSize = '11px';
       hintLi.textContent = t('hafas_limit_hint');
-      ui.departureList.appendChild(hintLi);
+      frag.appendChild(hintLi);
     }
+    this.departureList.replaceChildren(frag);
     return filteredByExtId;
   },
 

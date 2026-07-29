@@ -118,3 +118,89 @@ describe('load-more button click triggers a cascade', () => {
     expect(args[3]).toBe(true);  // autoExpand — the fix (was false)
   });
 });
+
+// === Bug 3: empty/errored render must NOT wipe an already-shown list ===
+describe('renderDepartures — never wipes a populated list on an empty expand', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="departure-list"></ul>';
+    ui.departureList = document.getElementById('departure-list');
+    state.selectedStop = loc;
+    state._depFilter = null;
+    state.vehicles = new Map();
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function populate(n) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < n; i++) {
+      const li = document.createElement('li');
+      li.className = 'departure-item';
+      frag.appendChild(li);
+    }
+    ui.departureList.replaceChildren(frag);
+  }
+
+  it('keeps the shown departures when a widened window (dur>60) returns none', () => {
+    populate(3);
+    state._stationDepDur = 480;
+    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(3);
+    expect(ui.departureList.querySelector('.empty-state')).toBeNull();
+  });
+
+  it('shows the empty-state at the default window (dur=60) when nothing is upcoming', () => {
+    populate(0);
+    state._stationDepDur = 60;
+    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
+  });
+
+  it('shows the empty-state on a wide empty window when nothing was shown yet', () => {
+    populate(0);
+    state._stationDepDur = 480;
+    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
+  });
+
+  it('replaces the list with fresh departures when results arrive', () => {
+    populate(1);
+    state._stationDepDur = 240;
+    const data = { jnyL: [
+      { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } },
+      { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { dTimeS: '121000' } },
+    ], common: { prodL: [{ nameS: '721' }], locL: [] } };
+    ui.renderDepartures(data, loc, '', null);
+    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
+    expect(ui.departureList.querySelector('.empty-state')).toBeNull();
+  });
+});
+
+describe('loadDepartures error — keeps a populated list instead of wiping it', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="departure-list"></ul>';
+    ui.departureList = document.getElementById('departure-list');
+    state.selectedStop = loc;
+    state._autoExpandingDep = false;
+    state._stationDepDur = 300;
+    getStationBoard.mockClear();
+    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('does not wipe shown departures when the fetch rejects (e.g. 429)', async () => {
+    const li = document.createElement('li');
+    li.className = 'departure-item';
+    ui.departureList.appendChild(li);
+    getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
+    await ui.loadDepartures(loc, '', 300, true);
+    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
+    expect(ui.departureList.querySelector('.empty-state')).toBeNull();
+    expect(ui.addLoadMoreButton).toHaveBeenCalled();
+  });
+
+  it('shows the error state when nothing was displayed yet', async () => {
+    getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
+    await ui.loadDepartures(loc, '', 60, true);
+    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
+  });
+});
