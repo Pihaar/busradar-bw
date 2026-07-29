@@ -39,8 +39,8 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload, _resendActiveSelection, _followPanTo } = await import('../../static/refresh.js');
-const { state } = await import('../../static/state.js');
+const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload } = await import('../../static/refresh.js');
+const { state, settings } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
 
 describe('_applyJourneyPayload — journey SSE event helper', () => {
@@ -344,7 +344,7 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     expect(panTo).not.toHaveBeenCalled();
   });
 
-  it('_applyJourneyPayload pans to the journey position when following, even off-ring', () => {
+  it('_applyJourneyPayload pans to the journey position when following and the bus is OFF-ring (not in vehicles)', () => {
     dist = 800;
     state.followBus = true;
     state.selectedJid = 'JF';
@@ -354,11 +354,102 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     expect(panTo).toHaveBeenCalledOnce();
   });
 
+  it('_applyJourneyPayload pans when following and the bus is in the map but OFF-ring (missedCycles > 0)', () => {
+    dist = 800;
+    state.followBus = true;
+    state.selectedJid = 'JF';
+    state.vehicles.set('JF', {
+      data: { lat: 49.4, lon: 8.6 },
+      marker: { setLatLng: vi.fn() },
+      missedCycles: 3,  // off-ring grace
+    });
+    _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
+    expect(panTo).toHaveBeenCalledOnce();
+  });
+
+  it('_applyJourneyPayload does NOT pan when the bus is IN-ring (missedCycles === 0) — the vehicles handler owns the pan', () => {
+    dist = 800;
+    state.followBus = true;
+    state.selectedJid = 'JF';
+    state.vehicles.set('JF', {
+      data: { lat: 49.34, lon: 8.66 },
+      marker: { setLatLng: vi.fn() },
+      missedCycles: 0,  // in-ring: vehicles payload has the real position
+    });
+    _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
+    expect(panTo).not.toHaveBeenCalled();
+    expect(setView).not.toHaveBeenCalled();
+  });
+
   it('_applyJourneyPayload does NOT pan when not following', () => {
     dist = 800;
     state.followBus = false;
     state.selectedJid = 'JF';
     _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
     expect(panTo).not.toHaveBeenCalled();
+  });
+});
+
+describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus stays in the payload', () => {
+  beforeEach(() => {
+    state.followBus = false;
+    state.selectedJid = null;
+    settings.current = { posMode: 'CALC' };
+    // Tiny viewport (~200 m) centered on Sandhausen, as when strongly zoomed in.
+    state.map = {
+      getCenter: () => ({ lat: 49.342, lng: 8.660 }),
+      getBounds: () => ({
+        getSouthWest: () => ({ lat: 49.3410, lng: 8.6588 }),
+        getNorthEast: () => ({ lat: 49.3430, lng: 8.6612 }),
+      }),
+    };
+  });
+  afterEach(() => { state.map = null; state.followBus = false; state.selectedJid = null; });
+
+  it('returns null when the map is not ready', () => {
+    state.map = null;
+    expect(_viewportPayload()).toBeNull();
+  });
+
+  it('sends the exact visual bounds when not following', () => {
+    const p = _viewportPayload();
+    expect(p.swLat).toBeCloseTo(49.3410, 4);
+    expect(p.neLat).toBeCloseTo(49.3430, 4);
+    expect(p.swLon).toBeCloseTo(8.6588, 4);
+    expect(p.neLon).toBeCloseTo(8.6612, 4);
+    expect(p.posMode).toBe('CALC');
+  });
+
+  it('widens a tiny viewport to at least ~2 km each way when following', () => {
+    state.followBus = true;
+    state.selectedJid = 'JF';
+    const p = _viewportPayload();
+    // ~2000 m ≈ 0.018° lat around center 49.342.
+    expect(p.swLat).toBeLessThan(49.342 - 0.017);
+    expect(p.neLat).toBeGreaterThan(49.342 + 0.017);
+    expect(p.swLon).toBeLessThan(8.660 - 0.02);
+    expect(p.neLon).toBeGreaterThan(8.660 + 0.02);
+  });
+
+  it('does not shrink a viewport already larger than the follow floor', () => {
+    state.followBus = true;
+    state.selectedJid = 'JF';
+    state.map.getBounds = () => ({
+      getSouthWest: () => ({ lat: 49.30, lng: 8.60 }),
+      getNorthEast: () => ({ lat: 49.38, lng: 8.72 }),
+    });
+    const p = _viewportPayload();
+    expect(p.swLat).toBeCloseTo(49.30, 4);
+    expect(p.neLat).toBeCloseTo(49.38, 4);
+    expect(p.swLon).toBeCloseTo(8.60, 4);
+    expect(p.neLon).toBeCloseTo(8.72, 4);
+  });
+
+  it('does not widen when a bus is selected but follow is off', () => {
+    state.followBus = false;
+    state.selectedJid = 'JF';
+    const p = _viewportPayload();
+    expect(p.swLat).toBeCloseTo(49.3410, 4);
+    expect(p.neLat).toBeCloseTo(49.3430, 4);
   });
 });

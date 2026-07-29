@@ -17,6 +17,10 @@ export { updateStatus, getServerTimeStr, showError, showPersistentError, clearPe
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 15000, 15000];
 const VIEWPORT_DEBOUNCE_MS = 250;
+// Minimum server-ring radius (metres) to request while following a bus, so a
+// zoomed-in follow keeps the bus in the fresh vehicles payload instead of
+// dropping to the ~30 s-cached journey detail push. See _sendCurrentViewport.
+const FOLLOW_MIN_RING_M = 2000;
 const REGEX_VERSION = /^[A-Za-z0-9._+\-]{1,64}$/;
 // The protocol version the client speaks. Must match the server's
 // `subscribe` event payload — mismatch means the deployed app and the
@@ -394,6 +398,45 @@ function _recoverIfBrokenSession(resp) {
   return false;
 }
 
+// Build the viewport POST payload from the current map bounds. When following
+// a bus the FETCH bbox is widened to a minimum ring so the bus stays in the
+// fresh vehicles payload (see the freeze rationale below). Pure/exported for
+// tests. Returns null if the map isn't ready.
+export function _viewportPayload() {
+  if (!state.map) return null;
+  const b = state.map.getBounds();
+  const sw = b.getSouthWest();
+  const ne = b.getNorthEast();
+  let swLat = sw.lat, swLon = sw.lng, neLat = ne.lat, neLon = ne.lng;
+
+  // When following a bus, keep the FETCH ring large enough that the bus stays
+  // inside it across zoom levels. The server ring ≈ max(span)/2 shrinks with
+  // zoom; strongly zoomed in it drops below the distance the bus covers in one
+  // tick, so the bus falls off-ring and the follow degrades to the journey
+  // detail push — which is cached ~30 s, so the followed position (and the
+  // pan) freezes for 30 s at a time. Widening only the fetch bbox (the display
+  // still filters to map.getBounds(), so no extra markers appear) keeps the
+  // followed bus in the fresh 10 s vehicles payload. Gated on follow so normal
+  // panning still fetches exactly the visible viewport.
+  if (state.followBus && state.selectedJid) {
+    const c = state.map.getCenter();
+    const dLat = FOLLOW_MIN_RING_M / 111000;
+    const dLon = FOLLOW_MIN_RING_M / (111000 * Math.cos(c.lat * Math.PI / 180));
+    swLat = Math.max(-90, Math.min(swLat, c.lat - dLat));
+    neLat = Math.min(90, Math.max(neLat, c.lat + dLat));
+    swLon = Math.max(-180, Math.min(swLon, c.lng - dLon));
+    neLon = Math.min(180, Math.max(neLon, c.lng + dLon));
+  }
+
+  return {
+    swLat: swLat,
+    swLon: swLon,
+    neLat: neLat,
+    neLon: neLon,
+    posMode: settings.current && settings.current.posMode || 'CALC',
+  };
+}
+
 function _sendCurrentViewport() {
   if (!state.map) return;
   if (!_es || _es.readyState !== 1) {
@@ -401,16 +444,7 @@ function _sendCurrentViewport() {
     // once the stream comes up, picking up the latest map.getBounds().
     return;
   }
-  const b = state.map.getBounds();
-  const sw = b.getSouthWest();
-  const ne = b.getNorthEast();
-  const payload = {
-    swLat: sw.lat,
-    swLon: sw.lng,
-    neLat: ne.lat,
-    neLon: ne.lng,
-    posMode: settings.current && settings.current.posMode || 'CALC',
-  };
+  const payload = _viewportPayload();
   window.fetch(CONFIG.apiBase + '/stream/viewport', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -611,6 +645,12 @@ export function _applyJourneyPayload(jid, journeyData) {
 
   if (jLat != null && jLon != null) {
     const sv = state.vehicles.get(jid);
+    // Capture the ring status BEFORE the missedCycles reset below. In-ring
+    // (missedCycles === 0, incl. off-bbox-but-in-ring) the vehicles handler
+    // already follow-pans to the REAL position; only when the bus is off the
+    // server ring (missedCycles > 0, or gone from the map) may the journey
+    // position drive the pan.
+    const busOffRing = !sv || sv.missedCycles > 0;
     if (sv) {
       if (sv.missedCycles > 0) {
         sv.data.lat = jLat;
@@ -625,13 +665,15 @@ export function _applyJourneyPayload(jid, journeyData) {
       // panel from the server-pushed data.
       ui.updateJourneyStopDelays(journeyData);
     }
-    // Follow-bus: the journey position is authoritative for the selected bus
-    // and arrives every tick regardless of viewport/ring, so drive the pan from
-    // here too. This is what keeps the map following the bus once it has left
-    // the (only ~viewport-sized) ring, where the vehicles-handler pan can no
-    // longer see it. _followPanTo guards against double-panning (the vehicles
-    // pan sets _followPanning first while the bus is still in-ring).
-    if (state.followBus && state.selectedJid === jid) {
+    // Follow-bus: drive the pan from the journey position ONLY when the bus is
+    // off the ring. In-ring the vehicles handler owns the pan with the REAL
+    // GPS position; letting the (interpolated, in REPORT_ONLY) journey position
+    // also pan made the map jump between the real and interpolated positions —
+    // the vehicles pan is a no-op within 5 m (no guard set) or a guard-clearing
+    // setView on a big jump, either of which let the interpolated journey pan
+    // slip through. Off-ring the journey position is the only follow source
+    // (real via the REPORT_ONLY GeoPos splice, interpolated on splice-miss).
+    if (state.followBus && state.selectedJid === jid && busOffRing) {
       _followPanTo(jLat, jLon);
     }
     return;
