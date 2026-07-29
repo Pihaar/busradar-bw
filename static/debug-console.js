@@ -1,32 +1,27 @@
 // On-screen debug console + console ring buffer for debugging on devices
 // without DevTools.
 //
-// Overlay:  add ?console=1 to the URL (persists via localStorage), ?console=0
-//           or the "Close ✕" button to disable. Captures console.*, uncaught
-//           errors and unhandled rejections into a scrollable overlay.
-// Ring buffer: console.* / errors are ALWAYS captured into a bounded
-//           window.__busradarConsoleTail (no DOM, negligible cost) so the
-//           debug dump (Ctrl+Shift+D / the "Dump" button / window.busradarDump)
-//           always carries the recent console output, even without the overlay.
+// Ring buffer + console.* patch: installed at import time and ALWAYS on
+//   (no DOM, negligible cost). console.* / uncaught errors / unhandled
+//   rejections are captured into a bounded window.__busradarConsoleTail so the
+//   debug dump (window.busradarDump / Ctrl+Shift+D) always carries the recent
+//   output, whether or not the overlay is visible.
+// Overlay: a scrollable on-screen panel, shown/hidden via
+//   window.__debugConsole.show()/hide()/toggle()/isOpen(). The ?debug menu
+//   (debug.js) decides when to AUTO-show it (only when the master
+//   busradar_debug flag AND the console tool toggle are set) and owns the
+//   toggle persistence + button state. These handles stay callable directly
+//   from the console / Playwright at any time, independent of ?debug.
 //
 // Vanilla + CSP-safe: only inline STYLES (style-src 'unsafe-inline') and DOM
 // creation; no inline script, so no CSP hash needed. Served same-origin (self).
 (function () {
-  function overlayEnabled() {
-    try {
-      var q = new URLSearchParams(location.search).get('console');
-      if (q === '1') { try { localStorage.setItem('busradar_console', '1'); } catch (e) {} return true; }
-      if (q === '0') { try { localStorage.removeItem('busradar_console'); } catch (e) {} return false; }
-      return localStorage.getItem('busradar_console') === '1';
-    } catch (e) { return false; }
-  }
-  var OVERLAY = overlayEnabled();
-
   // Always-on ring buffer of formatted lines (for the debug dump).
   var RING = [];
   try { window.__busradarConsoleTail = RING; } catch (e) {}
 
   var box = null, logEl = null;
+  var OVERLAY = false;  // whether the overlay is currently shown
 
   function ensureUI() {
     if (box) return;
@@ -41,30 +36,28 @@
     var title = document.createElement('span');
     title.textContent = 'debug console';
     title.style.cssText = 'flex:1;color:#4285f4;font-weight:bold;';
-    var dumpBtn = document.createElement('button');
-    dumpBtn.textContent = 'Dump 📋';
     var clearBtn = document.createElement('button');
     clearBtn.textContent = 'Clear';
     var closeBtn = document.createElement('button');
     closeBtn.textContent = 'Close ✕';
-    [dumpBtn, clearBtn, closeBtn].forEach(function (b) {
+    [clearBtn, closeBtn].forEach(function (b) {
       b.style.cssText = 'background:#333;color:#fff;border:1px solid #555;border-radius:4px;' +
         'padding:4px 10px;font:11px monospace;touch-action:manipulation;';
     });
-    dumpBtn.addEventListener('click', function () {
-      if (window.busradarCopyDump) window.busradarCopyDump();
-      else console.warn('[debug-console] busradarCopyDump not available yet');
-    });
     clearBtn.addEventListener('click', function () { if (logEl) logEl.textContent = ''; });
     closeBtn.addEventListener('click', function () {
-      // Close = disable overlay + remove; ring buffer capture continues.
-      // Re-enable with ?console=1 (address bar is available on mobile Firefox).
-      try { localStorage.removeItem('busradar_console'); } catch (e) {}
-      if (box && box.parentNode) box.parentNode.removeChild(box);
-      box = null; logEl = null; OVERLAY = false;
+      // Route the close through the ?debug menu when it's present, so the
+      // console tool toggle (busradar_debug_tools.console) and its button
+      // reflect the close instead of desyncing. setTool drives hide() itself.
+      // Without a menu (e.g. programmatic show() from Playwright, master flag
+      // off) just hide the overlay — there is no toggle state to persist.
+      if (window.__debugMenu && typeof window.__debugMenu.setTool === 'function') {
+        window.__debugMenu.setTool('console', false);
+      } else {
+        hide();
+      }
     });
     bar.appendChild(title);
-    bar.appendChild(dumpBtn);
     bar.appendChild(clearBtn);
     bar.appendChild(closeBtn);
     box.appendChild(bar);
@@ -73,6 +66,26 @@
     box.appendChild(logEl);
     (document.body || document.documentElement).appendChild(box);
   }
+
+  function show() {
+    OVERLAY = true;
+    /* istanbul ignore else -- jsdom always has a body; else is the pre-body early-load guard */
+    if (document.body) {
+      ensureUI();
+    } else {
+      // Called before the body exists (very early programmatic show). Defer
+      // the DOM build to DOMContentLoaded; the ring buffer already captures.
+      document.addEventListener('DOMContentLoaded', function () { if (OVERLAY) ensureUI(); }, { once: true });
+    }
+  }
+  function hide() {
+    OVERLAY = false;
+    if (box && box.parentNode) box.parentNode.removeChild(box);
+    box = null; logEl = null;
+  }
+  function toggle() { if (OVERLAY) hide(); else show(); }
+  function isOpen() { return OVERLAY; }
+  try { window.__debugConsole = { show: show, hide: hide, toggle: toggle, isOpen: isOpen }; } catch (e) {}
 
   function fmt(a) {
     if (a && (a instanceof Error || (a.name && a.message !== undefined))) {
@@ -87,7 +100,7 @@
     try {
       var ts = new Date().toISOString().slice(11, 19);
       text = ts + ' [' + level + '] ' + Array.prototype.map.call(args, fmt).join(' ');
-    } catch (e) { return; }
+    } catch (e) { /* istanbul ignore next -- defensive: Date/formatting never throws here */ return; }
     RING.push(text);
     while (RING.length > 250) RING.shift();  // bounded
     if (!OVERLAY) return;
@@ -119,13 +132,4 @@
     var r = e && e.reason;
     record('error', ['unhandledrejection: ' + fmt(r)]);
   });
-
-  if (OVERLAY) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', ensureUI);
-    } else {
-      ensureUI();
-    }
-    console.log('[debug-console] enabled — ?console=0 or Close to disable');
-  }
 })();

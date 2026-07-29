@@ -14,6 +14,7 @@ var PRECACHE_URLS = [
   '/ui.js',
   '/refresh.js',
   '/init.js',
+  '/debug.js',
   '/debug-console.js',
   '/i18n.js',
   '/manifest.webmanifest',

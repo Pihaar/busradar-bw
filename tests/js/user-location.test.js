@@ -101,3 +101,47 @@ describe('setUserLocationMarker', () => {
     expect(opts.keyboard).toBe(false);
   });
 });
+
+describe('__gpsDebug — GPS diagnostic pill', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.__gpsDebug.hide();  // reset module-local _gpsDebugEnabled + element
+  });
+
+  it('show() creates the pill immediately with a placeholder', () => {
+    window.__gpsDebug.show();
+    const el = document.getElementById('gps-debug');
+    expect(el).not.toBeNull();
+    expect(el.textContent).toContain('gps-debug on');
+  });
+
+  it('hide() removes the pill', () => {
+    window.__gpsDebug.show();
+    window.__gpsDebug.hide();
+    expect(document.getElementById('gps-debug')).toBeNull();
+  });
+
+  it('toggle() flips visibility', () => {
+    window.__gpsDebug.toggle();
+    expect(document.getElementById('gps-debug')).not.toBeNull();
+    window.__gpsDebug.toggle();
+    expect(document.getElementById('gps-debug')).toBeNull();
+  });
+
+  it('_gpsDebugSet is inert while the pill is off (no element created)', () => {
+    settings.current = { showLocation: false };
+    state.map = makeMapMock();
+    // showLocation=off makes setUserLocationMarker early-return via a
+    // _gpsDebugSet call; with the pill off that call must not create the pill.
+    setUserLocationMarker(49.34, 8.66);
+    expect(document.getElementById('gps-debug')).toBeNull();
+  });
+
+  it('_gpsDebugSet writes to the pill when enabled', () => {
+    window.__gpsDebug.show();
+    settings.current = { showLocation: false };
+    state.map = makeMapMock();
+    setUserLocationMarker(49.34, 8.66);
+    expect(document.getElementById('gps-debug').textContent).toContain('setMarker skipped: showLoc=off');
+  });
+});

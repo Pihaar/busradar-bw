@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin } from './state.js';
+import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin, debugLog } from './state.js';
 import { api } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { ui } from './ui.js';
@@ -92,6 +92,7 @@ function _scheduleReconnect() {
   _reconnectAttempt++;
   const jitter = Math.floor((Math.random() - 0.5) * base * 0.4);
   const delay = Math.max(0, base + jitter);
+  if (window.__busradarVerbose) debugLog('sse reconnect scheduled', { attempt: _reconnectAttempt, delayMs: delay });
   _setSseState('reconnecting');
   clearTimeout(_reconnectTimer);
   _reconnectTimer = setTimeout(function () { startStream(); }, delay);
@@ -127,6 +128,7 @@ export function startStream() {
     _gotFirstSubscribe = true;
     _reconnectAttempt = 0;
     _setSseState('open');
+    if (window.__busradarVerbose) debugLog('sse subscribe (stream open)');
     // Start the staleness clock at connect time. The stale-stream guard
     // (1s ticker + visibilitychange) keys off state.lastUpdate, which was
     // ONLY ever set by a vehicles event. A stream that connects but never
@@ -185,6 +187,7 @@ export function startStream() {
   _es.addEventListener('vehicles', function (ev) {
     let data;
     try { data = JSON.parse(ev.data); } catch (e) { return; }
+    if (window.__busradarVerbose) debugLog('sse vehicles', { count: (data.vehicles || []).length });
     _handleVehiclesPayload(data);
   });
 
@@ -199,6 +202,7 @@ export function startStream() {
     if (state.selectedJid !== data.jid) return;
     const journeyData = data.journey;
     if (!journeyData) return;
+    if (window.__busradarVerbose) debugLog('sse journey', { jid: data.jid, hasPos: !!(journeyData.pos) });
     _applyJourneyPayload(data.jid, journeyData);
   });
 
@@ -445,6 +449,7 @@ function _sendCurrentViewport() {
     return;
   }
   const payload = _viewportPayload();
+  if (window.__busradarVerbose) debugLog('viewport POST', payload);
   window.fetch(CONFIG.apiBase + '/stream/viewport', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -557,9 +562,34 @@ export function _copyDump() {
   } catch (e) { report(false); }
 }
 
+// Download the dump as a .json file. A file is easier to hand over than a
+// clipboard paste for a large dump. The anchor must be attached to the DOM
+// before .click() for the download to fire in some browsers, and the object
+// URL is revoked on a delay because an immediate revoke can abort the download.
+// Falls back to the clipboard copy if Blob/URL/anchor is unavailable.
+export function busradarDownloadDump() {
+  const text = busradarDump();
+  try {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'busradar-dump-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 10000);
+    console.log('[dump] download triggered (' + text.length + ' chars)');
+  } catch (e) {
+    console.warn('[dump] download failed, falling back to clipboard copy:', e);
+    _copyDump();
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.busradarDump = busradarDump;
   window.busradarCopyDump = _copyDump;
+  window.busradarDownloadDump = busradarDownloadDump;
   window.addEventListener('keydown', function (e) {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
       e.preventDefault();

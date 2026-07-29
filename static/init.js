@@ -1,7 +1,8 @@
-// Side-effect import FIRST: installs the on-screen debug console (behind
-// ?console=1 / localStorage) before anything else logs, so mobile users
-// without DevTools can see console output incl. the SW-registration result.
-import './debug-console.js';
+// Side-effect import FIRST: installs the debug layer (?debug menu +
+// always-on console ring buffer, via debug.js -> debug-console.js) before
+// anything else logs, so mobile users without DevTools can see console output
+// incl. the SW-registration result.
+import './debug.js';
 import { CONFIG } from './config.js';
 import { state, settings, t, applyI18n, parseCoord, parseZoom } from './state.js';
 import { urlState } from './api.js';

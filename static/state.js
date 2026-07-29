@@ -88,6 +88,21 @@ export function applyI18n(root) {
   document.documentElement.lang = (settings.current && settings.current.lang) || 'de';
 }
 
+// === DEBUG ===
+// Low-level verbose logger, gated on window.__busradarVerbose (set by the
+// debug menu's Verbose toggle, or directly from the console/Playwright). Lives
+// here — the shared low-level module — so refresh.js and others can import it
+// without an import cycle. Call sites additionally guard on the flag so the
+// argument string is never built when verbose is off; this self-guard makes a
+// direct debugLog() call a no-op too. Routes through console.log so the output
+// lands in the always-on console ring (debug-console.js) and the dump.
+export function debugLog() {
+  if (!window.__busradarVerbose) return;
+  var args = Array.prototype.slice.call(arguments);
+  args.unshift('[verbose]');
+  try { console.log.apply(console, args); } catch (e) {}
+}
+
 // === UTILITIES ===
 
 export function decodePolyline(encoded, precision) {

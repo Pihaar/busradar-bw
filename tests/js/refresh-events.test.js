@@ -39,8 +39,8 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload, busradarDump } = await import('../../static/refresh.js');
-const { state, settings } = await import('../../static/state.js');
+const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload, busradarDump, busradarDownloadDump } = await import('../../static/refresh.js');
+const { state, settings, debugLog } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
 
 describe('_applyJourneyPayload — journey SSE event helper', () => {
@@ -554,5 +554,66 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.selectedMarker).toBeTruthy();
     expect(d.selectedMarker.offsetMeters).toBe(800);
     expect(typeof d.ts).toBe('string');
+  });
+});
+
+describe('busradarDownloadDump — download the dump as a .json file', () => {
+  let clickSpy, createSpy, revokeSpy;
+  beforeEach(() => {
+    state.map = null;
+    state.selectedJid = null;
+    state.vehicles = new Map();
+    settings.current = { posMode: 'CALC' };
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('creates a Blob of valid JSON, clicks a DOM-attached anchor, and revokes on a delay', () => {
+    vi.useFakeTimers();
+    busradarDownloadDump();
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const blob = createSpy.mock.calls[0][0];
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('application/json');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    // Anchor is removed again after the click (not left in the DOM).
+    expect(document.querySelector('a[download]')).toBeNull();
+    expect(revokeSpy).not.toHaveBeenCalled();  // deferred
+    vi.advanceTimersByTime(10000);
+    expect(revokeSpy).toHaveBeenCalledWith('blob:mock');
+  });
+
+  it('falls back to the clipboard copy when Blob/URL is unavailable', async () => {
+    createSpy.mockImplementation(() => { throw new Error('no URL'); });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const origClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    busradarDownloadDump();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    if (origClipboard === undefined) delete navigator.clipboard;
+    else Object.defineProperty(navigator, 'clipboard', { value: origClipboard, configurable: true });
+  });
+});
+
+describe('debugLog — gated verbose logger', () => {
+  let logSpy;
+  beforeEach(() => { logSpy = vi.spyOn(console, 'log').mockImplementation(() => {}); });
+  afterEach(() => { logSpy.mockRestore(); delete window.__busradarVerbose; });
+
+  it('is a no-op when window.__busradarVerbose is off', () => {
+    window.__busradarVerbose = false;
+    debugLog('should not log', { a: 1 });
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it('logs with a [verbose] prefix when the flag is on', () => {
+    window.__busradarVerbose = true;
+    debugLog('viewport POST', { x: 1 });
+    expect(logSpy).toHaveBeenCalledWith('[verbose]', 'viewport POST', { x: 1 });
   });
 });

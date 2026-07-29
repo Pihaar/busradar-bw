@@ -317,63 +317,61 @@ export var mapModule = {
   },
 };
 
-// Diagnostic panel — visible only when either
-//   (a) the URL carries ?gpsdebug=1, or
-//   (b) localStorage.getItem("busradar_gpsdebug") is truthy.
-// Renders a small status pill in the bottom-left of the viewport showing
-// the last thing setUserLocationMarker / requestGPS did. Ships in-prod
-// because the bug reproduces on user devices we can't reach with
-// DevTools. Zero visual footprint when neither flag is set.
+// Diagnostic panel — a small status pill in the bottom-left of the viewport
+// showing the last thing setUserLocationMarker / requestGPS did. Ships in-prod
+// because the geolocation bug reproduces on user devices we can't reach with
+// DevTools. Zero visual footprint until enabled.
 //
-// The localStorage flag exists because installed PWAs have no address
-// bar — you can't type ?gpsdebug=1 into them. Workflow: open the site
-// once in the regular browser with ?gpsdebug=1, which persists the
-// flag; the PWA (same origin, same localStorage) then picks it up.
-// Turn off with ?gpsdebug=0 (also in the regular browser).
+// Controlled via window.__gpsDebug.show()/hide()/toggle(): driven by the
+// ?debug menu's GPS toggle (debug.js) and callable directly from the console /
+// Playwright at any time, independent of ?debug. _gpsDebugSet is gated on the
+// module-local _gpsDebugEnabled flag, so calls from setUserLocationMarker /
+// requestGPS are inert until the pill is switched on.
 var _gpsDebugEl = null;
-var _gpsDebugChecked = false;
 var _gpsDebugEnabled = false;
-function _gpsDebugCheckEnabled() {
-  if (_gpsDebugChecked) return _gpsDebugEnabled;
-  _gpsDebugChecked = true;
-  try {
-    if (typeof URLSearchParams !== "undefined") {
-      var params = new URLSearchParams(location.search);
-      var urlFlag = params.get("gpsdebug");
-      if (urlFlag === "1") {
-        try { localStorage.setItem("busradar_gpsdebug", "1"); } catch (e) {}
-        _gpsDebugEnabled = true;
-        return true;
-      }
-      if (urlFlag === "0") {
-        try { localStorage.removeItem("busradar_gpsdebug"); } catch (e) {}
-        _gpsDebugEnabled = false;
-        return false;
-      }
-    }
-    try {
-      _gpsDebugEnabled = localStorage.getItem("busradar_gpsdebug") === "1";
-    } catch (e) {}
-  } catch (e) {}
-  return _gpsDebugEnabled;
+// Create/return the pill element (idempotent), so show() can render it
+// immediately rather than waiting for the next GPS event.
+function _gpsDebugEnsureEl() {
+  if (!_gpsDebugEl) {
+    _gpsDebugEl = document.createElement("div");
+    _gpsDebugEl.id = "gps-debug";
+    _gpsDebugEl.style.cssText =
+      "position:fixed;bottom:8px;left:8px;z-index:9999;" +
+      "background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;" +
+      "font:11px/1.3 monospace;border-radius:4px;max-width:60vw;" +
+      "pointer-events:none;";
+    (document.body || document.documentElement).appendChild(_gpsDebugEl);
+  }
+  return _gpsDebugEl;
 }
 function _gpsDebugSet(msg) {
   try {
-    if (!_gpsDebugCheckEnabled()) return;
-    if (!_gpsDebugEl) {
-      _gpsDebugEl = document.createElement("div");
-      _gpsDebugEl.id = "gps-debug";
-      _gpsDebugEl.style.cssText =
-        "position:fixed;bottom:8px;left:8px;z-index:9999;" +
-        "background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;" +
-        "font:11px/1.3 monospace;border-radius:4px;max-width:60vw;" +
-        "pointer-events:none;";
-      document.body.appendChild(_gpsDebugEl);
-    }
+    if (!_gpsDebugEnabled) return;
+    _gpsDebugEnsureEl();
     var ts = new Date().toISOString().slice(11, 19);
     _gpsDebugEl.textContent = ts + " " + msg;
   } catch (e) {}
 }
+function _gpsDebugShow() {
+  _gpsDebugEnabled = true;
+  try {
+    _gpsDebugEnsureEl();
+    var ts = new Date().toISOString().slice(11, 19);
+    _gpsDebugEl.textContent = ts + " gps-debug on";
+  } catch (e) {}
+}
+function _gpsDebugHide() {
+  _gpsDebugEnabled = false;
+  if (_gpsDebugEl && _gpsDebugEl.parentNode) _gpsDebugEl.parentNode.removeChild(_gpsDebugEl);
+  _gpsDebugEl = null;
+}
+try {
+  window.__gpsDebug = {
+    show: _gpsDebugShow,
+    hide: _gpsDebugHide,
+    toggle: function () { if (_gpsDebugEnabled) _gpsDebugHide(); else _gpsDebugShow(); },
+  };
+} catch (e) {}
 
 // GPS dot: divIcon-based marker in a dedicated pane that renders ABOVE
 // the bus markers. The prior implementation used L.circleMarker in the
