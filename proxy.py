@@ -242,7 +242,7 @@ async def lifespan(app: FastAPI):
                            HAFAS_ENDPOINT, _build_hafas_envelope)
         ))
     if _SSE_PUSH_ENABLED:
-        background_tasks.append(asyncio.create_task(sse_push_loop(client_activity)))
+        background_tasks.append(asyncio.create_task(sse_push_loop(client_activity, tick_tracker)))
 
     yield
 

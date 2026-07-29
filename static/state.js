@@ -25,6 +25,12 @@ export var state = {
   _notStartedJid: null,
   _notStartedSince: 0,
   _notStartedLastPoll: 0,
+  // Journey-ended detection: the jid for which we've seen a LIVE position this
+  // selection. A journey that was live and then loses its position has ended
+  // once its (delay-aware) last stop time passes; the schedule "last stop +
+  // 5 min" rule alone misses buses that lose GPS before their final stop and
+  // misclassifies them as not-started. Reset on selection change. See refresh.js.
+  _selectedHadPosJid: null,
   _journeyReqSeq: 0,
   // geolocation watchPosition id for the live user-location dot; null when
   // no watch is active. Replaces the old per-tick getCurrentPosition poll.

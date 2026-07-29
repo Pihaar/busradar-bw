@@ -567,6 +567,16 @@ async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
     return ("journey", {**detail_res[1], "journey": new_result})
 
 
+def _report_only_should_emit(now_tick_push: int, last: Optional[int]) -> bool:
+    """REPORT_ONLY emit gate. Emit only when a tick-aligned push has happened
+    since this subscriber's last emit (`now_tick_push != last`), or on the very
+    first push for the subscriber (`last is None`). A non-tick-aligned push
+    (CALC intra-cycle fire) or a viewport-POST wake (fire_tick) leaves
+    `tick_push_seq` unchanged → `now == last` → skip. Extracted so the gate
+    decision is unit-tested directly rather than mirrored in a test."""
+    return last is None or now_tick_push != last
+
+
 async def handle_sse_stream(request: Request, app_version: str):
     """SSE endpoint handler. Subscribers receive `vehicles` events whenever a
     HAFAS tick is detected, plus `connected` count updates and `:keepalive`
@@ -672,22 +682,21 @@ async def handle_sse_stream(request: Request, app_version: str):
                     last_connected_count = count
                     yield _format_sse("connected", {"count": count})
 
-                # REPORT_ONLY: skip 2 of every 3 push cycles. HAFAS's real
-                # GPS position only refreshes every ~30 s, so emitting on
-                # every 10 s SSE push would re-send identical payloads and
-                # spend HAFAS budget on nothing. Anchored to fanout.push_seq
-                # (only incremented by sse_push_loop's fire_push_tick, not
-                # by handle_viewport's fire_tick) — this keeps the 3:1 skip
-                # pattern deterministic even when other users' viewport
-                # POSTs wake the stream in between pushes. last_emitted_push_seq
-                # starts as None so the first tick after subscribe (or after
-                # a posMode toggle) always emits.
+                # REPORT_ONLY: emit only on a push that sse_push_loop aligned
+                # to the HAFAS GPS tick. Real GPS refreshes every ~30 s, so a
+                # 10 s push that isn't tick-aligned would re-send an identical
+                # payload and spend HAFAS budget on nothing. Anchored to
+                # fanout.tick_push_seq (bumped only by a tick-aligned
+                # fire_push_tick, NOT by handle_viewport's fire_tick) — so the
+                # emit lands right after the upstream refresh and other users'
+                # viewport POSTs don't shift this sub's cadence.
+                # last_emitted_tick_push_seq starts as None so the first tick
+                # after subscribe (or after a posMode toggle) always emits.
                 if sub.pos_mode == "REPORT_ONLY":
-                    now_push = fanout.push_seq
-                    last = sub.last_emitted_push_seq
-                    if last is not None and (now_push - last) < 3:
+                    now_tick_push = fanout.tick_push_seq
+                    if not _report_only_should_emit(now_tick_push, sub.last_emitted_tick_push_seq):
                         continue
-                    sub.last_emitted_push_seq = now_push
+                    sub.last_emitted_tick_push_seq = now_tick_push
 
                 # New tick. Fetch vehicles + detail (if a selection is set)
                 # in parallel so per-tick wall-clock is max(latencies), not
@@ -852,13 +861,13 @@ async def handle_viewport(request: Request):
     if bbox_changed or posmode_changed:
         # Reset the REPORT_ONLY skip anchor so this explicit user action
         # (pan/zoom or mode switch) emits on the very next wake instead of
-        # being swallowed by the 2-of-3 cadence skip. last_emitted_push_seq
-        # is anchored to the global push_seq, which fire_tick() below does
+        # waiting for the next tick-aligned push. last_emitted_tick_push_seq
+        # is anchored to the global tick_push_seq, which fire_tick() below does
         # NOT bump — so without this reset a pan in REPORT_ONLY woke the
-        # loop but the skip gate (push_seq - last < 3) suppressed the emit,
-        # and the new viewport's buses only appeared on the next 30s push.
-        # None means "next wake always emits", then it re-anchors.
-        sub.last_emitted_push_seq = None
+        # loop but the skip gate (no tick_push_seq advance) suppressed the emit,
+        # and the new viewport's buses only appeared on the next tick-aligned
+        # push. None means "next wake always emits", then it re-anchors.
+        sub.last_emitted_tick_push_seq = None
     sub.pos_mode = payload.posMode
     sub.last_viewport_bbox = new_quantized
 
@@ -872,7 +881,7 @@ async def handle_viewport(request: Request):
     # redundant viewport POST (e.g. browser firing moveend at sub-quantize
     # precision) would wake every subscriber on the box. A posMode-only
     # change does NOT wake — the sub itself has already been re-anchored
-    # via last_emitted_push_seq=None above; the next natural push (≤10s)
+    # via last_emitted_tick_push_seq=None above; the next natural push (≤10s)
     # will emit their new-mode data. Broadcasting on posMode toggle would
     # amplify one user's UI action into 500 subscriber wake-ups + fetches
     # (white-hat PIV finding).

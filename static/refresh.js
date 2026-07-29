@@ -644,6 +644,9 @@ export function _applyJourneyPayload(jid, journeyData) {
   const jLon = jPos.x ? jPos.x / 1e6 : null;
 
   if (jLat != null && jLon != null) {
+    // This journey is live — remember it so a later loss of position is
+    // recognised as "ended" rather than "not started" (see the no-pos branch).
+    state._selectedHadPosJid = jid;
     const sv = state.vehicles.get(jid);
     // Capture the ring status BEFORE the missedCycles reset below. In-ring
     // (missedCycles === 0, incl. off-bbox-but-in-ring) the vehicles handler
@@ -679,7 +682,8 @@ export function _applyJourneyPayload(jid, journeyData) {
     return;
   }
 
-  // No position. Either the journey ended, or it hasn't started yet.
+  // No position in this push. Compute the last-stop time once (Ist-time, so
+  // delay-aware); both branches below use it.
   const stopL = journey.stopL || [];
   const lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
   const lastTime = lastStop ? (lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || '') : '';
@@ -690,12 +694,34 @@ export function _applyJourneyPayload(jid, journeyData) {
   if (nowM > 1080 && lastMin < 360) lastMin += 1440;
   if (nowM < 360 && lastMin > 1080) lastMin -= 1440;
 
-  if (lastTime && (lastMin + 5) <= nowM) {
-    ui.showJourneyEnded();
-    return;
-  }
   if (journey.isCncl) {
     if (ui._showJourneyCancelled) ui._showJourneyCancelled();
+    return;
+  }
+
+  // A journey that was LIVE this selection (had a position) and now has none
+  // has ENDED once its last stop time has passed. Until then it is still en
+  // route but momentarily without a live position (near the terminus, or a GPS
+  // gap like a tunnel) — keep the panel as-is: do NOT flip to "not started"
+  // (the stale kept vehicle would flip it back to "running", so it never showed
+  // as ended, the reported regression) and do NOT wipe the stop list (which
+  // would leave a broken panel if the position returns). Using the schedule
+  // time as the discriminator means a mid-route GPS gap is never mistaken for
+  // an ended journey. +1 min slop past the (delay-aware) last stop absorbs
+  // clock skew.
+  if (state._selectedHadPosJid === jid) {
+    if (lastTime && (lastMin + 1) <= nowM) {
+      ui.showJourneyEnded();
+    } else {
+      ui.updateJourneyStopDelays(journeyData);
+    }
+    return;
+  }
+
+  // Journey we never saw live (selected after it ended, or not yet started).
+  // More conservative "last stop + 5 min" rule since we have no live-history.
+  if (lastTime && (lastMin + 5) <= nowM) {
+    ui.showJourneyEnded();
     return;
   }
   // Otherwise: not started yet. Mark the jid so _handleVehiclesPayload can

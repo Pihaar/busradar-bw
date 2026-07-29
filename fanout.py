@@ -142,14 +142,15 @@ class Subscriber:
     # Bbox-quantize of the viewport when /viewport was last accepted, so
     # /viewport POST can skip fire_tick() when nothing actually changed.
     last_viewport_bbox: tuple[int, int, int, int] | None = None
-    # REPORT_ONLY skip anchor: push_seq at last emit (or None for "never").
+    # REPORT_ONLY skip anchor: tick_push_seq at last emit (or None for "never").
     # sse_push_loop fires every 10 s but HAFAS REPORT_ONLY positions only
-    # update every ~30 s, so we emit at most every 3rd push. Anchored to
-    # the GLOBAL push_seq (not a per-sub wake counter) so viewport-POST
-    # induced wakes from other users don't shift this sub's skip pattern.
-    # None means "next push always emits" — used both on initial subscribe
-    # and after any posMode toggle so the user sees new-mode data quickly.
-    last_emitted_push_seq: int | None = None
+    # update every ~30 s, so we emit only when a tick-aligned push has happened
+    # since our last emit. Anchored to the GLOBAL tick_push_seq (bumped only by
+    # sse_push_loop on a tick-aligned fire, NOT by handle_viewport's fire_tick)
+    # so viewport-POST-induced wakes from other users don't shift this sub's
+    # skip pattern. None means "next push always emits" — used both on initial
+    # subscribe and after any posMode toggle so the user sees new-mode data.
+    last_emitted_tick_push_seq: int | None = None
 
 
 # === Tick fanout primitives ===
@@ -157,12 +158,20 @@ class Subscriber:
 tick_condition: asyncio.Condition = asyncio.Condition()
 tick_seq: int = 0
 # push_seq is a subset of tick_seq: it increments only when sse_push_loop
-# triggers the fanout, not when handle_viewport does. REPORT_ONLY subscribers
-# use push_seq (mod 3) to decide whether to emit — anchoring to the global
-# push cadence rather than a per-sub wake-counter keeps the 3:1 skip
-# pattern deterministic even when other users' viewport POSTs wake the
-# stream in between pushes.
+# triggers the fanout, not when handle_viewport does. Kept ONLY for the
+# existing test suite — no production code path reads it anymore (the
+# REPORT_ONLY skip now anchors on tick_push_seq). Slated for removal in a
+# follow-up release.
 push_seq: int = 0
+# tick_push_seq increments only on push fires that sse_push_loop has aligned
+# to the HAFAS GPS tick (one per TICK_PERIOD). REPORT_ONLY subscribers emit
+# exactly when this advances, so their real-GPS payload is delivered right
+# after the upstream refresh instead of on an arbitrary phase of the free-
+# running 10 s push grid. SINGLE WRITER: only sse_push_loop may pass
+# tick_aligned=True to fire_push_tick; the client-driven fire_tick never
+# touches it. Bumped inside tick_condition before notify_all() so a woken
+# subscriber always observes the new value (single-writer event loop).
+tick_push_seq: int = 0
 
 # Global fire_tick rate-limit: a viewport-POST can wake every subscriber
 # (up to MAX_SUBSCRIBERS_GLOBAL=500), each of whom re-fetches HAFAS for
@@ -222,15 +231,19 @@ async def fire_tick() -> int:
         return tick_seq
 
 
-async def fire_push_tick() -> int:
+async def fire_push_tick(tick_aligned: bool = False) -> int:
     """Push-loop-owned variant: bumps push_seq as well as tick_seq. Called
-    from sse_push_loop at SSE_PUSH_PERIOD cadence. REPORT_ONLY subs anchor
-    their skip pattern on push_seq so viewport-POST-induced wakes don't
-    desync their emit cadence."""
-    global tick_seq, push_seq
+    from sse_push_loop at SSE_PUSH_PERIOD cadence. When `tick_aligned` is set
+    (this fire is phase-locked to the HAFAS GPS tick) it also bumps
+    tick_push_seq — REPORT_ONLY subs anchor their skip pattern on that counter
+    so their real-GPS emit lands right after the upstream refresh and isn't
+    desynced by viewport-POST-induced wakes."""
+    global tick_seq, push_seq, tick_push_seq
     async with tick_condition:
         tick_seq += 1
         push_seq += 1
+        if tick_aligned:
+            tick_push_seq += 1
         tick_condition.notify_all()
         return tick_seq
 

@@ -510,7 +510,7 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         """Regression: PIV finding v1.2.1. A POST that flips posMode without
         changing the quantized bbox must NOT wake all subscribers globally
         (was: broadcast → 500× HAFAS fetch amplification). Skip anchor
-        resets via last_emitted_push_seq=None on the toggler's own sub;
+        resets via last_emitted_tick_push_seq=None on the toggler's own sub;
         their next natural push emits within 10 s."""
         sub = await fresh_registry.subscribe("127.0.0.1")
         fired = {"count": 0}
@@ -541,8 +541,8 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         )
         assert fired["count"] == 1
         assert sub.pos_mode == "REPORT_ONLY"
-        # Anchor reset so the next push emits regardless of the mod-3 gate.
-        assert sub.last_emitted_push_seq is None
+        # Anchor reset so the next push emits regardless of the tick-align gate.
+        assert sub.last_emitted_tick_push_seq is None
 
     @pytest.mark.asyncio
     async def test_post_rate_check_ip_denies_empty(self):
@@ -556,11 +556,11 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
     @pytest.mark.asyncio
     async def test_bbox_pan_resets_report_only_skip_anchor(self, client, fresh_registry):
         """Regression: a pan to a new viewport in REPORT_ONLY ("Nur GPS")
-        showed no buses until the next 30s push. handle_viewport's fire_tick
-        bumps tick_seq (wakes the loop) but not push_seq, so the REPORT_ONLY
-        skip gate (push_seq - last_emitted < 3) suppressed the emit for the
-        freshly-panned viewport. Fix: a bbox change resets
-        last_emitted_push_seq to None so the next wake emits immediately."""
+        showed no buses until the next tick-aligned push. handle_viewport's
+        fire_tick bumps tick_seq (wakes the loop) but not tick_push_seq, so the
+        REPORT_ONLY skip gate (no tick_push_seq advance) suppressed the emit for
+        the freshly-panned viewport. Fix: a bbox change resets
+        last_emitted_tick_push_seq to None so the next wake emits immediately."""
         sub = await fresh_registry.subscribe("127.0.0.1")
         sub.pos_mode = "REPORT_ONLY"
         headers = {
@@ -574,16 +574,35 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
             content='{"swLat":49.20,"swLon":8.60,"neLat":49.30,"neLon":8.70,"posMode":"REPORT_ONLY"}',
             headers=headers,
         )
-        sub.last_emitted_push_seq = 100  # loop has emitted and re-anchored
+        sub.last_emitted_tick_push_seq = 100  # loop has emitted and re-anchored
         # Pan to a clearly different quantized bbox.
         await client.post(
             "/api/stream/viewport",
             content='{"swLat":49.28,"swLon":8.60,"neLat":49.38,"neLon":8.70,"posMode":"REPORT_ONLY"}',
             headers=headers,
         )
-        # Anchor reset → the woken loop bypasses the 2-of-3 skip and emits
-        # the new viewport's buses immediately instead of waiting ~30s.
-        assert sub.last_emitted_push_seq is None
+        # Anchor reset → the woken loop bypasses the skip and emits the new
+        # viewport's buses immediately instead of waiting for the next tick.
+        assert sub.last_emitted_tick_push_seq is None
+
+
+class TestReportOnlyEmitGate:
+    """The extracted REPORT_ONLY emit decision (sse_handler._report_only_should_emit),
+    tested directly instead of mirroring the expression in the test."""
+
+    def test_first_push_emits_when_anchor_none(self):
+        assert sse_handler._report_only_should_emit(7, None) is True
+
+    def test_emit_when_tick_push_advanced(self):
+        assert sse_handler._report_only_should_emit(6, 5) is True
+
+    def test_skip_when_unchanged(self):
+        # Non-aligned push or viewport-POST wake → tick_push_seq unchanged → skip.
+        assert sse_handler._report_only_should_emit(5, 5) is False
+
+    def test_emit_when_advanced_by_many(self):
+        # Missed aligned pushes (e.g. slow consumer) → still emit, don't wedge.
+        assert sse_handler._report_only_should_emit(9, 5) is True
 
 
 class TestSelectIdempotentReclick:

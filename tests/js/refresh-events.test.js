@@ -53,6 +53,7 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     state._currentStopL = null;
     state._notStartedJid = null;
     state._notStartedSince = 0;
+    state._selectedHadPosJid = null;
     state.vehicles = new Map();
     state.serverTimeStamp = Date.now();
     state.serverTimeMin = 720;  // 12:00
@@ -122,6 +123,58 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     _applyJourneyPayload('J5', payload);
     expect(state.selectedJourneyData).toBe(payload);
     expect(state._currentStopL).toEqual([{ name: 'STOP-A' }, { name: 'STOP-B' }]);
+  });
+
+  it('live journey that loses its position with a PAST last stop → ended immediately, NOT not-started', () => {
+    // Live first (now 12:00; last stop 11:00 is already past).
+    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] } });
+    expect(state._selectedHadPosJid).toBe('JL');
+    _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '110000' }] } });
+    expect(uiMock.showJourneyEnded).toHaveBeenCalledOnce();
+    expect(state._notStartedJid).toBeNull();
+  });
+
+  it('live journey losing position with a FUTURE last stop keeps the panel (mid-route gap / near terminus): NOT ended, NOT not-started', () => {
+    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] } });
+    // now 12:00, last stop 14:00 in the future → still en route, no live pos.
+    _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+    expect(state._notStartedJid).toBeNull();
+    expect(uiMock.updateJourneyStopDelays).toHaveBeenCalled();
+    // A second no-pos frame (still future last stop) must still not end / not flip,
+    // and must NOT wipe the list — so a returning position can't leave a broken panel.
+    _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+    expect(state._notStartedJid).toBeNull();
+  });
+
+  it('ended stays ended and idempotent across repeated no-pos frames (never flips to not-started)', () => {
+    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] } });
+    for (let i = 0; i < 3; i++) {
+      _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '110000' }] } });
+    }
+    expect(uiMock.showJourneyEnded).toHaveBeenCalledTimes(3);
+    expect(state._notStartedJid).toBeNull();
+  });
+
+  it('a never-live journey uses the schedule rule: future last stop → not-started', () => {
+    _applyJourneyPayload('JX', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+    expect(state._notStartedJid).toBe('JX');
+  });
+
+  it('a never-live journey uses the schedule rule: last stop > 5 min past → ended', () => {
+    // 11:40, now 12:00 → more than 5 min past, never seen live.
+    _applyJourneyPayload('JY', { journey: { pos: {}, stopL: [{ aTimeS: '114000' }] } });
+    expect(uiMock.showJourneyEnded).toHaveBeenCalledOnce();
+    expect(state._notStartedJid).toBeNull();
+  });
+
+  it('a live journey that gets cancelled shows cancelled regardless of last stop time', () => {
+    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] } });
+    _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }], isCncl: true } });
+    expect(uiMock._showJourneyCancelled).toHaveBeenCalledOnce();
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
   });
 });
 

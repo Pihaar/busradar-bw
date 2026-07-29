@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -404,20 +405,50 @@ async def tick_calibrator(app, breaker, tracker: TickTracker, activity: ClientAc
             await asyncio.sleep(60)
 
 
-async def sse_push_loop(activity: ClientActivity):
-    """SSE broadcast pacemaker. Fires fanout.fire_push_tick() every
-    SSE_PUSH_PERIOD seconds while at least one subscriber is connected, so
-    CALC-mode clients receive a freshly-computed interpolated position on
-    that cadence. When no subscribers are around it sleeps on the
-    ClientActivity wakeup and resumes cheaply on the first join.
+def _push_grid_fire(pred: float, now: float) -> tuple[float, bool]:
+    """Phase-locked push grid. Given the predicted next-tick monotonic time
+    `pred` (in the future) and `now`, return (wait_seconds, tick_aligned) for
+    the next 10 s-grid push fire anchored to the tick.
 
-    Decoupled from tick_calibrator so the push cadence (10 s) can be finer
-    than the underlying HAFAS GPS-cadence (30 s). The calibrator now only
-    detects the real HAFAS tick for metadata purposes.
+    Grid points are pred + k*SSE_PUSH_PERIOD + TICK_BUFFER; pick the smallest k
+    whose fire is strictly in the future. pred is in the future so k is normally
+    negative — MUST use math.floor (int() truncates a negative numerator toward
+    zero and would mis-place the first fire at +11 s instead of +1 s). Every
+    third grid point (k % 3 == 0) coincides with a tick and is flagged aligned.
+    wait is clamped to [0, SSE_PUSH_PERIOD + TICK_BUFFER] as a safety net."""
+    k = math.floor((now - TICK_BUFFER - pred) / SSE_PUSH_PERIOD) + 1
+    fire = pred + k * SSE_PUSH_PERIOD + TICK_BUFFER
+    aligned = (k % 3 == 0)
+    wait = min(max(0.0, fire - now), SSE_PUSH_PERIOD + TICK_BUFFER)
+    return wait, aligned
+
+
+async def sse_push_loop(activity: ClientActivity, tracker: TickTracker):
+    """SSE broadcast pacemaker. Fires fanout.fire_push_tick() on a 10 s grid
+    while at least one subscriber is connected, so CALC-mode clients receive a
+    freshly-computed interpolated position on that cadence. When no subscribers
+    are around it sleeps on the ClientActivity wakeup and resumes cheaply on the
+    first join.
+
+    The 10 s grid is PHASE-LOCKED to the HAFAS GPS tick: every third fire lands
+    just after the predicted tick (`tracker.next_tick_prediction()` + TICK_BUFFER)
+    and is flagged `tick_aligned`, so REPORT_ONLY subscribers — which emit only
+    on a tick-aligned push — deliver their real-GPS payload right after the
+    upstream refresh instead of on an arbitrary phase of a free-running grid.
+    CALC clients still get a fire every SSE_PUSH_PERIOD (the two intra-cycle
+    fires at tick+10 and tick+20).
+
+    When no tick is known yet (cold start) or the last tick is staler than
+    TICK_MAX_AGE, it falls back to a fixed SSE_PUSH_PERIOD sleep and flags every
+    third fire aligned so REPORT_ONLY keeps a ~30 s cadence with no calibration.
     """
     # Hoisted from the hot loop — fanout doesn't import tick, so no cycle.
     import fanout
     log.info("[sse_push_loop] started (period=%.1fs)", SSE_PUSH_PERIOD)
+    # Loop-local so it can't leak across the None<->prediction seam or across
+    # coroutines. Reset to 0 whenever we (re)enter the phase-locked branch so
+    # the first fallback fire after losing calibration is tick-aligned.
+    fallback_fires = 0
     while True:
         try:
             # Explicit subscriber gate — is_active() also returns True for
@@ -433,10 +464,22 @@ async def sse_push_loop(activity: ClientActivity):
                 # timeout fired without a join. Loop head does the check.
                 continue
 
-            await asyncio.sleep(SSE_PUSH_PERIOD)
+            pred = tracker.next_tick_prediction()
+            if pred is not None:
+                # Phase-locked 10 s grid anchored to the tick (see _push_grid_fire).
+                wait, aligned = _push_grid_fire(pred, _mono())
+                fallback_fires = 0
+            else:
+                # No calibration → free-running 10 s grid; flag every 3rd fire
+                # aligned so REPORT_ONLY still emits ~every 30 s.
+                wait = SSE_PUSH_PERIOD
+                aligned = (fallback_fires % 3 == 0)
+                fallback_fires += 1
+
+            await asyncio.sleep(wait)
 
             try:
-                await fanout.fire_push_tick()
+                await fanout.fire_push_tick(tick_aligned=aligned)
             except Exception:
                 log.exception("[sse_push_loop] fanout.fire_push_tick failed")
         except asyncio.CancelledError:

@@ -351,6 +351,7 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
     // Tell the SSE stream we no longer have a selection, so the
     // server stops shipping journey/stationboard events for this subscriber.
     api.selectStream('none').catch(function () {});
@@ -378,6 +379,7 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
     state.selectedJid = vehicle.jid;
     state.selectedStop = null;
     if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
@@ -1032,6 +1034,7 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
     state.selectedJid = null;
     state.selectedJourneyData = null;
     state.selectedStop = loc;
@@ -1717,6 +1720,7 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
     state.selectedJourneyData = null;
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_cancelled')));
   },
@@ -1733,6 +1737,7 @@ export var ui = {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
 
     var vehicle = {
       jid: state.selectedJid,
@@ -1958,6 +1963,7 @@ export var ui = {
       state._notStartedJid = null;
       state._notStartedSince = 0;
       state._notStartedLastPoll = 0;
+      state._selectedHadPosJid = null;
       state.selectedJourneyData = data;
 
       var vehicle = {
