@@ -37,10 +37,13 @@ from caches import (
     _inflight,
     _inflight_journey,
     _inflight_stationboard,
+    _inflight_follow_geopos,
     _journey_cache,
     _journey_cache_lock,
     _stationboard_cache,
     _stationboard_cache_lock,
+    _follow_geopos_cache,
+    _follow_geopos_lock,
     _JOURNEY_CACHE_TTL,
     _STATIONBOARD_CACHE_TTL,
     cached_singleflight,
@@ -485,6 +488,85 @@ async def _fetch_for_selection(app: FastAPI, sel: "fanout.Selection") -> tuple[s
     return (None, None)
 
 
+_FOLLOW_RING_M = 3000       # ring radius for the REPORT_ONLY off-ring follow lookup
+_FOLLOW_QUANTIZE = 5000     # ~0.005 deg grid for the follow-lookup cache key
+_FOLLOW_GEOPOS_TTL = 8.0    # short TTL: real GPS updates ~30s; caps re-fetch + dedups followers
+
+
+async def _real_pos_for_offring_follow(app, jid, detail_res, snap):
+    """REPORT_ONLY follow: JourneyDetails only returns an INTERPOLATED position.
+    When the followed bus is OUTSIDE the viewport ring (so its real GPS position
+    isn't in `snap`, the viewport vehicles payload), do one small REPORT_ONLY
+    JourneyGeoPos centered on the interpolated position and splice the bus's
+    REAL position into the journey payload, so the client's follow-pan chases
+    the real bus off-screen instead of the interpolated estimate.
+
+    The lookup goes through `cached_singleflight` keyed on the QUANTIZED ring
+    center, so concurrent followers of nearby off-ring buses collapse onto one
+    upstream call and re-fetch is capped by the short TTL — the follow path must
+    not escape the dedup the viewport/journey paths rely on.
+
+    Returns detail_res unchanged (NO position splice) when the bus is already in
+    `snap` (real position already delivered via vehicles), when there is no
+    interpolated center to search around (journey ended / not started), or when
+    the GeoPos lookup fails / the bus currently reports no GPS position. Never
+    mutates the shared/cached journey dict — the real position is spliced into a
+    shallow copy."""
+    vehicles = snap.get("vehicles", []) if isinstance(snap, dict) else []
+    if any(v.get("jid") == jid for v in vehicles):
+        return detail_res  # in-ring: the real position already reached the client
+
+    result = detail_res[1].get("journey") or {}
+    jny = result.get("journey") or {}
+    pos = jny.get("pos") or {}
+    cx, cy = pos.get("x"), pos.get("y")
+    if not cx or not cy:
+        return detail_res  # no interpolated center (journey ended / not started)
+
+    # Query the deterministic cell center so the cached result is valid for any
+    # follower whose interpolated position quantizes to the same cell.
+    qx = round(cx / _FOLLOW_QUANTIZE) * _FOLLOW_QUANTIZE
+    qy = round(cy / _FOLLOW_QUANTIZE) * _FOLLOW_QUANTIZE
+
+    import proxy as _proxy
+
+    async def _fetch():
+        return await _proxy._hafas_call_via_app(app, "JourneyGeoPos", {
+            "ring": {"cCrd": {"x": qx, "y": qy}, "maxDist": _FOLLOW_RING_M},
+            "perSize": 120,
+            "perStep": 10,
+            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+            "trainPosMode": "REPORT_ONLY",
+        })
+
+    try:
+        geo = await cached_singleflight(
+            cache=_follow_geopos_cache,
+            lock=_follow_geopos_lock,
+            inflight=_inflight_follow_geopos,
+            key=(qx, qy),
+            ttl=_FOLLOW_GEOPOS_TTL,
+            evict_at=200,
+            evict_keep=100,
+            fetch_fn=_fetch,
+        )
+    except Exception:
+        return detail_res
+    if not isinstance(geo, dict) or "error" in geo:
+        return detail_res
+
+    match = next((j for j in geo.get("jnyL", []) if j.get("jid") == jid), None)
+    real = match.get("pos") if match else None
+    if not real or not real.get("x") or not real.get("y"):
+        return detail_res  # bus reports no GPS right now → keep the interpolated pos
+
+    new_jny = dict(jny)
+    new_jny["pos"] = {"x": real["x"], "y": real["y"]}
+    new_result = dict(result)
+    new_result["journey"] = new_jny
+    return ("journey", {**detail_res[1], "journey": new_result})
+
+
 async def handle_sse_stream(request: Request, app_version: str):
     """SSE endpoint handler. Subscribers receive `vehicles` events whenever a
     HAFAS tick is detected, plus `connected` count updates and `:keepalive`
@@ -626,6 +708,20 @@ async def handle_sse_stream(request: Request, app_version: str):
 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 snap, detail_res = results[0], results[1]
+
+                # In REPORT_ONLY, splice the followed bus's REAL GPS position
+                # into the journey payload when it is off the viewport ring
+                # (one extra GeoPos, only in that case), so follow-bus tracks
+                # the real position off-screen instead of the interpolated one.
+                # Done here, BEFORE yield_start, so this upstream await isn't
+                # charged to the slow-consumer backpressure window; the
+                # selection-seq guard below then re-checks after the await.
+                if (sub.pos_mode == "REPORT_ONLY"
+                        and isinstance(sel, fanout.JourneySelection)
+                        and isinstance(detail_res, tuple)
+                        and detail_res[0] == "journey"):
+                    detail_res = await _real_pos_for_offring_follow(
+                        request.app, sel.jid, detail_res, snap)
 
                 # Wall-clock from here on measures the time the framework
                 # spent flushing yields to the client. A blocked socket-send

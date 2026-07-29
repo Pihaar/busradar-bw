@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from proxy import app, SSE_COOKIE_NAME
 import fanout
+import proxy
 import sse_handler
 
 
@@ -1420,3 +1421,160 @@ class TestDetailCacheEviction:
         await asyncio.gather(*[writer(i) for i in range(50)])
         # No exception raised, cap holds
         assert len(proxy._journey_cache) <= 200
+
+
+class TestOffringFollowRealPos:
+    """_real_pos_for_offring_follow: in REPORT_ONLY, splice the followed bus's
+    REAL GPS position into the journey payload when it is off the viewport ring,
+    with one extra GeoPos only in that case and no mutation of the cached dict."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_follow_cache(self):
+        # The lookup is keyed on the quantized ring center; two tests using the
+        # same on-grid center would otherwise share a cache entry and the second
+        # would piggyback on the first's result instead of calling its own fake.
+        sse_handler._follow_geopos_cache.clear()
+        sse_handler._inflight_follow_geopos.clear()
+        yield
+        sse_handler._follow_geopos_cache.clear()
+        sse_handler._inflight_follow_geopos.clear()
+
+    def _detail(self, cached_journey):
+        return ("journey", {"jid": "J", "journey": cached_journey})
+
+    @pytest.mark.asyncio
+    async def test_in_ring_returns_unchanged_and_makes_no_extra_call(self, monkeypatch):
+        called = False
+        async def fake(*a, **k):
+            nonlocal called
+            called = True
+            return {}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        detail = self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}})
+        snap = {"vehicles": [{"jid": "J", "lat": 49.0, "lon": 8.0}]}
+        out = await sse_handler._real_pos_for_offring_follow(None, "J", detail, snap)
+        assert out is detail
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_offring_splices_real_pos_without_mutating_cache(self, monkeypatch):
+        # Center is already on the 5000-unit grid, so quantization is the
+        # identity and the ring-center assertion stays readable.
+        async def fake(app, meth, req):
+            assert meth == "JourneyGeoPos"
+            assert req["trainPosMode"] == "REPORT_ONLY"
+            assert req["ring"]["cCrd"] == {"x": 8660000, "y": 49340000}
+            assert req["ring"]["maxDist"] == sse_handler._FOLLOW_RING_M
+            return {"jnyL": [{"jid": "J", "pos": {"x": 8665000, "y": 49345000}}]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        cached = {"journey": {"pos": {"x": 8660000, "y": 49340000}, "stopL": []}}
+        out = await sse_handler._real_pos_for_offring_follow(None, "J", self._detail(cached), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
+        # the cached/shared journey dict must NOT be mutated
+        assert cached["journey"]["pos"] == {"x": 8660000, "y": 49340000}
+
+    @pytest.mark.asyncio
+    async def test_offring_quantizes_center_to_grid(self, monkeypatch):
+        # An off-grid center must be snapped to the nearest 5000-unit cell so
+        # nearby followers collapse onto the same cache key.
+        seen = {}
+        async def fake(app, meth, req):
+            seen["cCrd"] = req["ring"]["cCrd"]
+            return {"jnyL": [{"jid": "J", "pos": {"x": 8665111, "y": 49345222}}]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        cached = {"journey": {"pos": {"x": 8661200, "y": 49343900}}}
+        await sse_handler._real_pos_for_offring_follow(None, "J", self._detail(cached), {"vehicles": []})
+        q = sse_handler._FOLLOW_QUANTIZE
+        assert seen["cCrd"] == {"x": round(8661200 / q) * q, "y": round(49343900 / q) * q}
+
+    @pytest.mark.asyncio
+    async def test_snap_not_dict_treated_as_offring(self, monkeypatch):
+        # A vehicles-fetch that errored arrives as a non-dict (Exception/None);
+        # treat it as "bus not in ring" and still resolve the real position.
+        called = False
+        async def fake(*a, **k):
+            nonlocal called
+            called = True
+            return {"jnyL": [{"jid": "J", "pos": {"x": 8665000, "y": 49345000}}]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), None)
+        assert called is True
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
+
+    @pytest.mark.asyncio
+    async def test_offring_bus_absent_from_geopos_keeps_interpolated(self, monkeypatch):
+        async def fake(*a, **k):
+            return {"jnyL": [{"jid": "OTHER", "pos": {"x": 1, "y": 2}}]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
+
+    @pytest.mark.asyncio
+    async def test_real_pos_zero_coords_keeps_interpolated(self, monkeypatch):
+        # A matched journey that currently reports no GPS (x/y == 0) must not
+        # clobber the interpolated position with (0, 0).
+        async def fake(*a, **k):
+            return {"jnyL": [{"jid": "J", "pos": {"x": 0, "y": 0}}]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
+
+    @pytest.mark.asyncio
+    async def test_no_interpolated_center_makes_no_call(self, monkeypatch):
+        called = False
+        async def fake(*a, **k):
+            nonlocal called
+            called = True
+            return {}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {}}}), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {}
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_geopos_error_keeps_interpolated(self, monkeypatch):
+        async def fake(*a, **k):
+            return {"error": "upstream"}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
+
+    @pytest.mark.asyncio
+    async def test_geopos_exception_keeps_interpolated(self, monkeypatch):
+        async def fake(*a, **k):
+            raise RuntimeError("boom")
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        out = await sse_handler._real_pos_for_offring_follow(
+            None, "J", self._detail({"journey": {"pos": {"x": 8660000, "y": 49340000}}}), {"vehicles": []})
+        assert out[1]["journey"]["journey"]["pos"] == {"x": 8660000, "y": 49340000}
+
+    @pytest.mark.asyncio
+    async def test_singleflight_dedups_concurrent_followers(self, monkeypatch):
+        # Two followers whose interpolated centers land in the same quantized
+        # cell must collapse onto one upstream GeoPos call.
+        import asyncio
+        calls = 0
+        async def fake(*a, **k):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.02)
+            return {"jnyL": [
+                {"jid": "J", "pos": {"x": 8665000, "y": 49345000}},
+                {"jid": "K", "pos": {"x": 8666000, "y": 49346000}},
+            ]}
+        monkeypatch.setattr(proxy, "_hafas_call_via_app", fake)
+        # Same cell (both on-grid at the same point), different followed jids.
+        d_j = ("journey", {"jid": "J", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}})
+        d_k = ("journey", {"jid": "K", "journey": {"journey": {"pos": {"x": 8660000, "y": 49340000}}}})
+        out_j, out_k = await asyncio.gather(
+            sse_handler._real_pos_for_offring_follow(None, "J", d_j, {"vehicles": []}),
+            sse_handler._real_pos_for_offring_follow(None, "K", d_k, {"vehicles": []}),
+        )
+        assert calls == 1
+        assert out_j[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
+        assert out_k[1]["journey"]["journey"]["pos"] == {"x": 8666000, "y": 49346000}

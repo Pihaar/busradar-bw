@@ -95,6 +95,14 @@ _stationboard_cache: dict = {}
 _stationboard_cache_lock = asyncio.Lock()
 _inflight_stationboard: dict[tuple, asyncio.Future] = {}
 
+# Off-ring follow: real-GPS JourneyGeoPos lookup, keyed on the quantized ring
+# center so concurrent followers of nearby off-ring buses collapse onto one
+# upstream call and re-fetch is capped by the short TTL. Keeps the follow path
+# inside the same dedup the viewport/journey paths use (see sse_handler).
+_follow_geopos_cache: dict = {}
+_follow_geopos_lock = asyncio.Lock()
+_inflight_follow_geopos: dict[tuple, asyncio.Future] = {}
+
 # Viewport-keyed singleflight map for the SSE vehicles fetch.
 _inflight: dict[tuple, asyncio.Future] = {}
 
