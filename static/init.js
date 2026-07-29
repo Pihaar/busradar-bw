@@ -254,12 +254,18 @@ function init() {
   startStream();
 
   state.map.on('moveend', function() {
-    if (state._restoreInProgress || state._navigating || state._followPanning) return;
+    if (state._restoreInProgress || state._navigating) return;
+    // A follow-pan (state._followPanning) must still re-anchor the SSE
+    // viewport. Otherwise the HAFAS ring stays centered on the old viewport,
+    // the followed bus eventually drives out of the ring, drops from the
+    // vehicles payload, and the map stops following it. The URL-save below is
+    // already skipped while a journey/stop is selected (always true during a
+    // follow-pan), so the follow-pan never pollutes the shareable map URL.
     if (!state.selectedJid && !state.selectedStop) {
       urlState.saveMapPosition();
     }
-    // Re-anchor the SSE viewport on every user-initiated pan/zoom. Server
-    // debounces but also accepts every POST; refresh.js itself trailing-
+    // Re-anchor the SSE viewport on every pan/zoom, user- or follow-driven.
+    // Server debounces but also accepts every POST; refresh.js itself trailing-
     // debounces by 250 ms.
     notifyViewportChange();
   });
