@@ -119,13 +119,15 @@ describe('load-more button click triggers a cascade', () => {
   });
 });
 
-// === Bug 3: empty/errored render must NOT wipe an already-shown list ===
-describe('renderDepartures — never wipes a populated list on an empty expand', () => {
+// === Bug 3: empty/errored render must NOT wipe an already-shown list, but a
+// non-expanding (steady-state SSE push / filter) empty MUST still clear. ===
+describe('renderDepartures — keeps list only while an expand cascade is in flight', () => {
   beforeEach(() => {
     document.body.innerHTML = '<ul id="departure-list"></ul>';
     ui.departureList = document.getElementById('departure-list');
     state.selectedStop = loc;
     state._depFilter = null;
+    state._autoExpandingDep = false;
     state.vehicles = new Map();
   });
   afterEach(() => { vi.restoreAllMocks(); });
@@ -140,24 +142,36 @@ describe('renderDepartures — never wipes a populated list on an empty expand',
     ui.departureList.replaceChildren(frag);
   }
 
-  it('keeps the shown departures when a widened window (dur>60) returns none', () => {
+  it('keeps the shown departures while an expand cascade returns none', () => {
     populate(3);
     state._stationDepDur = 480;
+    state._autoExpandingDep = true;  // cascade walking a service gap
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(3);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
   });
 
-  it('shows the empty-state at the default window (dur=60) when nothing is upcoming', () => {
+  it('clears to empty-state when a NON-expanding render empties a wide board', () => {
+    // e.g. a steady-state SSE push at dur>60 after end-of-service — must not
+    // freeze departed buses on screen (the architect-flagged stale-board path).
+    populate(3);
+    state._stationDepDur = 480;
+    state._autoExpandingDep = false;
+    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
+  });
+
+  it('shows the empty-state at the default window when nothing is upcoming', () => {
     populate(0);
     state._stationDepDur = 60;
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
-  it('shows the empty-state on a wide empty window when nothing was shown yet', () => {
-    populate(0);
-    state._stationDepDur = 480;
+  it('clears a populated board at dur=60 when not expanding (gate is the flag, not dur)', () => {
+    populate(3);
+    state._stationDepDur = 60;
+    state._autoExpandingDep = false;
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
@@ -172,6 +186,98 @@ describe('renderDepartures — never wipes a populated list on an empty expand',
     ui.renderDepartures(data, loc, '', null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
+  });
+});
+
+describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () => {
+  let arrList;
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="arrival-list"></ul>';
+    arrList = document.getElementById('arrival-list');
+    state.selectedStop = loc;
+    state._arrFilter = null;
+    state._autoExpandingArr = false;
+    state.vehicles = new Map();
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function populate(n) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < n; i++) {
+      const li = document.createElement('li');
+      li.className = 'departure-item';  // arrival rows reuse this class
+      frag.appendChild(li);
+    }
+    arrList.replaceChildren(frag);
+  }
+
+  it('keeps the shown arrivals while an expand cascade returns none', () => {
+    populate(2);
+    state._stationArrDur = 480;
+    state._autoExpandingArr = true;
+    ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
+    expect(arrList.querySelectorAll('.departure-item').length).toBe(2);
+    expect(arrList.querySelector('.empty-state')).toBeNull();
+  });
+
+  it('clears to empty-state when a non-expanding render empties a wide board', () => {
+    populate(2);
+    state._stationArrDur = 480;
+    state._autoExpandingArr = false;
+    ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
+    expect(arrList.querySelector('.empty-state')).not.toBeNull();
+  });
+});
+
+describe('applyPushedStationboard — an empty SSE push clears a wide board (Bug 3 x SSE)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="departure-list"></ul>';
+    ui.departureList = document.getElementById('departure-list');
+    state.selectedStop = loc;
+    state._depFilter = null;
+    state._autoExpandingDep = false;
+    state._autoExpandingArr = false;
+    state._lastDepSig = null;
+    state._stationDepDur = 480;
+    state.vehicles = new Map();
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('clears the frozen list when the real push handler delivers an empty wide board', () => {
+    const li = document.createElement('li');
+    li.className = 'departure-item';
+    ui.departureList.appendChild(li);
+    ui.applyPushedStationboard(loc, { jnyL: [], common: {} }, 'DEP');
+    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
+  });
+});
+
+describe('loadArrivals error — keeps a populated list instead of wiping it (mirror)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="arrival-list"></ul>';
+    state.selectedStop = loc;
+    state._autoExpandingArr = false;
+    state._stationArrDur = 300;
+    getStationBoard.mockClear();
+    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('does not wipe shown arrivals when the fetch rejects', async () => {
+    const li = document.createElement('li');
+    li.className = 'departure-item';
+    document.getElementById('arrival-list').appendChild(li);
+    getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
+    await ui.loadArrivals(loc, '', 300, true);
+    expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(1);
+    expect(document.getElementById('arrival-list').querySelector('.empty-state')).toBeNull();
+    expect(ui.addLoadMoreButton).toHaveBeenCalled();
+  });
+
+  it('shows the error state when nothing was displayed yet', async () => {
+    getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
+    await ui.loadArrivals(loc, '', 60, true);
+    expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 });
 

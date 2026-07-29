@@ -101,7 +101,7 @@ function _scheduleReconnect() {
 export function _resendActiveSelection() {
   if (state.selectedJid) {
     api.selectStream('journey', state.selectedJid).catch(function () {});
-  } else if (state.selectedStop) {
+  } else if (state.selectedStop && state.selectedStop.lid) {
     var bt = state._activeStationBoardType || 'DEP';
     var dur = (bt === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
     api.selectStream('stationboard', state.selectedStop.lid, bt, dur).catch(function () {});

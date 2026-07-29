@@ -1370,9 +1370,8 @@ export var ui = {
 
     if (jnyL.length === 0) {
       var arrDurMin = state._stationArrDur || 60;
-      // Same as departures: a widened window that finds nothing new keeps the
-      // arrivals already shown instead of wiping them to an empty-state.
-      if (arrDurMin > 60 && arrList.querySelector('.departure-item')) {
+      // Keep only while an expand cascade is walking a gap (see renderDepartures).
+      if (state._autoExpandingArr && arrList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
       var arrEmptyText = arrDurMin >= 1440 ? t('arr_empty_24h') : arrDurMin >= 120 ? t('arr_empty_hours', {n: Math.round(arrDurMin / 60)}) : t('arr_empty_minutes', {n: arrDurMin});
@@ -1536,12 +1535,14 @@ export var ui = {
 
     if (jnyL.length === 0) {
       var depDurMin = state._stationDepDur || 60;
-      // A WIDENED window (load-more / auto-expand across a service gap) that
-      // finds nothing new must NOT wipe the departures already shown — keep
-      // them; loadDepartures then adds the terminal "no more" note via
-      // addLoadMoreButton. Only paint the empty-state for the default window
-      // (nothing upcoming soon) or when the list was empty to begin with.
-      if (depDurMin > 60 && ui.departureList.querySelector('.departure-item')) {
+      // Keep the shown departures ONLY while an expand cascade is walking a
+      // service gap (load-more / auto-expand): those widening steps legitimately
+      // return "nothing new" and must not wipe the list. A normal SSE push or a
+      // filter change that empties the board is NOT expanding, so it still
+      // clears to the empty-state (otherwise a board that legitimately empties
+      // at end-of-service would show departed buses frozen forever, since the
+      // dup-signature check suppresses the next identical empty push).
+      if (state._autoExpandingDep && ui.departureList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
       var depEmptyText = depDurMin >= 1440 ? t('dep_empty_24h') : depDurMin >= 120 ? t('dep_empty_hours', {n: Math.round(depDurMin / 60)}) : t('dep_empty_minutes', {n: depDurMin});

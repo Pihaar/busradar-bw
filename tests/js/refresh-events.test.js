@@ -268,4 +268,10 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     _resendActiveSelection();
     expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('journey', 'J9');
   });
+
+  it('does nothing for a stop object that has no lid (defensive)', () => {
+    state.selectedStop = { name: 'no-lid-stop' };
+    _resendActiveSelection();
+    expect(api.selectStream).not.toHaveBeenCalled();
+  });
 });

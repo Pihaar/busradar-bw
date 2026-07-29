@@ -270,6 +270,9 @@ function init() {
     notifyViewportChange();
   });
   state.map.on('zoomend', function() {
+    // Unlike moveend, this keeps the _followPanning guard: a follow-pan only
+    // pans (constant zoom), so zoomend never fires during follow — the guard
+    // is inert here. If follow ever animates zoom, drop it like moveend did.
     if (state._restoreInProgress || state._navigating || state._followPanning) return;
     notifyViewportChange();
   });
