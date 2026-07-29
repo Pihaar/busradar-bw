@@ -62,17 +62,17 @@ def analyze_direction(records: list[dict], seq_key: tuple, label: str) -> dict:
     n_stops = len(seq_key)
 
     # Collect delays per stop position
-    delays_dep = [[] for _ in range(n_stops)]
-    delays_arr = [[] for _ in range(n_stops)]
+    delays_dep: list[list[int]] = [[] for _ in range(n_stops)]
+    delays_arr: list[list[int]] = [[] for _ in range(n_stops)]
     durations_planned = []
     durations_actual = []
     start_delays = []
     end_delays = []
 
     # Per-segment delay buildup (delta between consecutive stops)
-    segment_buildups = [[] for _ in range(max(0, n_stops - 1))]
+    segment_buildups: list[list[int]] = [[] for _ in range(max(0, n_stops - 1))]
     # Per-stop dwell-time buildup (delta within a single stop: dep_delay - arr_delay)
-    dwell_buildups = [[] for _ in range(n_stops)]
+    dwell_buildups: list[list[int]] = [[] for _ in range(n_stops)]
 
     for r in matched:
         stops = r["stops"]

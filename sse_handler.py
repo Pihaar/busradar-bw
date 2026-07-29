@@ -868,8 +868,9 @@ async def handle_viewport(request: Request):
         return _err_response("body_too_large")
 
     sub, err = _lookup_subscriber(request)
-    if err:
-        return _err_response(err)
+    if err or sub is None:
+        # sub is non-None whenever err is None; the extra check narrows for mypy.
+        return _err_response(err or "unknown_connection")
 
     if not _rate_check_request(request, sub):
         return JSONResponse(
@@ -930,8 +931,9 @@ async def handle_select(request: Request):
         return _err_response("body_too_large")
 
     sub, err = _lookup_subscriber(request)
-    if err:
-        return _err_response(err)
+    if err or sub is None:
+        # sub is non-None whenever err is None; the extra check narrows for mypy.
+        return _err_response(err or "unknown_connection")
 
     if not _rate_check_request(request, sub):
         return JSONResponse(

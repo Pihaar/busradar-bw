@@ -19,6 +19,7 @@ import math
 import os
 import time
 from pathlib import Path
+from typing import cast
 
 log = logging.getLogger("busradar")
 
@@ -98,9 +99,10 @@ class ClientActivity:
         # asyncio loop (tests import it without a running loop).
         self.wakeup_event: asyncio.Event | None = None
 
-    def _ensure_event(self):
+    def _ensure_event(self) -> asyncio.Event:
         if self.wakeup_event is None:
             self.wakeup_event = asyncio.Event()
+        return self.wakeup_event
 
     def touch(self):
         self.last_ts = _mono()
@@ -113,8 +115,7 @@ class ClientActivity:
             # 0 → 1 transition. If the calibrator is idle-sleeping, this
             # cuts the sleep short so the first vehicles event for the
             # fresh subscriber lands within a tick window, not 30 min.
-            self._ensure_event()
-            self.wakeup_event.set()
+            self._ensure_event().set()
 
     def subscriber_left(self):
         # Defensive against double-unsubscribe; never go negative.
@@ -136,10 +137,10 @@ class ClientActivity:
         """Sleep up to `timeout` seconds, returning early if a
         0→1 subscriber transition fires the wakeup event. Returns True
         if the event fired, False on plain timeout."""
-        self._ensure_event()
-        self.wakeup_event.clear()
+        event = self._ensure_event()
+        event.clear()
         try:
-            await asyncio.wait_for(self.wakeup_event.wait(), timeout=timeout)
+            await asyncio.wait_for(event.wait(), timeout=timeout)
             return True
         except TimeoutError:
             return False
@@ -285,7 +286,7 @@ async def _calib_fetch(app, breaker, hafas_endpoint: str, build_envelope) -> dic
             svc = data.get("svcResL", [{}])[0]
             if svc.get("err") != "OK":
                 return None
-            return svc.get("res", {})
+            return cast("dict", svc.get("res", {}))
         except Exception:
             return None
 

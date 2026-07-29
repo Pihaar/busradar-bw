@@ -16,6 +16,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -66,7 +67,7 @@ async def _hafas_call(client: httpx.AsyncClient, method: str, req: dict) -> dict
         svc = data.get("svcResL", [{}])[0]
         if svc.get("err") != "OK":
             return None
-        return svc.get("res", {})
+        return cast("dict", svc.get("res", {}))
     except Exception as e:
         LOG.warning("HAFAS call failed: %s", e)
         return None
@@ -86,7 +87,7 @@ async def _fetch_stops_in_radius(
     res = await _hafas_call(client, "LocGeoPos", req)
     if not res:
         return []
-    return res.get("locL", [])
+    return cast("list[dict]", res.get("locL", []))
 
 
 async def _discover_platforms(client: httpx.AsyncClient, lid: str) -> list[dict]:
@@ -226,7 +227,7 @@ async def build_stops_cache():
             if isinstance(r, Exception):
                 errors1 += 1
                 continue
-            for loc in r:
+            for loc in cast("list", r):
                 stop = _parse_stop(loc)
                 if stop and stop["extId"] not in all_stops:
                     all_stops[stop["extId"]] = stop
@@ -388,7 +389,7 @@ def load_stops_cache() -> dict | None:
     if not CACHE_FILE.exists():
         return None
     try:
-        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        return cast("dict", json.loads(CACHE_FILE.read_text(encoding="utf-8")))
     except Exception as e:
         LOG.warning("stops_cache.json unreadable, treating as missing: %s", e)
         return None

@@ -74,3 +74,23 @@ exclude_dirs = ["tests", "node_modules", "coverage", ".playwright-mcp"]
 # Location-specific findings (B310 urlopen, B603 subprocess call) stay active and
 # are annotated inline with `# nosec` + justification instead of skipped globally.
 skips = ["B311", "B110", "B404"]
+
+[tool.mypy]
+# Static type checking. Strong but reachable: not global --strict (which flags
+# ~190 missing annotations across the codebase and is a separate, later step).
+# This config catches real defects (None-derefs, bad returns, redundant casts)
+# without demanding a full annotation sweep.
+python_version = "3.12"       # dev floor; prod runs 3.13
+ignore_missing_imports = true # third-party stubs not installed in this env
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+check_untyped_defs = true     # type-check bodies of unannotated functions too
+
+[[tool.mypy.overrides]]
+# Offline analysis CLIs: throwaway reporting tooling built on dynamically-shaped
+# dicts. check_untyped_defs would demand annotations that add no safety here.
+module = ["line_analyze", "line_gps_analyze"]
+check_untyped_defs = false
+

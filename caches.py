@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from typing import cast
 
 CACHE_TTL = 9.5
 STOPS_CACHE_TTL = 86400.0
@@ -137,7 +138,7 @@ async def cached_singleflight(
     """
     cached = cache.get(key)
     if cached and (time.time() - cached[0]) < ttl:
-        return cached[1]
+        return cast("dict", cached[1])
 
     # Singleflight: if a fetch is in flight, await it under shield so a
     # piggybacker's own cancellation can't cancel the shared future.

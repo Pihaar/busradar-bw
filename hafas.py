@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import cast
 
 import httpx
 from fastapi import FastAPI
@@ -134,7 +135,7 @@ async def _hafas_call_via_app(app: FastAPI, method: str, req: dict) -> dict:
             return {"error": "upstream_error", "detail": "HAFAS service error"}
 
         breaker.record_success()
-        return svc_res.get("res", {})
+        return cast("dict", svc_res.get("res", {}))
 
     except httpx.TimeoutException:
         breaker.record_failure()

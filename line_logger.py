@@ -32,6 +32,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -134,7 +135,7 @@ async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict | N
         data = resp.json()
         if data.get("err") != "OK":
             return None
-        return data.get("svcResL", [{}])[0].get("res", {})
+        return cast("dict", data.get("svcResL", [{}])[0].get("res", {}))
     except Exception as e:
         log.warning("Journey fetch failed for %s: %s", jid[:30], type(e).__name__)
         return None
