@@ -114,6 +114,26 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
     expect(state.vehicles.has('sel')).toBe(true);
   });
 
+  it('updates the selected bus position while off-bbox so the map can follow it out', () => {
+    markers.updateAll([
+      { jid: 'sel', lat: 49.35, lon: 8.65, line: '725', delay: 0 },
+    ]);
+    state.selectedJid = 'sel';
+    const entry = state.vehicles.get('sel');
+    entry.marker.setLatLng.mockClear();
+
+    // Followed bus drives off-bbox but is still in the ring payload: its data
+    // and marker position must keep updating (not freeze), otherwise followDist
+    // stays ~0 and the map stops following once the bus leaves the screen.
+    markers.updateAll([
+      { jid: 'sel', lat: 49.55, lon: 8.65, line: '725', delay: 0 },
+    ]);
+    expect(entry.data.lat).toBe(49.55);  // not frozen at 49.35
+    expect(entry.marker.setLatLng).toHaveBeenCalledWith([49.55, 8.65]);
+    expect(entry.marker.remove).not.toHaveBeenCalled();
+    expect(entry.missedCycles).toBe(0);
+  });
+
   it('applies missedCycles grace-period when a vehicle disappears from the server payload', () => {
     markers.updateAll([
       { jid: 'd', lat: 49.35, lon: 8.65, line: '725', delay: 0 },

@@ -689,6 +689,24 @@ export var markers = {
         if (existing && state.selectedJid !== v.jid) {
           existing.marker.remove();
           state.vehicles.delete(v.jid);
+        } else if (existing && state.selectedJid === v.jid) {
+          // The FOLLOWED bus drove off-bbox but is still in the server ring:
+          // keep its position current (from the ring payload) so the follow-pan
+          // can chase it OUT of the viewport. Without this the selected marker
+          // froze at its last in-bbox position, followDist stayed ~0, and the
+          // map stopped following once the bus left the screen. setLatLng (no
+          // animation) is fine — the marker is off-screen; the follow-pan pans
+          // the map to it.
+          var offLat = v.lat, offLon = v.lon;
+          var offCur = existing.marker.getLatLng();
+          if (offCur.lat !== offLat || offCur.lng !== offLon) {
+            v._bearing = markers.calcBearing(offCur.lat, offCur.lng, offLat, offLon);
+            existing.marker.setLatLng([offLat, offLon]);
+          } else {
+            v._bearing = existing.data._bearing || null;
+          }
+          existing.data = v;
+          existing.missedCycles = 0;
         }
         return;
       }
