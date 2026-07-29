@@ -95,6 +95,24 @@ describe('debug-console overlay', () => {
     expect(box.textContent).not.toContain('line-one');
   });
 
+  it('Clear leaves the always-on ring buffer intact (dump still complete)', async () => {
+    await import('../../static/debug-console.js');
+    window.__debugConsole.show();
+    console.log('survives-clear');
+    const box = document.getElementById('debug-console');
+    Array.prototype.slice.call(box.querySelectorAll('button'))
+      .find(b => b.textContent.indexOf('Clear') !== -1).click();
+    // UI cleared, but the ring (what the dump reads) keeps the line.
+    expect(window.__busradarConsoleTail.join('\n')).toContain('survives-clear');
+  });
+
+  it('ring buffer is bounded at 2000 entries', async () => {
+    await import('../../static/debug-console.js');
+    for (let i = 0; i < 2001; i++) console.log('r' + i);
+    expect(window.__busradarConsoleTail.length).toBe(2000);
+    expect(window.__busradarConsoleTail[window.__busradarConsoleTail.length - 1]).toContain('r2000');
+  });
+
   it('no longer renders a Dump button in the overlay', async () => {
     await import('../../static/debug-console.js');
     window.__debugConsole.show();

@@ -541,7 +541,9 @@ export function busradarDump() {
     selectedMarker: markerInfo,
     vehiclesCount: state.vehicles ? state.vehicles.size : 0,
     followLog: (state._followLog || []).slice(-120),
-    consoleTail: (window.__busradarConsoleTail || []).slice(-150),
+    // Full console ring (always-on capture) — the dump must carry the complete
+    // session output, independent of the on-screen overlay's Clear/scroll state.
+    consoleTail: (window.__busradarConsoleTail || []).slice(),
   };
   return JSON.stringify(dump, null, 2);
 }

@@ -555,6 +555,16 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.selectedMarker.offsetMeters).toBe(800);
     expect(typeof d.ts).toBe('string');
   });
+
+  it('busradarDump carries the COMPLETE console ring, not a truncated tail', () => {
+    const prev = window.__busradarConsoleTail;
+    window.__busradarConsoleTail = Array.from({ length: 400 }, (_, i) => 'line-' + i);
+    const d = JSON.parse(busradarDump());
+    expect(d.consoleTail.length).toBe(400);       // no slice(-150) truncation
+    expect(d.consoleTail[0]).toBe('line-0');       // oldest retained
+    expect(d.consoleTail[399]).toBe('line-399');   // newest retained
+    window.__busradarConsoleTail = prev;
+  });
 });
 
 describe('busradarDownloadDump — download the dump as a .json file', () => {

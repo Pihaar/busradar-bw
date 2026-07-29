@@ -62,7 +62,9 @@
     bar.appendChild(closeBtn);
     box.appendChild(bar);
     logEl = document.createElement('div');
-    logEl.style.cssText = 'overflow:auto;padding:4px 8px;flex:1 1 auto;-webkit-overflow-scrolling:touch;';
+    // Cap the visible log at ~15 rows (11px/1.4 line + 1px row padding ≈ 17px),
+    // then scroll — otherwise a chatty session covers the whole screen.
+    logEl.style.cssText = 'overflow:auto;padding:4px 8px;flex:1 1 auto;max-height:260px;-webkit-overflow-scrolling:touch;';
     box.appendChild(logEl);
     (document.body || document.documentElement).appendChild(box);
   }
@@ -102,7 +104,7 @@
       text = ts + ' [' + level + '] ' + Array.prototype.map.call(args, fmt).join(' ');
     } catch (e) { /* istanbul ignore next -- defensive: Date/formatting never throws here */ return; }
     RING.push(text);
-    while (RING.length > 250) RING.shift();  // bounded
+    while (RING.length > 2000) RING.shift();  // bounded, but generous so the dump carries the full session
     if (!OVERLAY) return;
     try {
       ensureUI();
