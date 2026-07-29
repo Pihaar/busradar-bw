@@ -94,3 +94,14 @@ check_untyped_defs = true     # type-check bodies of unannotated functions too
 module = ["line_analyze", "line_gps_analyze"]
 check_untyped_defs = false
 
+[tool.coverage.run]
+branch = true
+source = ["proxy", "sse_handler", "fanout", "tick", "caches", "hafas", "stops_builder", "audit"]
+
+[tool.coverage.report]
+show_missing = true
+# fail_under = 100 is enabled once the branch gap (currently ~67%) is closed;
+# leaving it off until then keeps a plain `pytest --cov` run from failing while
+# the coverage sweep is in progress.
+
+
