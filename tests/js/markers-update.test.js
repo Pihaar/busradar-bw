@@ -173,7 +173,6 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
     markers.updateAll([
       { jid: 'e', lat: 49.35, lon: 8.65, line: '725', delay: 0 },
     ]);
-    const entry = state.vehicles.get('e');
     expect(state.vehicles.has('e')).toBe(true);
 
     // Tick 2: same bus, new position OFF-bbox. v1.0.26 case (a): marker

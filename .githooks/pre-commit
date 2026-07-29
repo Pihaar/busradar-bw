@@ -86,6 +86,17 @@ else
   echo "pre-commit: pip-audit not found — skipping (pip install --user pip-audit)"
 fi
 
+# --- ESLint (JS lint) — only the changed JS, resolved from node_modules ---
+mapfile -t js_files < <(staged_files '^(static/.*|tests/.*|eslint\.config)\.js$' || true)
+if [[ "${#js_files[@]}" -gt 0 ]]; then
+  if command -v npx >/dev/null 2>&1 && npx --no-install eslint --version >/dev/null 2>&1; then
+    echo "pre-commit: eslint (${#js_files[@]} file(s))"
+    npx --no-install eslint "${js_files[@]}" || status=1
+  else
+    echo "pre-commit: eslint not found — skipping (npm i -D eslint)"
+  fi
+fi
+
 if [[ "${status}" -ne 0 ]]; then
   echo "pre-commit: checks failed — commit aborted." >&2
 fi

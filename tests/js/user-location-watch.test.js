@@ -43,18 +43,18 @@ function makeMapMock() {
 }
 
 describe('startLocationWatch / stopLocationWatch', () => {
-  let watchCb, watchErr, watchOpts, clearWatch;
+  let watchCb, watchOpts, clearWatch;
 
   beforeEach(() => {
     state._geoWatchId = null;
     state._userLocationMarker = null;
     state.map = makeMapMock();
     settings.current = { showLocation: true };
-    watchCb = watchErr = watchOpts = undefined;
+    watchCb = watchOpts = undefined;
     clearWatch = vi.fn();
     globalThis.navigator = {
       geolocation: {
-        watchPosition: vi.fn((cb, err, opts) => { watchCb = cb; watchErr = err; watchOpts = opts; return 42; }),
+        watchPosition: vi.fn((cb, err, opts) => { watchCb = cb; watchOpts = opts; return 42; }),
         clearWatch: clearWatch,
       },
     };

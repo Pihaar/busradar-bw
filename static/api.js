@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { state, settings } from './state.js';
+import { state } from './state.js';
 
 // === SELECTSTREAM DEBOUNCE ===
 // Rapid load-more clicks would fire one POST /api/stream/select per

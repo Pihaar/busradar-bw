@@ -21,7 +21,7 @@ const VIEWPORT_DEBOUNCE_MS = 250;
 // zoomed-in follow keeps the bus in the fresh vehicles payload instead of
 // dropping to the ~30 s-cached journey detail push. See _sendCurrentViewport.
 const FOLLOW_MIN_RING_M = 2000;
-const REGEX_VERSION = /^[A-Za-z0-9._+\-]{1,64}$/;
+const REGEX_VERSION = /^[A-Za-z0-9._+-]{1,64}$/;
 // The protocol version the client speaks. Must match the server's
 // `subscribe` event payload — mismatch means the deployed app and the
 // running tab are incompatible and the user must reload.
@@ -31,7 +31,6 @@ let _es = null;
 let _reconnectAttempt = 0;
 let _reconnectTimer = null;
 let _viewportTimer = null;
-let _gotFirstSubscribe = false;
 
 function _formatConnectedCount(n) {
   // Exact count for ≤99 (user preference: precise users beat coarse buckets),
@@ -115,7 +114,6 @@ export function _resendActiveSelection() {
 
 export function startStream() {
   if (_es) { try { _es.close(); } catch (e) {} _es = null; }
-  _gotFirstSubscribe = false;
   _setSseState('connecting');
   try {
     _es = new EventSource(CONFIG.apiBase + '/stream/');
@@ -125,7 +123,6 @@ export function startStream() {
   }
 
   _es.addEventListener('subscribe', function (ev) {
-    _gotFirstSubscribe = true;
     _reconnectAttempt = 0;
     _setSseState('open');
     if (window.__busradarVerbose) debugLog('sse subscribe (stream open)');

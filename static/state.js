@@ -252,12 +252,16 @@ export function extractHafasMessages(common, msgL, stopL) {
       if (!rem.txtN) continue;
       var code = (rem.code || '').trim().toLowerCase();
       if (HAFAS_IGNORE_CODES.has(code)) continue;
+      // Intentionally matches C0/C1 control chars to strip them from untrusted HAFAS text.
+      // eslint-disable-next-line no-control-regex
       text = String(rem.txtN).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
       if (_hafasShouldIgnoreText(text)) continue;
     } else if (msg.type === 'HIM') {
       var himL = (common && common.himL) || [];
       var him = himL[msg.himX];
       if (!him || !him.head) continue;
+      // Intentionally matches C0/C1 control chars to strip them from untrusted HAFAS text.
+      // eslint-disable-next-line no-control-regex
       text = String(him.head).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
     }
     if (!text) continue;

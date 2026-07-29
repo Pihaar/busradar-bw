@@ -821,14 +821,14 @@ export var ui = {
     }
 
     var lastPassedIdx = -1;
-    for (var i = 0; i < times.length; i++) {
+    for (i = 0; i < times.length; i++) {
       if (times[i] !== null && times[i] <= nowMin) {
         lastPassedIdx = i;
       }
     }
 
     var listRect = ui.stopList.getBoundingClientRect();
-    var pixelHeight = 0;
+    var pixelHeight;
 
     if (lastPassedIdx < 0) {
       pixelHeight = 0;
@@ -1950,7 +1950,7 @@ export var ui = {
           state._notStartedLastPoll = 0;
         }
 
-        var stopL = journey.stopL || [];
+        stopL = journey.stopL || [];
         if (stopL.length > 0) {
           var pendingVehicle = {
             jid: jid, line: journeyProd.nameS || journeyProd.name || '?',
@@ -2002,9 +2002,7 @@ export var ui = {
         stops: [],
       };
 
-      var stopL = journey.stopL || [];
-      var common = data.common || {};
-      var locL = common.locL || [];
+      stopL = journey.stopL || [];
       for (var i = 0; i < stopL.length; i++) {
         var s = stopL[i];
         var d = null;

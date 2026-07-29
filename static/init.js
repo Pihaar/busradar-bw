@@ -4,7 +4,7 @@
 // incl. the SW-registration result.
 import './debug.js';
 import { CONFIG } from './config.js';
-import { state, settings, t, applyI18n, parseCoord, parseZoom } from './state.js';
+import { state, settings, t, parseCoord, parseZoom } from './state.js';
 import { urlState } from './api.js';
 import { mapModule, stopsLayer, setUserLocationMarker, startLocationWatch, stopLocationWatch } from './map.js';
 import { ui, search } from './ui.js';

@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin } from './state.js';
+import { state, settings, t, getDelayClass, getDelayText } from './state.js';
 import { api } from './api.js';
 import { ui } from './ui.js';
 import * as refresh from './refresh.js';
@@ -14,8 +14,6 @@ export var mapModule = {
       attributionControl: true,
     });
 
-    var cartoSubdomains = 'abcd';
-
     var RetryTileLayer = L.TileLayer.extend({
       createTile: function(coords, done) {
         var tile = document.createElement('img');
@@ -26,7 +24,6 @@ export var mapModule = {
         }
         tile.referrerPolicy = 'no-referrer';
 
-        var self = this;
         var subs = (this.options.subdomains || 'abcd').split ? (this.options.subdomains || 'abcd').split('') : this.options.subdomains;
         var baseUrl = this.getTileUrl(coords);
         var tried = 0;
@@ -170,7 +167,7 @@ export var mapModule = {
                 state._appVersionFetch = window.fetch(CONFIG.apiBase + '/health', ctrl ? {signal: ctrl.signal} : undefined)
                   .then(function(r) { return r.ok ? r.json() : null; })
                   .then(function(j) {
-                    if (j && typeof j.version === 'string' && /^[A-Za-z0-9._+\-]{1,64}$/.test(j.version)) {
+                    if (j && typeof j.version === 'string' && /^[A-Za-z0-9._+-]{1,64}$/.test(j.version)) {
                       state._appVersion = j.version;
                       vNode.textContent = j.version;
                     } else {
