@@ -51,6 +51,7 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
       getZoom: () => 15,
     };
     state.selectedJid = null;
+    state._endedJid = null;
     settings.current = Object.assign(settings.current || {}, { interpolation: false });
     L.marker.mockClear();
   });
@@ -76,6 +77,19 @@ describe('markers.updateAll — bbox-aware vehicle lifecycle', () => {
     expect(state.vehicles.has('b')).toBe(false);
     expect(L.marker).not.toHaveBeenCalled();
     expect(markers._lastVisibleCount).toBe(0);
+  });
+
+  it('does NOT re-create a marker for an ended journey (state._endedJid) still in an interpolated payload', () => {
+    // showJourneyEnded removed the marker and flagged _endedJid; the CALC
+    // vehicles payload may still carry the bus (interpolated). updateAll must
+    // not resurrect it.
+    state._endedJid = 'ended';
+    markers.updateAll([
+      { jid: 'ended', lat: 49.35, lon: 8.65, line: '722', delay: 0 }, // inside bbox
+      { jid: 'other', lat: 49.36, lon: 8.66, line: '721', delay: 0 },
+    ]);
+    expect(state.vehicles.has('ended')).toBe(false);
+    expect(state.vehicles.has('other')).toBe(true);  // unaffected
   });
 
   it('removes an existing marker IMMEDIATELY when its new position falls outside the bbox', () => {

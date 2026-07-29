@@ -31,6 +31,11 @@ export var state = {
   // 5 min" rule alone misses buses that lose GPS before their final stop and
   // misclassifies them as not-started. Reset on selection change. See refresh.js.
   _selectedHadPosJid: null,
+  // jid of a journey that has ENDED while selected. markers.updateAll must not
+  // re-add its marker from a still-interpolated vehicles payload (CALC keeps
+  // the bus in the ring past the real end), which would otherwise resurrect
+  // the marker showJourneyEnded just removed. Cleared on selection change.
+  _endedJid: null,
   _journeyReqSeq: 0,
   // geolocation watchPosition id for the live user-location dot; null when
   // no watch is active. Replaces the old per-tick getCurrentPosition poll.

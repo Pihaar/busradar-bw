@@ -32,9 +32,10 @@ describe('ui.showJourneyEnded — remove the stale bus marker on journey end', (
     ui.stopList = document.createElement('div');
     state.selectedJid = null;
     state.vehicles = new Map();
+    state._endedJid = null;
   });
 
-  it('removes the selected bus marker, cancels its glide, and deletes the entry', () => {
+  it('removes the selected bus marker, cancels its glide, deletes the entry, and flags _endedJid', () => {
     const remove = vi.fn();
     state.selectedJid = 'JE';
     state.vehicles.set('JE', { marker: { remove }, _animFrame: 42, data: { lat: 49.4, lon: 8.7 } });
@@ -44,6 +45,8 @@ describe('ui.showJourneyEnded — remove the stale bus marker on journey end', (
     expect(remove).toHaveBeenCalledOnce();
     expect(globalThis.cancelAnimationFrame).toHaveBeenCalledWith(42);
     expect(state.vehicles.has('JE')).toBe(false);
+    // marks the jid so updateAll won't re-add it from an interpolated payload
+    expect(state._endedJid).toBe('JE');
     // still shows the ended message
     expect(ui.stopList.textContent).toMatch(/beendet|ended/i);
   });

@@ -678,6 +678,11 @@ export var markers = {
     var visibleCount = 0;
 
     vehicles.forEach(function(v) {
+      // A journey that ended while selected must not be resurrected from a
+      // still-interpolated payload (CALC keeps the bus in the ring past its
+      // real end). showJourneyEnded removed its marker and set state._endedJid;
+      // skip it here so updateAll doesn't re-create the marker.
+      if (v.jid === state._endedJid) return;
       inServerRing.add(v.jid);
       var existing = state.vehicles.get(v.jid);
       var visible = inBbox(v.lat, v.lon);

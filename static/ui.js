@@ -352,6 +352,7 @@ export var ui = {
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
+    state._endedJid = null;
     // Tell the SSE stream we no longer have a selection, so the
     // server stops shipping journey/stationboard events for this subscriber.
     api.selectStream('none').catch(function () {});
@@ -380,6 +381,7 @@ export var ui = {
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
+    state._endedJid = null;
     state.selectedJid = vehicle.jid;
     state.selectedStop = null;
     if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
@@ -1035,6 +1037,7 @@ export var ui = {
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
+    state._endedJid = null;
     state.selectedJid = null;
     state.selectedJourneyData = null;
     state.selectedStop = loc;
@@ -1726,6 +1729,11 @@ export var ui = {
       if (entry.marker) entry.marker.remove();
       state.vehicles.delete(state.selectedJid);
     }
+    // Suppress re-adding this bus from a still-interpolated vehicles payload
+    // (CALC) until the user selects something else — otherwise updateAll
+    // resurrects the marker we just removed (a race that made the ended marker
+    // flicker back, mode-dependent on timing). Cleared on selection change.
+    state._endedJid = state.selectedJid;
   },
 
   _showJourneyCancelled: function() {
@@ -1733,6 +1741,7 @@ export var ui = {
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
+    state._endedJid = null;
     state.selectedJourneyData = null;
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_cancelled')));
   },
@@ -1750,6 +1759,7 @@ export var ui = {
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
+    state._endedJid = null;
 
     var vehicle = {
       jid: state.selectedJid,
@@ -1976,6 +1986,7 @@ export var ui = {
       state._notStartedSince = 0;
       state._notStartedLastPoll = 0;
       state._selectedHadPosJid = null;
+      state._endedJid = null;
       state.selectedJourneyData = data;
 
       var vehicle = {
