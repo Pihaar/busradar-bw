@@ -1714,6 +1714,18 @@ export var ui = {
 
   showJourneyEnded: function() {
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_ended')));
+    // The bus completed its run — remove its now-stale marker so it doesn't
+    // linger on the map. The selected bus is exempt from the normal removal in
+    // markers.updateAll (map.js), so nothing else clears it; do it here. Cancel
+    // any in-flight glide first so a pending animation frame can't touch a
+    // removed marker. The vehicles handler then drops the follow state on its
+    // next tick (followEntry becomes null → _disableFollow).
+    var entry = state.selectedJid && state.vehicles.get(state.selectedJid);
+    if (entry) {
+      if (entry._animFrame) cancelAnimationFrame(entry._animFrame);
+      if (entry.marker) entry.marker.remove();
+      state.vehicles.delete(state.selectedJid);
+    }
   },
 
   _showJourneyCancelled: function() {
