@@ -2,33 +2,91 @@
 # Pre-commit static checks. Enable once per clone with:
 #   git config core.hooksPath .githooks
 #
-# Tools are added incrementally (ruff now; shellcheck, secret-scan, eslint next).
 # Each check is skipped with a notice when its tool is absent, so a missing
 # optional tool never blocks a commit — but a present tool that FAILS does.
+# pip-installed tools land in ~/.local/bin; find_tool resolves either location.
 set -u
 
 repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root" || exit 1
+cd "${repo_root}" || exit 1
 status=0
 
 # Resolve a tool from PATH or the user-local pip bin dir.
 find_tool() {
   if command -v "$1" >/dev/null 2>&1; then command -v "$1"; return 0; fi
-  if [ -x "$HOME/.local/bin/$1" ]; then printf '%s\n' "$HOME/.local/bin/$1"; return 0; fi
+  if [[ -x "${HOME}/.local/bin/$1" ]]; then printf '%s\n' "${HOME}/.local/bin/$1"; return 0; fi
   return 1
+}
+
+# Staged files of a given extension (added/copied/modified only), NUL-safe.
+staged_files() {
+  git diff --cached --name-only --diff-filter=ACM -z | tr '\0' '\n' | grep -E "$1" || true
 }
 
 # --- Ruff (Python lint + format) ---
 if ruff="$(find_tool ruff)"; then
   echo "pre-commit: ruff check"
-  "$ruff" check . || status=1
+  "${ruff}" check . || status=1
   echo "pre-commit: ruff format --check"
-  "$ruff" format --check . || { echo "  run: ruff format ."; status=1; }
+  "${ruff}" format --check . || { echo "  run: ruff format ."; status=1; }
 else
   echo "pre-commit: ruff not found — skipping (pip install --user ruff)"
 fi
 
-if [ "$status" -ne 0 ]; then
+# --- Bandit (Python SAST) ---
+if bandit="$(find_tool bandit)"; then
+  mapfile -t py_files < <(staged_files '\.py$' | grep -v '^tests/' || true)
+  if [[ "${#py_files[@]}" -gt 0 ]]; then
+    echo "pre-commit: bandit (${#py_files[@]} file(s))"
+    "${bandit}" -c pyproject.toml -q "${py_files[@]}" || status=1
+  fi
+else
+  echo "pre-commit: bandit not found — skipping (pip install --user bandit)"
+fi
+
+# --- shellcheck (shell lint, strict) ---
+if shellcheck="$(find_tool shellcheck)"; then
+  mapfile -t sh_files < <(staged_files '\.sh$' || true)
+  if [[ "${#sh_files[@]}" -gt 0 ]]; then
+    echo "pre-commit: shellcheck -o all (${#sh_files[@]} file(s))"
+    "${shellcheck}" -o all "${sh_files[@]}" || status=1
+  fi
+else
+  echo "pre-commit: shellcheck not found — skipping (zypper in ShellCheck)"
+fi
+
+# --- detect-secrets (secret scan against baseline) ---
+if ds="$(find_tool detect-secrets)"; then
+  if [[ -f .secrets.baseline ]]; then
+    echo "pre-commit: detect-secrets scan (baseline diff)"
+    if ! "${ds}" scan --baseline .secrets.baseline \
+         --exclude-files 'node_modules|coverage|\.playwright-mcp|\.git|\.pytest_cache|\.ruff_cache' \
+         >/dev/null 2>&1; then
+      echo "  detect-secrets found a NEW secret not in .secrets.baseline" >&2
+      echo "  review, then: detect-secrets scan --baseline .secrets.baseline ... > .secrets.baseline" >&2
+      status=1
+    fi
+  else
+    echo "pre-commit: .secrets.baseline missing — skipping secret scan"
+  fi
+else
+  echo "pre-commit: detect-secrets not found — skipping (pip install --user detect-secrets)"
+fi
+
+# --- pip-audit (dependency CVE scan, non-blocking warning) ---
+# Warn only: a fresh CVE-DB entry must not block an unrelated local commit.
+if pa="$(find_tool pip-audit)"; then
+  echo "pre-commit: pip-audit (requirements*.txt)"
+  for req in requirements.txt requirements-dev.txt; do
+    [[ -f "${req}" ]] || continue
+    "${pa}" -r "${req}" >/dev/null 2>&1 || \
+      echo "  pip-audit: known vulnerabilities in ${req} — run: pip-audit -r ${req}" >&2
+  done
+else
+  echo "pre-commit: pip-audit not found — skipping (pip install --user pip-audit)"
+fi
+
+if [[ "${status}" -ne 0 ]]; then
   echo "pre-commit: checks failed — commit aborted." >&2
 fi
-exit "$status"
+exit "${status}"

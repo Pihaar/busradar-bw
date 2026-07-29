@@ -27,7 +27,7 @@ if ! curl --version 2>&1 | grep -q "HTTP3"; then
     exit 1
 fi
 
-echo "quic-check: target $URL, budget ${KEEPALIVE_BUDGET_S}s"
+echo "quic-check: target ${URL}, budget ${KEEPALIVE_BUDGET_S}s"
 
 # Use --http3-only to fail if HTTP/3 isn't negotiated (vs --http3 which falls back).
 # -N disables output buffering so we see SSE frames as they arrive.
@@ -35,15 +35,15 @@ echo "quic-check: target $URL, budget ${KEEPALIVE_BUDGET_S}s"
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
-timeout "${KEEPALIVE_BUDGET_S}" curl -sN --http3-only --max-time "${KEEPALIVE_BUDGET_S}" "$URL/api/stream/" >"$TMP_OUT" 2>&1 || true
+timeout "${KEEPALIVE_BUDGET_S}" curl -sN --http3-only --max-time "${KEEPALIVE_BUDGET_S}" "${URL}/api/stream/" >"${TMP_OUT}" 2>&1 || true
 
-if grep -q "^: keepalive" "$TMP_OUT"; then
+if grep -q "^: keepalive" "${TMP_OUT}"; then
     echo "quic-check: PASS (saw ': keepalive' on HTTP/3 stream)"
     exit 0
 fi
 
 # Diagnostic: did we even reach the server?
-if grep -qE "^event: (subscribe|connected)" "$TMP_OUT"; then
+if grep -qE "^event: (subscribe|connected)" "${TMP_OUT}"; then
     echo "quic-check: FAIL — subscribe event seen but no keepalive within ${KEEPALIVE_BUDGET_S}s" >&2
     echo "  (server alive but heartbeat not arriving — check SSE_KEEPALIVE_MIN/MAX in proxy.py)" >&2
     exit 1
@@ -51,6 +51,6 @@ fi
 
 echo "quic-check: FAIL — no SSE events received on HTTP/3 stream within ${KEEPALIVE_BUDGET_S}s" >&2
 echo "  curl output (first 500 chars):" >&2
-head -c 500 "$TMP_OUT" >&2
+head -c 500 "${TMP_OUT}" >&2
 echo >&2
 exit 1

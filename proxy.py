@@ -153,7 +153,7 @@ def _read_version() -> str:
         try:
             # git_bin is from shutil.which (trusted PATH lookup) and every argv
             # entry is a fixed literal — no untrusted input reaches the process.
-            r = subprocess.run(  # noqa: S603
+            r = subprocess.run(  # noqa: S603  # nosec B603
                 [
                     git_bin,
                     "-c",

@@ -63,3 +63,14 @@ inline-quotes = "double"
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.bandit]
+# Python SAST. Tests carry their own patterns; scan only shipped code.
+exclude_dirs = ["tests", "node_modules", "coverage", ".playwright-mcp"]
+# Project-wide accepted patterns (each a deliberate, non-security choice here):
+#   B311 — random() is only used for backoff/jitter, never for crypto
+#   B110 — try/except/pass is an intentional defensive-swallow pattern
+#   B404 — subprocess is imported solely for the trusted `git describe` fallback
+# Location-specific findings (B310 urlopen, B603 subprocess call) stay active and
+# are annotated inline with `# nosec` + justification instead of skipped globally.
+skips = ["B311", "B110", "B404"]
