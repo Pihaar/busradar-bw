@@ -39,7 +39,7 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload } = await import('../../static/refresh.js');
+const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload, busradarDump } = await import('../../static/refresh.js');
 const { state, settings } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
 
@@ -504,5 +504,55 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
     const p = _viewportPayload();
     expect(p.swLat).toBeCloseTo(49.3410, 4);
     expect(p.neLat).toBeCloseTo(49.3430, 4);
+  });
+});
+
+describe('follow-pan log + busradarDump (debug dump)', () => {
+  let panTo, setView;
+  beforeEach(() => {
+    state._followPanning = false;
+    state._navigating = false;
+    state._followPanTimeout = null;
+    state._followLog = [];
+    state.selectedJid = null;
+    state.vehicles = new Map();
+    panTo = vi.fn(); setView = vi.fn();
+    state.map = {
+      getCenter: () => ({ lat: 49.34, lng: 8.66, distanceTo: () => 800 }),
+      getZoom: () => 15, panTo, setView, once: () => {},
+    };
+    settings.current = { posMode: 'CALC' };
+  });
+  afterEach(() => { state.map = null; });
+
+  it('_followPanTo logs a panTo decision with its distance', () => {
+    _followPanTo(49.5, 8.6);
+    const last = state._followLog[state._followLog.length - 1];
+    expect(last.action).toBe('panTo');
+    expect(last.dist).toBe(800);
+  });
+
+  it('_followPanTo logs skip:panning WITH the distance (the divergence signature)', () => {
+    state._followPanning = true;
+    _followPanTo(49.5, 8.6);
+    const last = state._followLog[state._followLog.length - 1];
+    expect(last.action).toBe('skip');
+    expect(last.reason).toBe('panning');
+    expect(last.dist).toBe(800);  // large dist on a skip = map left behind the marker
+    expect(panTo).not.toHaveBeenCalled();
+  });
+
+  it('busradarDump returns parseable JSON with state, follow log, and marker-vs-center offset', () => {
+    state.selectedJid = 'JD';
+    state.vehicles.set('JD', { marker: { getLatLng: () => ({ lat: 49.36, lng: 8.68 }) }, data: {} });
+    state._followLog = [{ t: 1, action: 'skip', dist: 900, reason: 'panning' }];
+    const d = JSON.parse(busradarDump());
+    expect(d.selectedJid).toBe('JD');
+    expect(d.mode).toBe('CALC');
+    expect(Array.isArray(d.followLog)).toBe(true);
+    expect(d.followLog[0].reason).toBe('panning');
+    expect(d.selectedMarker).toBeTruthy();
+    expect(d.selectedMarker.offsetMeters).toBe(800);
+    expect(typeof d.ts).toBe('string');
   });
 });

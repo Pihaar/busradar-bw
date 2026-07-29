@@ -461,29 +461,111 @@ export function refresh() {
   _sendCurrentViewport();
 }
 
+// Ring-buffered follow-pan decision log for the debug dump. Records every pan
+// decision including SKIPS with reason + distance. A "skip:panning" (or
+// "skip:navigating") with a LARGE dist is the follow-divergence signature: the
+// map was left behind because a pan was in flight while the target moved on.
+// Always on; bounded, negligible footprint.
+function _flog(action, dist, reason) {
+  try {
+    var log = state._followLog || (state._followLog = []);
+    log.push({ t: Date.now(), action: action, dist: dist, reason: reason || null });
+    if (log.length > 120) log.shift();
+  } catch (e) {}
+}
+
 // Pan the map to keep the followed bus centered. Shared by the vehicles
 // handler (in-ring) and the journey handler (viewport-independent, keeps the
 // follow working once the bus leaves the ring). No-op if a pan is already in
 // flight (_followPanning), during a URL-restore navigation (_navigating), or if
 // the target is within 5 m of the current center. Exported for tests.
 export function _followPanTo(lat, lon) {
-  if (!state.map || state._followPanning || state._navigating) return;
-  if (lat == null || lon == null) return;
+  if (!state.map) return;
+  if (lat == null || lon == null) { _flog('skip', null, 'nullpos'); return; }
   const target = L.latLng(lat, lon);
-  const followDist = state.map.getCenter().distanceTo(target);
-  if (followDist <= 5) return;
+  const followDist = Math.round(state.map.getCenter().distanceTo(target));
+  // Distance is computed before this guard (unlike the original early-return)
+  // so the skip is logged WITH its distance — that's what reveals the
+  // divergence (a large-distance skip means the map fell behind the marker).
+  if (state._followPanning || state._navigating) {
+    _flog('skip', followDist, state._followPanning ? 'panning' : 'navigating');
+    return;
+  }
+  if (followDist <= 5) { _flog('skip', followDist, 'near'); return; }
   state._followPanning = true;
   if (followDist > 3000) {
     // Big jump (bus already far off-screen): snap, don't animate across the map.
     state.map.setView(target, state.map.getZoom(), { animate: false });
     state._followPanning = false;
+    _flog('setView', followDist);
   } else {
     const panDur = 2;  // 2s default pan duration
     state.map.panTo(target, { duration: panDur });
     state.map.once('moveend', function () { state._followPanning = false; });
     clearTimeout(state._followPanTimeout);
     state._followPanTimeout = setTimeout(function () { state._followPanning = false; }, (panDur * 1000) + 500);
+    _flog('panTo', followDist);
   }
+}
+
+// === Debug dump ===
+// window.busradarDump() returns a complete JSON snapshot for debugging;
+// Ctrl+Shift+D copies it to the clipboard. Includes the follow-pan log (above),
+// the current marker-vs-map-center offset (the divergence magnitude), the
+// selection/follow state, and the captured console tail (debug-console.js).
+export function busradarDump() {
+  const m = state.map;
+  const sel = state.selectedJid && state.vehicles && state.vehicles.get(state.selectedJid);
+  let markerInfo = null;
+  if (m && sel && sel.marker) {
+    try {
+      const ml = sel.marker.getLatLng();
+      const c = m.getCenter();
+      markerInfo = {
+        markerLat: +ml.lat.toFixed(6), markerLon: +ml.lng.toFixed(6),
+        offsetMeters: Math.round(c.distanceTo(ml)),  // marker vs map center = divergence
+      };
+    } catch (e) {}
+  }
+  const dump = {
+    ts: new Date().toISOString(),
+    url: location.href,
+    appVersion: state._appVersion || null,
+    mode: (settings.current && settings.current.posMode) || null,
+    follow: state.followBus, followPanning: state._followPanning, navigating: state._navigating,
+    selectedJid: state.selectedJid || null, endedJid: state._endedJid || null,
+    notStartedJid: state._notStartedJid || null, hadPosJid: state._selectedHadPosJid || null,
+    map: m ? { centerLat: +m.getCenter().lat.toFixed(6), centerLon: +m.getCenter().lng.toFixed(6), zoom: m.getZoom() } : null,
+    selectedMarker: markerInfo,
+    vehiclesCount: state.vehicles ? state.vehicles.size : 0,
+    followLog: (state._followLog || []).slice(-120),
+    consoleTail: (window.__busradarConsoleTail || []).slice(-150),
+  };
+  return JSON.stringify(dump, null, 2);
+}
+
+export function _copyDump() {
+  const text = busradarDump();
+  const report = function (ok) {
+    console.log('[dump] ' + (ok ? 'copied to clipboard' : 'clipboard unavailable — full JSON below') + ' (' + text.length + ' chars)');
+    if (!ok) console.log(text);
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { report(true); }, function () { report(false); });
+    } else { report(false); }
+  } catch (e) { report(false); }
+}
+
+if (typeof window !== 'undefined') {
+  window.busradarDump = busradarDump;
+  window.busradarCopyDump = _copyDump;
+  window.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+      e.preventDefault();
+      _copyDump();
+    }
+  });
 }
 
 // === Vehicle-payload handler ===

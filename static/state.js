@@ -22,6 +22,8 @@ export var state = {
   followBus: false,
   _followPanning: false,
   _followPanTimeout: null,
+  // Ring buffer of follow-pan decisions for the debug dump (see refresh._flog).
+  _followLog: [],
   _notStartedJid: null,
   _notStartedSince: 0,
   _notStartedLastPoll: 0,
