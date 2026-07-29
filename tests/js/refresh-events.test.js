@@ -39,8 +39,9 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload } = await import('../../static/refresh.js');
+const { _applyJourneyPayload, _resendActiveSelection } = await import('../../static/refresh.js');
 const { state } = await import('../../static/state.js');
+const { api } = await import('../../static/api.js');
 
 describe('_applyJourneyPayload — journey SSE event helper', () => {
   beforeEach(() => {
@@ -215,5 +216,56 @@ describe('applyPushedStationboard — stationboard SSE event helper', () => {
     state._autoExpandingArr = true;
     applyPushedStationboard(state.selectedStop, { jnyL: [{ jid: 'Y' }] }, 'ARR', sink);
     expect(sink.renderArrivals).not.toHaveBeenCalled();
+  });
+});
+
+describe('_resendActiveSelection — restores selection after SSE reconnect', () => {
+  beforeEach(() => {
+    api.selectStream.mockClear();
+    state.selectedJid = null;
+    state.selectedStop = null;
+    state._activeStationBoardType = null;
+    state._stationDepDur = null;
+    state._stationArrDur = null;
+  });
+
+  it('re-selects the journey when a jid is selected', () => {
+    state.selectedJid = 'J1';
+    _resendActiveSelection();
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('journey', 'J1');
+  });
+
+  it('re-selects the DEP board with the current expanded dur when a stop is selected', () => {
+    state.selectedStop = { lid: 'A=1@L=8000@' };
+    state._activeStationBoardType = 'DEP';
+    state._stationDepDur = 240;
+    _resendActiveSelection();
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'DEP', 240);
+  });
+
+  it('re-selects the ARR board with the ARR dur when ARR tab is active', () => {
+    state.selectedStop = { lid: 'A=1@L=8000@' };
+    state._activeStationBoardType = 'ARR';
+    state._stationArrDur = 120;
+    _resendActiveSelection();
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'ARR', 120);
+  });
+
+  it('defaults board type to DEP and dur to 60 when unset', () => {
+    state.selectedStop = { lid: 'A=1@L=8000@' };
+    _resendActiveSelection();
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'DEP', 60);
+  });
+
+  it('does nothing when neither a journey nor a stop is selected', () => {
+    _resendActiveSelection();
+    expect(api.selectStream).not.toHaveBeenCalled();
+  });
+
+  it('prefers the journey selection over a stop when both are set', () => {
+    state.selectedJid = 'J9';
+    state.selectedStop = { lid: 'A=1@L=8000@' };
+    _resendActiveSelection();
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('journey', 'J9');
   });
 });

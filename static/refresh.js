@@ -93,6 +93,21 @@ function _scheduleReconnect() {
   _reconnectTimer = setTimeout(function () { startStream(); }, delay);
 }
 
+// Re-POST the currently-selected journey or stop so detail (journey /
+// stationboard) pushes survive an SSE reconnect. A reconnect registers a fresh
+// server-side subscriber with an empty selection, so without this the selected
+// journey/stop silently stops receiving per-tick detail events. Exported so the
+// test suite can drive it without an EventSource mock.
+export function _resendActiveSelection() {
+  if (state.selectedJid) {
+    api.selectStream('journey', state.selectedJid).catch(function () {});
+  } else if (state.selectedStop) {
+    var bt = state._activeStationBoardType || 'DEP';
+    var dur = (bt === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
+    api.selectStream('stationboard', state.selectedStop.lid, bt, dur).catch(function () {});
+  }
+}
+
 export function startStream() {
   if (_es) { try { _es.close(); } catch (e) {} _es = null; }
   _gotFirstSubscribe = false;
@@ -145,6 +160,13 @@ export function startStream() {
       _maybeUpdateAppVersion(d.appVersion);
     } catch (e) {}
     _sendCurrentViewport();
+    // Re-send the active selection too. A reconnect creates a FRESH subscriber
+    // on the server with no selection (only the viewport is re-sent above), so
+    // journey/stationboard detail pushes would silently stop until the user
+    // re-selects. That is why a followed journey never showed "journey ended"
+    // (the position-less journey payload that triggers it stopped arriving) and
+    // a departures board stopped refreshing after a stream drop.
+    _resendActiveSelection();
   });
 
   _es.addEventListener('connected', function (ev) {
