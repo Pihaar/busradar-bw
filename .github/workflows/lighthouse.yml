@@ -1,0 +1,41 @@
+name: Lighthouse PWA Audit
+
+# Audits the live production site against the Lighthouse categories
+# (performance, accessibility, best-practices, seo, pwa).
+# Assertions from lighthouserc.json run as warnings, so this workflow
+# reports/audits rather than failing the build.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 06:17 UTC (off-round minute to avoid the top-of-hour rush).
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main]
+    # Only re-audit when the shipped frontend actually changes.
+    paths:
+      - "static/**"
+      - "index.html"
+      - "lighthouserc.json"
+      - ".github/workflows/lighthouse.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    name: Lighthouse audit (production)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Lighthouse CI
+        id: lhci
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: |
+            https://busradar.pihaar.de/
+          configPath: ./lighthouserc.json
+          uploadArtifacts: true
+          temporaryPublicStorage: true
