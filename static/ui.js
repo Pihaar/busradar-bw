@@ -925,12 +925,40 @@ export var ui = {
     }
   },
 
+  _clearStopTrack: function () {
+    // Remove the connecting-line geometry so a stale route's line can't linger
+    // behind an empty-state body (journey ended / cancelled / loading). The 1s
+    // ticker keeps calling updateStopProgress with the previous _currentStopL
+    // after such a transition, so this runs once the .stop-item list is gone.
+    ui.stopList.style.removeProperty('--stop-track-top');
+    ui.stopList.style.removeProperty('--stop-track-height');
+  },
+
   updateStopProgress: function (stopL) {
     var progressEl = document.getElementById('stop-progress');
-    if (!progressEl || !stopL || stopL.length < 2) return;
+    if (!progressEl || !stopL || stopL.length < 2) {
+      ui._clearStopTrack();
+      return;
+    }
 
     var items = ui.stopList.querySelectorAll('.stop-item');
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      ui._clearStopTrack();
+      return;
+    }
+
+    var listRect = ui.stopList.getBoundingClientRect();
+    // Anchor the connecting line to the actual stop-dot centres instead of to
+    // fixed pixel constants. A stop-item's height varies with its content
+    // (single- vs two-row times, terminus, font size), so hardcoded offsets
+    // drift and the line stops short of the final stop.
+    var dotCenterY = function (item) {
+      var dot = item.querySelector('.stop-dot') || item;
+      var r = dot.getBoundingClientRect();
+      return r.top - listRect.top + r.height / 2;
+    };
+    var firstY = dotCenterY(items[0]);
+    var lastY = dotCenterY(items[items.length - 1]);
 
     var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
     var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
@@ -954,14 +982,11 @@ export var ui = {
       }
     }
 
-    var listRect = ui.stopList.getBoundingClientRect();
-    var pixelHeight;
-
+    var currentY;
     if (lastPassedIdx < 0) {
-      pixelHeight = 0;
+      currentY = firstY;
     } else if (lastPassedIdx >= items.length - 1) {
-      var lastItem = items[items.length - 1];
-      pixelHeight = lastItem.getBoundingClientRect().top - listRect.top + 4;
+      currentY = lastY;
     } else {
       var nextIdx = lastPassedIdx + 1;
       var lastTime = times[lastPassedIdx];
@@ -970,14 +995,18 @@ export var ui = {
       var progress = timeDiff > 0 ? (nowMin - lastTime) / timeDiff : 0;
       progress = Math.max(0, Math.min(1, progress));
 
-      var lastItemRect = items[lastPassedIdx].getBoundingClientRect();
-      var nextItemRect = items[nextIdx].getBoundingClientRect();
-      var lastY = lastItemRect.top - listRect.top + 4;
-      var nextY = nextItemRect.top - listRect.top + 4;
-      pixelHeight = lastY + (nextY - lastY) * progress;
+      var lastDotY = dotCenterY(items[lastPassedIdx]);
+      var nextDotY = dotCenterY(items[nextIdx]);
+      currentY = lastDotY + (nextDotY - lastDotY) * progress;
     }
 
-    progressEl.style.height = pixelHeight + 'px';
+    // All measurements done; apply geometry last so no getBoundingClientRect
+    // read follows a style write (avoids an extra forced layout on the 1s tick).
+    // Grey track (.stop-list::before) spans first→last dot; the coloured bar
+    // shares --stop-track-top and fills first dot → current position.
+    ui.stopList.style.setProperty('--stop-track-top', firstY + 'px');
+    ui.stopList.style.setProperty('--stop-track-height', Math.max(0, lastY - firstY) + 'px');
+    progressEl.style.height = Math.max(0, currentY - firstY) + 'px';
   },
 
   drawRoute: function (data, vehicle) {

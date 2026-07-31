@@ -833,8 +833,8 @@ html, body {
   content: '';
   position: absolute;
   left: 9px;
-  top: 16px;
-  bottom: 60px;
+  top: var(--stop-track-top, 16px);
+  height: var(--stop-track-height, 0);
   width: 2px;
   background: var(--border-subtle);
   z-index: 0;
@@ -843,7 +843,7 @@ html, body {
 .stop-list-progress {
   position: absolute;
   left: 9px;
-  top: 16px;
+  top: var(--stop-track-top, 16px);
   width: 2px;
   background: var(--text-primary);
   z-index: 1;
