@@ -10,6 +10,7 @@ Source0:        busradar-bw-%{version}.tar.gz
 Source99:       busradar-bw-rpmlintrc
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
+BuildRequires:  esbuild
 Requires:       (python314 or python313 or python311 or python3 >= 3.9)
 # Pydantic v2 (with field_validator) is required; FastAPI bundles v2 since 0.100.
 # Older distro packages ship Pydantic v1, which fails at import time.
@@ -29,10 +30,28 @@ auf einer OpenStreetMap-Karte. HAFAS-API Backend-Proxy mit FastAPI.
 %prep
 %autosetup -p1
 
+%build
+# Optimize the frontend at RPM-build time. OBS workers have no network, so the
+# only tool used is esbuild (a self-contained binary from the distro) — no
+# npm install. init.js is the ESM entry; bundling it inlines config/state/api/
+# status/map/ui/refresh/debug/debug-console into one file, collapsing the
+# module-load waterfall. i18n.js (classic global), sw.js and style.css are kept
+# as separate files but minified. The individual bundled sources are dropped
+# from the shipped tree (sw.js PRECACHE already lists only /init.js + /i18n.js).
+mkdir -p build
+cp -a static build/static
+esbuild static/init.js --bundle --minify --format=esm --outfile=build/static/init.js
+rm -f build/static/config.js build/static/state.js build/static/api.js \
+      build/static/status.js build/static/map.js build/static/ui.js \
+      build/static/refresh.js build/static/debug.js build/static/debug-console.js
+esbuild static/i18n.js --minify --outfile=build/static/i18n.js
+esbuild static/sw.js --minify --outfile=build/static/sw.js
+esbuild static/style.css --minify --outfile=build/static/style.css
+
 %install
 install -d %{buildroot}/opt/busradar
 install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py hafas.py sse_handler.py %{buildroot}/opt/busradar/
-cp -a static %{buildroot}/opt/busradar/
+cp -a build/static %{buildroot}/opt/busradar/
 printf '%%s\n' '%{version}-%{release}' > %{buildroot}/opt/busradar/VERSION
 install -D -m 644 deploy/busradar.service %{buildroot}%{_unitdir}/busradar.service
 install -D -m 644 deploy/busradar-sysusers.conf %{buildroot}%{_sysusersdir}/busradar.conf

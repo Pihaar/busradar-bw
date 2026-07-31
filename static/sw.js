@@ -2,20 +2,16 @@
 // served; the name changes on every deploy so the old cache is evicted in the
 // activate event below.
 var CACHE = 'busradar-__APP_VERSION__';
+// PRECACHE reflects the SHIPPED (RPM-built) asset shape: init.js is an esbuild
+// bundle that inlines config/state/api/status/map/ui/refresh/debug/debug-console,
+// so only /init.js (+ the classic /i18n.js) are separate module files in prod.
+// Do not list the inlined sources here — they are not shipped and would 404 the
+// install. (Dev/tests run unbundled, without the SW.)
 var PRECACHE_URLS = [
   '/',
   '/index.html',
   '/style.css',
-  '/config.js',
-  '/state.js',
-  '/api.js',
-  '/status.js',
-  '/map.js',
-  '/ui.js',
-  '/refresh.js',
   '/init.js',
-  '/debug.js',
-  '/debug-console.js',
   '/i18n.js',
   '/manifest.webmanifest',
   '/favicon.svg',
