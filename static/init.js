@@ -429,17 +429,13 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
         console.warn('SW registration failed:', e);
       });
 
-    // When a new SW takes control (after skipWaiting + clients.claim),
-    // reload ONCE so the page swaps to the freshly-cached assets. Guarded
-    // on there already being a controller, so the very first install on a
-    // fresh visit doesn't trigger a spurious reload.
-    if (navigator.serviceWorker.controller) {
-      var reloadedForSW = false;
-      navigator.serviceWorker.addEventListener('controllerchange', function () {
-        if (reloadedForSW) return;
-        reloadedForSW = true;
-        location.reload();
-      });
-    }
+    // Deliberately NO auto-reload on controllerchange. A new SW still takes
+    // control in the background (skipWaiting + clients.claim), but reloading
+    // an already-open tab yanks the page out from under the user mid-
+    // interaction, and the timing differed per browser (Firefox reloaded
+    // eagerly, Chrome didn't). The SSE appVersion banner is the single,
+    // consistent update path: it prompts the user with a manual reload button.
+    // A freshly-opened tab still loads the current version because sw.js
+    // serves app code network-first.
   });
 }
