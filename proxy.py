@@ -404,15 +404,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+def _hafas_time_to_min(t: str) -> int:
+    """Minutes-of-day for a HAFAS time. Times are normally "HHMMSS"; a day
+    offset prefixes extra digits ("1HHMMSS" = next day). Mirrors the client's
+    parseHafasTimeToMin so a delayed real time that crosses midnight reads as
+    +N rather than being mis-parsed into a huge delay (the +66-at-midnight bug).
+    """
+    offset = 0
+    if len(t) > 6:
+        offset = int(t[: len(t) - 6])
+        t = t[len(t) - 6 :]
+    return (int(t[:2]) + offset * 24) * 60 + int(t[2:4])
+
+
 def _calc_delay(stop: dict[str, Any]) -> int | None:
     for prefix in ("d", "a"):
         time_s = stop.get(f"{prefix}TimeS")
         time_r = stop.get(f"{prefix}TimeR")
         if time_s and time_r:
             try:
-                plan_min = int(time_s[:2]) * 60 + int(time_s[2:4])
-                real_min = int(time_r[:2]) * 60 + int(time_r[2:4])
+                plan_min = _hafas_time_to_min(time_s)
+                real_min = _hafas_time_to_min(time_r)
                 delay = real_min - plan_min
+                # Fallback for HAFAS returning a next-day time WITHOUT the
+                # offset prefix (bare "0001..."); the offset handling above
+                # covers the prefixed case.
                 if delay < -720:
                     delay += 1440
                 elif delay > 720:

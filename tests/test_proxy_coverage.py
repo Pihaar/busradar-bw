@@ -148,6 +148,17 @@ class TestCalcDelay:
         stop = {"dTimeS": "235800", "dTimeR": "000100"}
         assert _calc_delay(stop) == 3
 
+    def test_day_offset_real_crosses_midnight(self):
+        # HAFAS prefixes a day offset ("1HHMMSS" = next day) once a delayed real
+        # time crosses midnight. 23:59 scheduled, 00:02 next day = +3, NOT +61.
+        stop = {"dTimeS": "235900", "dTimeR": "01000200"}
+        assert _calc_delay(stop) == 3
+
+    def test_day_offset_both_sides(self):
+        # Both scheduled and real already carry the next-day offset prefix.
+        stop = {"aTimeS": "01000200", "aTimeR": "01000500"}
+        assert _calc_delay(stop) == 3
+
     def test_malformed_time(self):
         stop = {"dTimeS": "XX", "dTimeR": "120000"}
         assert _calc_delay(stop) is None
