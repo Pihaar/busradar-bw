@@ -625,6 +625,16 @@ export var ui = {
     return row;
   },
 
+  // Server "now" in fractional minutes-of-day: the last HAFAS server time plus
+  // the wall-clock elapsed since. Shared by every stop time comparison
+  // (rendered "passed" dots, per-tick delay patch, progress line) so the
+  // initial render and the per-tick updates agree — a rounded vs fractional
+  // "now" used to flip a boundary stop's passed state between the two.
+  _nowMin: function () {
+    var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
+    return (state.serverTimeMin || 0) + elapsedMs / 60000;
+  },
+
   renderJourneyStops: function (data, vehicle) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
@@ -678,8 +688,7 @@ export var ui = {
       var depTime = stop.dTimeR || stop.dTimeS || stop.aTimeR || stop.aTimeS;
       if (depTime && state.serverTimeMin !== null) {
         var stopMin = parseHafasTimeToMin(depTime);
-        var elapsed = Math.round((Date.now() - state.serverTimeStamp) / 60000);
-        var nowMin = state.serverTimeMin + elapsed;
+        var nowMin = ui._nowMin();
         if (stopMin !== null) {
           if (nowMin > 1080 && stopMin < 360) stopMin += 1440;
           if (nowMin < 360 && stopMin > 1080) stopMin -= 1440;
@@ -794,7 +803,10 @@ export var ui = {
     state._currentStopL = stopL;
     state._renderedStopSig = ui._stopSig(stopL);
     setTimeout(function () {
-      ui.updateStopProgress(stopL);
+      // Read the current stop list at fire time, not the captured `stopL`: a
+      // rebuild within this 100 ms window (a front-prune tick) would otherwise
+      // measure the freshly-built DOM rows against the previous stop set.
+      ui.updateStopProgress(state._currentStopL);
     }, 100);
   },
 
@@ -887,17 +899,18 @@ export var ui = {
   },
 
   _stopSig: function (stopL) {
-    // Structural signature of the stop sequence, keyed on each stop's SCHEDULED
-    // time (fixed per stop; real/delay times are excluded so a delay update
-    // never forces a rebuild). Detects when HAFAS changes the set — e.g. prunes
-    // an already-passed stop from the front — which would otherwise misalign the
-    // positional delay/passed patch in updateJourneyStopDelays against the DOM
-    // rows and make two clients that first rendered at different times show the
-    // same stop with different times / wrong passed dots.
+    // Structural signature of the stop sequence, keyed on each stop's location
+    // index plus its SCHEDULED time (fixed per stop; real/delay times are
+    // excluded so a delay update never forces a rebuild). Detects when HAFAS
+    // changes the set — e.g. prunes an already-passed stop from the front, or
+    // swaps a stop on a reroute — which would otherwise misalign the positional
+    // delay/passed patch in updateJourneyStopDelays against the DOM rows and
+    // make two clients that first rendered at different times show the same stop
+    // with different times / wrong passed dots.
     var parts = [];
     for (var i = 0; i < stopL.length; i++) {
       var s = stopL[i];
-      parts.push(s.dTimeS || s.aTimeS || '');
+      parts.push((s.locX != null ? s.locX : '') + '@' + (s.dTimeS || s.aTimeS || ''));
     }
     return stopL.length + '#' + parts.join('|');
   },
@@ -917,8 +930,7 @@ export var ui = {
 
     var items = ui.stopList.querySelectorAll('.stop-item');
 
-    var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-    var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
+    var nowMin = ui._nowMin();
 
     for (var idx = 0; idx < Math.min(stopL.length, items.length); idx++) {
       var stop = stopL[idx];
@@ -989,8 +1001,7 @@ export var ui = {
     var firstY = dotCenterY(items[0]);
     var lastY = dotCenterY(items[items.length - 1]);
 
-    var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-    var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
+    var nowMin = ui._nowMin();
 
     var times = [];
     for (var i = 0; i < stopL.length; i++) {
@@ -1071,8 +1082,7 @@ export var ui = {
           var busLon = vehicle.lon;
           var ppLocRefL = polyL[0].ppLocRefL || [];
 
-          var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-          var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
+          var nowMin = ui._nowMin();
 
           var lastPassedPolyIdx = 0;
 
@@ -2194,8 +2204,7 @@ export var ui = {
 
         if (!lat || !lon) {
           var stopL = journey.stopL || [];
-          var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-          var curMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
+          var curMin = ui._nowMin();
 
           var lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
           var lastArrTime = lastStop

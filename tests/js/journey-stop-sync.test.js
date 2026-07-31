@@ -61,6 +61,25 @@ describe('ui._stopSig — structural signature', () => {
     const pruned = ui._stopSig([stop('121000'), stop('122000')]);
     expect(pruned).not.toBe(full);
   });
+
+  it('changes when a stop is swapped (same length + times, different locX)', () => {
+    const a = ui._stopSig([
+      { locX: 0, dTimeS: '120000' },
+      { locX: 1, dTimeS: '121000' },
+    ]);
+    const b = ui._stopSig([
+      { locX: 0, dTimeS: '120000' },
+      { locX: 2, dTimeS: '121000' },
+    ]);
+    expect(b).not.toBe(a); // a reroute swaps a stop the times alone wouldn't catch
+  });
+
+  it('handles empty, single, and time-less stop lists without throwing', () => {
+    expect(ui._stopSig([])).toBe('0#');
+    expect(typeof ui._stopSig([stop('120000')])).toBe('string');
+    // stops with neither dTimeS nor aTimeS still yield a stable signature
+    expect(ui._stopSig([{ locX: 5 }, { locX: 6 }])).toBe(ui._stopSig([{ locX: 5 }, { locX: 6 }]));
+  });
 });
 
 describe('ui.updateJourneyStopDelays — rebuild on structural change, patch otherwise', () => {
@@ -96,5 +115,51 @@ describe('ui.updateJourneyStopDelays — rebuild on structural change, patch oth
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(prunedData);
+  });
+
+  it('really rebuilds the DOM to the pruned set and resets the signature (no rebuild loop)', () => {
+    vi.useFakeTimers(); // renderJourneyStops schedules a 100ms updateStopProgress
+    try {
+      const list = document.createElement('ol');
+      document.body.appendChild(list);
+      ui.stopList = list;
+
+      ui.renderJourneyStops(jd([stop('095000'), stop('100000'), stop('101000')]));
+      expect(list.querySelectorAll('.stop-item').length).toBe(3);
+
+      const pruned = jd([stop('100000'), stop('101000')]);
+      ui.updateJourneyStopDelays(pruned); // signature differs → real rebuild
+      expect(list.querySelectorAll('.stop-item').length).toBe(2);
+      expect(state._renderedStopSig).toBe(ui._stopSig(pruned.journey.stopL));
+
+      // an identical follow-up push must patch in place, not rebuild again
+      const spy = vi.spyOn(ui, 'renderJourneyStops');
+      ui.updateJourneyStopDelays(pruned);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('ui._nowMin — unified server-now in fractional minutes-of-day', () => {
+  it('returns serverTimeMin exactly when no serverTimeStamp is set', () => {
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = null;
+    expect(ui._nowMin()).toBe(600);
+  });
+
+  it('adds fractional elapsed minutes since the server timestamp', () => {
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = Date.now() - 90000; // 1.5 min ago
+    const v = ui._nowMin();
+    expect(v).toBeGreaterThan(601.4);
+    expect(v).toBeLessThan(601.6); // fractional, not rounded to 602
+  });
+
+  it('treats a null serverTimeMin as 0', () => {
+    state.serverTimeMin = null;
+    state.serverTimeStamp = null;
+    expect(ui._nowMin()).toBe(0);
   });
 });
