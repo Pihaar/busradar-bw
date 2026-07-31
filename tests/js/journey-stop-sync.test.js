@@ -1,0 +1,100 @@
+/**
+ * Regression test: two clients viewing the same journey must show identical
+ * stop data. updateJourneyStopDelays patches delay/passed state into the DOM
+ * rows POSITIONALLY by index. HAFAS prunes already-passed stops from the front
+ * of stopL over a journey's life, so a client that first rendered earlier has a
+ * differently-aligned DOM than one that rendered later; the same server push
+ * then landed on misaligned rows (wrong times, wrong "passed" dots), diverging
+ * per client. The fix rebuilds the rows when the stop set's structural
+ * signature changes, re-syncing the DOM to the current stopL.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
+
+vi.mock('../../static/api.js', () => ({
+  api: { getStationBoard: vi.fn(), selectStream: vi.fn(() => Promise.resolve({})) },
+  urlState: { push: vi.fn(), replace: vi.fn() },
+}));
+vi.mock('../../static/map.js', () => ({
+  markers: { updateAll: vi.fn() },
+  stopsLayer: { update: vi.fn(), addStopMarker: vi.fn() },
+}));
+vi.mock('../../static/status.js', () => ({ announce: vi.fn() }));
+
+const { ui } = await import('../../static/ui.js');
+const { state } = await import('../../static/state.js');
+
+function stop(dTimeS, dTimeR) {
+  return { locX: 0, dTimeS, dTimeR: dTimeR || dTimeS };
+}
+// journeyData shape as pushed per tick: { journey: { stopL }, common: { locL } }
+function jd(stopL) {
+  return { journey: { stopL }, common: { locL: [{ name: 'X' }] } };
+}
+// Build a DOM stop-list with `n` rows (matching a prior render of `n` stops).
+function buildDom(n) {
+  const list = document.createElement('ol');
+  for (let i = 0; i < n; i++) {
+    const li = document.createElement('li');
+    li.className = 'stop-item';
+    const dot = document.createElement('div');
+    dot.className = 'stop-dot';
+    const times = document.createElement('div');
+    times.className = 'stop-times';
+    li.append(dot, times);
+    list.appendChild(li);
+  }
+  document.body.appendChild(list);
+  ui.stopList = list;
+}
+
+describe('ui._stopSig — structural signature', () => {
+  it('is stable when only the real/delay time changes (scheduled time fixed)', () => {
+    const a = ui._stopSig([stop('120000', '120000'), stop('121000', '121000')]);
+    const b = ui._stopSig([stop('120000', '120300'), stop('121000', '121500')]);
+    expect(b).toBe(a); // delay grew but the set is unchanged → no rebuild
+  });
+
+  it('changes when a stop is pruned from the front', () => {
+    const full = ui._stopSig([stop('120000'), stop('121000'), stop('122000')]);
+    const pruned = ui._stopSig([stop('121000'), stop('122000')]);
+    expect(pruned).not.toBe(full);
+  });
+});
+
+describe('ui.updateJourneyStopDelays — rebuild on structural change, patch otherwise', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    state.serverTimeStamp = null;
+    state.serverTimeMin = 600;
+    vi.restoreAllMocks();
+  });
+
+  it('patches in place (no rebuild) when the stop set is unchanged', () => {
+    const stopL = [stop('095000'), stop('100000'), stop('101000')];
+    buildDom(3);
+    state._renderedStopSig = ui._stopSig(stopL);
+    const spy = vi.spyOn(ui, 'renderJourneyStops').mockImplementation(() => {});
+
+    ui.updateJourneyStopDelays(jd(stopL));
+
+    expect(spy).not.toHaveBeenCalled();
+    // passed dots: stops at 09:50/10:00 are before now (10:00) → passed
+    const dots = ui.stopList.querySelectorAll('.stop-dot');
+    expect(dots[0].classList.contains('stop-dot--passed')).toBe(true);
+  });
+
+  it('rebuilds (renderJourneyStops) when the stop set changed structurally', () => {
+    // DOM was built from 3 stops; server now pushes a front-pruned 2-stop set.
+    buildDom(3);
+    state._renderedStopSig = ui._stopSig([stop('095000'), stop('100000'), stop('101000')]);
+    const prunedData = jd([stop('100000'), stop('101000')]);
+    const spy = vi.spyOn(ui, 'renderJourneyStops').mockImplementation(() => {});
+
+    ui.updateJourneyStopDelays(prunedData);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(prunedData);
+  });
+});

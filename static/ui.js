@@ -790,6 +790,7 @@ export var ui = {
     });
 
     state._currentStopL = stopL;
+    state._renderedStopSig = ui._stopSig(stopL);
     setTimeout(function () {
       ui.updateStopProgress(stopL);
     }, 100);
@@ -883,9 +884,35 @@ export var ui = {
     }
   },
 
+  _stopSig: function (stopL) {
+    // Structural signature of the stop sequence, keyed on each stop's SCHEDULED
+    // time (fixed per stop; real/delay times are excluded so a delay update
+    // never forces a rebuild). Detects when HAFAS changes the set — e.g. prunes
+    // an already-passed stop from the front — which would otherwise misalign the
+    // positional delay/passed patch in updateJourneyStopDelays against the DOM
+    // rows and make two clients that first rendered at different times show the
+    // same stop with different times / wrong passed dots.
+    var parts = [];
+    for (var i = 0; i < stopL.length; i++) {
+      var s = stopL[i];
+      parts.push(s.dTimeS || s.aTimeS || '');
+    }
+    return stopL.length + '#' + parts.join('|');
+  },
+
   updateJourneyStopDelays: function (data) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
+
+    // If the stop set changed structurally since the DOM was built, the
+    // positional patch below would write times/passed-state into misaligned
+    // rows. Rebuild the rows to re-sync (renderJourneyStops resets the
+    // signature); the next tick then patches the aligned list.
+    if (ui._stopSig(stopL) !== state._renderedStopSig) {
+      ui.renderJourneyStops(data);
+      return;
+    }
+
     var items = ui.stopList.querySelectorAll('.stop-item');
 
     var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
