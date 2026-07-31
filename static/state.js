@@ -42,7 +42,6 @@ export var state = {
   // geolocation watchPosition id for the live user-location dot; null when
   // no watch is active. Replaces the old per-tick getCurrentPosition poll.
   _geoWatchId: null,
-  _needsImmediateRefresh: false,
   _pendingRestore: null,
   _restoreInProgress: false,
   _errorUntil: 0,

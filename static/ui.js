@@ -2046,52 +2046,6 @@ export var ui = {
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_cancelled')));
   },
 
-  _transitionToRunning: function (data) {
-    var journey = data.journey || {};
-    var common = data.common || {};
-    var prodL = common.prodL || [];
-    var journeyProd = prodL[journey.prodX] || {};
-    var pos = journey.pos;
-    var lat = pos.y / 1e6;
-    var lon = pos.x / 1e6;
-
-    state._notStartedJid = null;
-    state._notStartedSince = 0;
-    state._notStartedLastPoll = 0;
-    state._selectedHadPosJid = null;
-    state._endedJid = null;
-
-    var vehicle = {
-      jid: state.selectedJid,
-      line: journeyProd.nameS || journeyProd.name || '?',
-      lineFull: journeyProd.name || '?',
-      direction: journey.dirTxt || '?',
-      lat: lat,
-      lon: lon,
-      delay: null,
-      dirGeo: null,
-      progress: null,
-      stops: [],
-    };
-    state.selectedJourneyData = data;
-    state._currentStopL = journey.stopL || [];
-
-    ui.detailDir.textContent = vehicle.direction;
-    ui.detailLine.textContent = vehicle.lineFull || vehicle.line;
-
-    ui.renderJourneyStops(data, vehicle);
-    ui.drawRoute(data, vehicle);
-
-    state._navigating = true;
-    state.map.panTo([lat, lon], { duration: 1.2 });
-    setTimeout(function () {
-      state._navigating = false;
-    }, 2500);
-
-    state._needsImmediateRefresh = true;
-    announce(t('journey_started_announce', { line: vehicle.line }));
-  },
-
   // Consume server-pushed stationboard from the SSE `stationboard` event.
   // Renders into either the DEP or the ARR list depending on the boardType
   // the server included in the payload (matches the StationSelection
