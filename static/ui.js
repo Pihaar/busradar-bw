@@ -1321,8 +1321,8 @@ export var ui = {
     // burst on stops with no service in the next 60 min. DEP loads first
     // (visible tab on stop-open), ARR follows once DEP settles. Most
     // users never see ARR, so the latency cost only kicks in if they
-    // switch tabs before ARR has settled — applyPushedStationboard /
-    // refreshStationBoard cover that case by refetching on demand.
+    // switch tabs before ARR has settled — the SSE stationboard push
+    // (applyPushedStationboard) covers that case on the next tick.
     ui.loadDepartures(loc, stopExtId, 60, true).finally(function () {
       if (state.selectedStop && state.selectedStop.lid === loc.lid) {
         ui.loadArrivals(loc, stopExtId, 60, true);
@@ -2083,92 +2083,11 @@ export var ui = {
     announce(t('journey_started_announce', { line: vehicle.line }));
   },
 
-  refreshStationBoard: function (loc) {
-    if (state._autoExpandingDep || state._autoExpandingArr) return;
-    var refreshSeq = ++state._stationRefreshSeq;
-    var capturedLid = loc.lid;
-    var stopExtId = '';
-    if (loc.extId) {
-      stopExtId = loc.extId;
-    } else if (loc.lid) {
-      var match = loc.lid.match(/@L=(\d+)@/);
-      if (match) stopExtId = match[1];
-    }
-    var depFilterLine = state._depFilter || null;
-    var arrFilterLine = state._arrFilter || null;
-    var depDur = state._stationDepDur || 60;
-    var arrDur = state._stationArrDur || 60;
-
-    var boardSig = function (jnyL) {
-      return (jnyL || [])
-        .map(function (j) {
-          var stb = j.stbStop || {};
-          return (
-            (j.jid || '') +
-            '|' +
-            (j.prodX != null ? j.prodX : '') +
-            '|' +
-            (j.dirTxt || '') +
-            '|' +
-            (j.date || '') +
-            '|' +
-            (stb.locX != null ? stb.locX : '') +
-            '|' +
-            (stb.dTimeS || '') +
-            '|' +
-            (stb.dTimeR || '') +
-            '|' +
-            (stb.aTimeS || '') +
-            '|' +
-            (stb.aTimeR || '')
-          );
-        })
-        .join(';');
-    };
-
-    var content = document.getElementById('detail-content');
-    var fixedHeight = content.offsetHeight;
-    content.style.minHeight = fixedHeight + 'px';
-
-    api
-      .getStationBoard(loc.lid, 'DEP', depDur)
-      .then(function (data) {
-        if (state._stationRefreshSeq !== refreshSeq) return;
-        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
-        var sig = boardSig(data.jnyL);
-        if (sig !== state._lastDepSig) {
-          state._lastDepSig = sig;
-          state._stationDepData = data;
-          ui.renderDepartures(data, loc, stopExtId, depFilterLine);
-          ui.addLoadMoreButton('departure-list', loc, stopExtId, depDur, 'DEP');
-        }
-        content.style.minHeight = '';
-      })
-      .catch(function () {
-        content.style.minHeight = '';
-      });
-
-    api
-      .getStationBoard(loc.lid, 'ARR', arrDur)
-      .then(function (data) {
-        if (state._stationRefreshSeq !== refreshSeq) return;
-        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
-        var sig = boardSig(data.jnyL);
-        if (sig !== state._lastArrSig) {
-          state._lastArrSig = sig;
-          state._stationArrData = data;
-          ui.renderArrivals(data, loc, stopExtId, arrFilterLine);
-          ui.addLoadMoreButton('arrival-list', loc, stopExtId, arrDur, 'ARR');
-        }
-      })
-      .catch(function () {});
-  },
-
   // Consume server-pushed stationboard from the SSE `stationboard` event.
   // Renders into either the DEP or the ARR list depending on the boardType
   // the server included in the payload (matches the StationSelection
-  // board_type field). Same de-dup signature as refreshStationBoard so
-  // identical pushes don't flicker the DOM.
+  // board_type field). A de-dup signature skips re-rendering when an
+  // identical push arrives, so the DOM doesn't flicker.
   applyPushedStationboard: function (loc, data, boardType) {
     if (state._autoExpandingDep || state._autoExpandingArr) return;
     var capturedLid = loc.lid;
