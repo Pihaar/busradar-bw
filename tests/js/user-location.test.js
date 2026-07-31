@@ -107,6 +107,22 @@ describe('setUserLocationMarker', () => {
     expect(opts.interactive).toBe(false);
     expect(opts.keyboard).toBe(false);
   });
+
+  it('recreates the marker when the existing ref is stale (removed from map, _map === null)', () => {
+    // A marker that was on the map but has since been detached (Leaflet clears
+    // _map on removeLayer). setUserLocationMarker must drop it and make a new one
+    // rather than calling setLatLng on a marker no longer attached to any map.
+    const stale = makeMarkerMock();
+    stale._map = null; // detached
+    state._userLocationMarker = stale;
+    setUserLocationMarker(49.34, 8.66);
+    // A brand-new marker was created and attached...
+    expect(L.marker).toHaveBeenCalledTimes(1);
+    expect(state._userLocationMarker).not.toBe(stale);
+    expect(state._userLocationMarker.addTo).toHaveBeenCalledWith(state.map);
+    // ...and the stale one was NOT reused via setLatLng.
+    expect(stale.setLatLng).not.toHaveBeenCalled();
+  });
 });
 
 describe('__gpsDebug — GPS diagnostic pill', () => {

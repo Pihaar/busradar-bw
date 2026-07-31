@@ -149,4 +149,42 @@ describe('debug-console overlay', () => {
     const box = document.getElementById('debug-console');
     expect(box.textContent).toContain('unhandledrejection: Error: nope');
   });
+
+  it('formats a plain object without name/message via JSON.stringify', async () => {
+    await import('../../static/debug-console.js');
+    window.__debugConsole.show();
+    console.log({ vehicles: 3 });
+    const box = document.getElementById('debug-console');
+    expect(box.textContent).toContain('{"vehicles":3}');
+    expect(window.__busradarConsoleTail.join('\n')).toContain('{"vehicles":3}');
+  });
+
+  it('falls back to String(a) when JSON.stringify throws on a circular object', async () => {
+    await import('../../static/debug-console.js');
+    window.__debugConsole.show();
+    const circular = {};
+    circular.self = circular; // JSON.stringify throws on this
+    expect(() => console.log(circular)).not.toThrow();
+    const box = document.getElementById('debug-console');
+    // String({}) → "[object Object]"; the point is it did not throw and was recorded.
+    expect(box.textContent).toContain('[object Object]');
+  });
+
+  it('formats null cleanly as "null" (not a name/message crash)', async () => {
+    await import('../../static/debug-console.js');
+    window.__debugConsole.show();
+    expect(() => console.log(null)).not.toThrow();
+    const box = document.getElementById('debug-console');
+    expect(box.textContent).toContain('null');
+  });
+
+  it('console.debug is captured at level "log", not "debug"', async () => {
+    await import('../../static/debug-console.js');
+    window.__debugConsole.show();
+    console.debug('debug-line');
+    const box = document.getElementById('debug-console');
+    expect(box.textContent).toContain('[log] debug-line');
+    expect(box.textContent).not.toContain('[debug]');
+    expect(window.__busradarConsoleTail.join('\n')).toContain('[log] debug-line');
+  });
 });

@@ -46,6 +46,7 @@ const {
   _viewportPayload,
   busradarDump,
   busradarDownloadDump,
+  _copyDump,
 } = await import('../../static/refresh.js');
 const { state, settings, debugLog } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
@@ -708,5 +709,99 @@ describe('debugLog — gated verbose logger', () => {
     window.__busradarVerbose = true;
     debugLog('viewport POST', { x: 1 });
     expect(logSpy).toHaveBeenCalledWith('[verbose]', 'viewport POST', { x: 1 });
+  });
+});
+
+describe('_copyDump — clipboard copy with data-recovery fallback', () => {
+  let logSpy;
+  const origClipboard = navigator.clipboard;
+  beforeEach(() => {
+    // A minimal, dump-able state so busradarDump() produces valid JSON.
+    state.map = null;
+    state.selectedJid = null;
+    state.vehicles = new Map();
+    state._followLog = [];
+    settings.current = { posMode: 'CALC' };
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    if (origClipboard === undefined) delete navigator.clipboard;
+    else
+      Object.defineProperty(navigator, 'clipboard', { value: origClipboard, configurable: true });
+  });
+
+  it('copies to the clipboard when navigator.clipboard.writeText resolves', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    _copyDump();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    // Let the resolved .then run so report(true) fires.
+    await Promise.resolve();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('copied to clipboard'));
+    // Success path does NOT echo the full JSON to the console.
+    const dumpEchoed = logSpy.mock.calls.some(
+      (c) => typeof c[0] === 'string' && c[0].indexOf('"mode"') !== -1,
+    );
+    expect(dumpEchoed).toBe(false);
+  });
+
+  it('no clipboard API → report(false) logs the notice AND the full JSON dump (recovery path)', () => {
+    // No usable navigator.clipboard.
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    _copyDump();
+    // First log: the "unavailable" notice; second log: the full dump text.
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('clipboard unavailable'));
+    const dumpCall = logSpy.mock.calls.find(
+      (c) => typeof c[0] === 'string' && c[0].indexOf('"mode": "CALC"') !== -1,
+    );
+    expect(dumpCall).toBeTruthy();
+    // The echoed text is parseable JSON, i.e. the complete dump for recovery.
+    expect(() => JSON.parse(dumpCall[0])).not.toThrow();
+  });
+
+  it('writeText rejects → report(false) echoes the full JSON dump too', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    _copyDump();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    // Let the rejected .then's failure callback run.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('clipboard unavailable'));
+    const dumpCall = logSpy.mock.calls.find(
+      (c) => typeof c[0] === 'string' && c[0].indexOf('"mode": "CALC"') !== -1,
+    );
+    expect(dumpCall).toBeTruthy();
+  });
+
+  it('Ctrl+Shift+D keydown handler copies the dump and prevents the default', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const ev = new KeyboardEvent('keydown', { ctrlKey: true, shiftKey: true, key: 'D' });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    window.dispatchEvent(ev);
+    expect(prevent).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it('Cmd+Shift+D keydown handler (metaKey) also copies the dump', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const ev = new KeyboardEvent('keydown', { metaKey: true, shiftKey: true, key: 'd' });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    window.dispatchEvent(ev);
+    expect(prevent).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-matching keydown (no shift) is ignored by the handler', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const ev = new KeyboardEvent('keydown', { ctrlKey: true, shiftKey: false, key: 'D' });
+    const prevent = vi.spyOn(ev, 'preventDefault');
+    window.dispatchEvent(ev);
+    expect(prevent).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
   });
 });
