@@ -6,10 +6,14 @@ import * as refresh from './refresh.js';
 
 // === MAP MODULE ===
 export var mapModule = {
-  init: function () {
+  init: function (initCenter, initZoom) {
+    // Initialise the map directly at the resolved first viewport (URL-hash
+    // location if present, else the default center) so the very first tile
+    // requests are for the region the map actually stays on — no Sandhausen→
+    // shared-link double-fetch. GPS re-centering stays async (see requestGPS).
     state.map = L.map('map', {
-      center: CONFIG.fallbackCenter,
-      zoom: CONFIG.defaultZoom,
+      center: initCenter || CONFIG.fallbackCenter,
+      zoom: initZoom == null ? CONFIG.defaultZoom : initZoom,
       zoomControl: false,
       attributionControl: true,
     });

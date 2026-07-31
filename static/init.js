@@ -265,7 +265,23 @@ function init() {
   settings.init();
   settings._bindUI();
   settings._applyPosModeConstraint();
-  mapModule.init();
+
+  // Resolve the first viewport from the URL hash BEFORE creating the map, so
+  // the initial tiles are for the shared-link region, not the default center
+  // (avoids the Sandhausen→target double-fetch). Falls back to the default.
+  var params = urlState.parse();
+  var initCenter = CONFIG.fallbackCenter;
+  var initZoom = CONFIG.defaultZoom;
+  if (params.lat && params.lon && params.z) {
+    var initLat = parseCoord(params.lat, -90, 90);
+    var initLon = parseCoord(params.lon, -180, 180);
+    var initZ = parseZoom(params.z);
+    if (initLat !== null && initLon !== null && initZ !== null) {
+      initCenter = [initLat, initLon];
+      initZoom = initZ;
+    }
+  }
+  mapModule.init(initCenter, initZoom);
   stopsLayer.init();
   search.init();
   ui.init();
@@ -275,16 +291,6 @@ function init() {
       settings._updateHint();
     }
   });
-
-  var params = urlState.parse();
-  if (params.lat && params.lon && params.z) {
-    var initLat = parseCoord(params.lat, -90, 90);
-    var initLon = parseCoord(params.lon, -180, 180);
-    var initZ = parseZoom(params.z);
-    if (initLat !== null && initLon !== null && initZ !== null) {
-      state.map.setView([initLat, initLon], initZ);
-    }
-  }
 
   var center = state.map.getCenter();
   stopsLayer.loadAll(center.lat, center.lng, 5000);
