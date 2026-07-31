@@ -145,9 +145,19 @@ def calc_delay(time_s: str | None, time_r: str | None) -> int | None:
     """Calculate delay in minutes between scheduled and real HHMMSS times."""
     if not time_s or not time_r:
         return None
+
+    def _to_min(t: str) -> int:
+        # HAFAS prefixes a day offset ("1HHMMSS" = next day) once a time crosses
+        # midnight; strip it so a delayed real time isn't misread as a huge delay.
+        offset = 0
+        if len(t) > 6:
+            offset = int(t[: len(t) - 6])
+            t = t[len(t) - 6 :]
+        return (int(t[:2]) + offset * 24) * 60 + int(t[2:4])
+
     try:
-        plan = int(time_s[:2]) * 60 + int(time_s[2:4])
-        real = int(time_r[:2]) * 60 + int(time_r[2:4])
+        plan = _to_min(time_s)
+        real = _to_min(time_r)
         delay = real - plan
         if delay < -720:
             delay += 1440

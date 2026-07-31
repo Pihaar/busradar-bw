@@ -22,7 +22,11 @@ def hhmmss_to_minutes(t: str | None) -> int | None:
     if not t or len(t) < 4:
         return None
     try:
-        return int(t[:2]) * 60 + int(t[2:4])
+        offset = 0
+        if len(t) > 6:  # HAFAS day-offset prefix ("1HHMMSS" = next day)
+            offset = int(t[: len(t) - 6])
+            t = t[len(t) - 6 :]
+        return (int(t[:2]) + offset * 24) * 60 + int(t[2:4])
     except ValueError:
         return None
 
