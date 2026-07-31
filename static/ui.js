@@ -2212,6 +2212,13 @@ export var ui = {
       state._selectedStopMarker.remove();
       state._selectedStopMarker = null;
     }
+    // Subscribe the SSE stream so the server pushes this journey every tick.
+    // Unlike focusVehicle (map-marker click), this id-based path (URL restore,
+    // search results) otherwise never received per-tick pushes, so the journey
+    // stayed frozen on the one-shot render below and never transitioned to
+    // live/ended. Subscribing here (independent of the fetch outcome) lets
+    // _applyJourneyPayload drive every subsequent transition.
+    api.selectStream('journey', jid).catch(function () {});
     if (!skipHistory) {
       var center = state.map.getCenter();
       var zoom = state.map.getZoom();
