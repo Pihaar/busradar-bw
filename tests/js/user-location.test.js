@@ -123,6 +123,33 @@ describe('setUserLocationMarker', () => {
     // ...and the stale one was NOT reused via setLatLng.
     expect(stale.setLatLng).not.toHaveBeenCalled();
   });
+
+  it('_ensureUserLocationPaneAndIcon returns null when the map vanishes mid-call', () => {
+    // setUserLocationMarker's own `!state.map` guard passes, but the map can be
+    // torn down before _ensureUserLocationPaneAndIcon reads state.map again
+    // (its defensive `if (!state.map) return null`). Model that with a getter
+    // that yields a real map on the first read and null afterwards.
+    const realMap = makeMapMock();
+    let reads = 0;
+    Object.defineProperty(state, 'map', {
+      configurable: true,
+      get() {
+        reads++;
+        return reads === 1 ? realMap : null;
+      },
+    });
+    try {
+      setUserLocationMarker(49.34, 8.66);
+    } finally {
+      // Restore state.map as a plain data property for the other tests.
+      Object.defineProperty(state, 'map', { configurable: true, writable: true, value: null });
+    }
+    // The pane helper bailed (map was null on its read) → no pane created,
+    // and L.marker was still invoked with a null icon.
+    expect(realMap.createPane).not.toHaveBeenCalled();
+    expect(L.marker).toHaveBeenCalledTimes(1);
+    expect(L.marker.mock.calls[0][1].icon).toBeNull();
+  });
 });
 
 describe('removeUserLocationMarker', () => {
@@ -156,6 +183,23 @@ describe('__gpsDebug — GPS diagnostic pill', () => {
     const el = document.getElementById('gps-debug');
     expect(el).not.toBeNull();
     expect(el.textContent).toContain('gps-debug on');
+  });
+
+  it('appends the pill to documentElement when document.body is unavailable', () => {
+    // _gpsDebugEnsureEl falls back to document.documentElement when body is
+    // falsy (very early boot / detached body). Force the else arm.
+    const spy = vi.spyOn(document, 'body', 'get').mockReturnValue(null);
+    try {
+      window.__gpsDebug.show();
+      const el = document.documentElement.querySelector('#gps-debug');
+      expect(el).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+      // Clean the pill off documentElement so later tests start fresh.
+      const stray = document.getElementById('gps-debug');
+      if (stray && stray.parentNode) stray.parentNode.removeChild(stray);
+      window.__gpsDebug.hide();
+    }
   });
 
   it('hide() removes the pill', () => {

@@ -53,19 +53,20 @@ function makeMapMock() {
 }
 
 describe('startLocationWatch / stopLocationWatch', () => {
-  let watchCb, watchOpts, clearWatch;
+  let watchCb, watchErr, watchOpts, clearWatch;
 
   beforeEach(() => {
     state._geoWatchId = null;
     state._userLocationMarker = null;
     state.map = makeMapMock();
     settings.current = { showLocation: true };
-    watchCb = watchOpts = undefined;
+    watchCb = watchErr = watchOpts = undefined;
     clearWatch = vi.fn();
     globalThis.navigator = {
       geolocation: {
         watchPosition: vi.fn((cb, err, opts) => {
           watchCb = cb;
+          watchErr = err;
           watchOpts = opts;
           return 42;
         }),
@@ -97,6 +98,14 @@ describe('startLocationWatch / stopLocationWatch', () => {
     expect(state._userLocationMarker.setLatLng).toHaveBeenCalledWith([49.35, 8.67]);
   });
 
+  it('swallows a watch error callback without side effects', () => {
+    startLocationWatch();
+    expect(() => watchErr({ code: 3 })).not.toThrow();
+    // The error handler is a silent no-op: no marker created, watch id kept.
+    expect(L.marker).not.toHaveBeenCalled();
+    expect(state._geoWatchId).toBe(42);
+  });
+
   it('does not register a second watch if one is already active', () => {
     startLocationWatch();
     startLocationWatch();
@@ -107,6 +116,25 @@ describe('startLocationWatch / stopLocationWatch', () => {
     settings.current.showLocation = false;
     startLocationWatch();
     expect(navigator.geolocation.watchPosition).not.toHaveBeenCalled();
+    expect(state._geoWatchId).toBeNull();
+  });
+
+  it('no-ops when geolocation is entirely unavailable', () => {
+    globalThis.navigator = {};
+    startLocationWatch();
+    expect(state._geoWatchId).toBeNull();
+  });
+
+  it('no-ops when watchPosition is not supported (geolocation present, method absent)', () => {
+    globalThis.navigator = { geolocation: { getCurrentPosition: vi.fn() } };
+    startLocationWatch();
+    expect(state._geoWatchId).toBeNull();
+  });
+
+  it('stopLocationWatch resets the id even when clearWatch is unavailable', () => {
+    state._geoWatchId = 5;
+    globalThis.navigator = { geolocation: {} }; // no clearWatch
+    stopLocationWatch();
     expect(state._geoWatchId).toBeNull();
   });
 

@@ -112,6 +112,14 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
   });
 
+  it('branch 2b: isCncl but ui._showJourneyCancelled absent → returns without ending', () => {
+    const saved = uiMock._showJourneyCancelled;
+    delete uiMock._showJourneyCancelled;
+    _applyJourneyPayload('J3b', { journey: { pos: {}, stopL: [], isCncl: true } });
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+    uiMock._showJourneyCancelled = saved;
+  });
+
   it('branch 3: no pos + last stop still in future → set _notStartedJid', () => {
     const payload = {
       journey: { pos: {}, stopL: [{ aTimeS: '140000' }] },
@@ -177,6 +185,21 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     expect(state._notStartedJid).toBe('JX');
   });
 
+  it('a different not-started jid is replaced (the jid-mismatch branch)', () => {
+    state._notStartedJid = 'OLD';
+    state._notStartedSince = 111;
+    _applyJourneyPayload('NEW', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    expect(state._notStartedJid).toBe('NEW');
+  });
+
+  it('re-marking the SAME not-started jid keeps the original _notStartedSince', () => {
+    _applyJourneyPayload('SAME', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    const since = state._notStartedSince;
+    expect(since).toBeGreaterThan(0);
+    _applyJourneyPayload('SAME', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
+    expect(state._notStartedSince).toBe(since); // not reset on the repeat
+  });
+
   it('a never-live journey uses the schedule rule: last stop > 5 min past → ended', () => {
     // 11:40, now 12:00 → more than 5 min past, never seen live.
     _applyJourneyPayload('JY', { journey: { pos: {}, stopL: [{ aTimeS: '114000' }] } });
@@ -193,6 +216,33 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     });
     expect(uiMock._showJourneyCancelled).toHaveBeenCalledOnce();
     expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+  });
+
+  it('no-pos with an unparseable last-stop time falls back to lastMin=0', () => {
+    // parseHafasTimeToMin returns null for a too-short time → the `lastMin ===
+    // null` guard resets it to 0. lastTime ('99') is still truthy, and for a
+    // never-live journey 0 + 5 <= now(720) → ended.
+    _applyJourneyPayload('JBAD', { journey: { pos: {}, stopL: [{ aTimeS: '99' }] } });
+    expect(uiMock.showJourneyEnded).toHaveBeenCalledOnce();
+  });
+
+  it('midnight-wrap: pre-midnight now, past-midnight last stop → treated as future (not-started)', () => {
+    // now 23:30 (1410 > 1080), last stop 00:30 (30 < 360) → +1440 makes it
+    // tomorrow, so it is still in the future → not-started, not ended.
+    state.serverTimeMin = 1410;
+    state.serverTimeStamp = Date.now();
+    _applyJourneyPayload('JW1', { journey: { pos: {}, stopL: [{ aTimeS: '003000' }] } });
+    expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
+    expect(state._notStartedJid).toBe('JW1');
+  });
+
+  it('midnight-wrap: post-midnight now, pre-midnight last stop → treated as past (ended)', () => {
+    // now 00:30 (30 < 360), last stop 23:30 (1410 > 1080) → -1440 makes it
+    // yesterday, so > 5 min past for a never-live journey → ended.
+    state.serverTimeMin = 30;
+    state.serverTimeStamp = Date.now();
+    _applyJourneyPayload('JW2', { journey: { pos: {}, stopL: [{ aTimeS: '233000' }] } });
+    expect(uiMock.showJourneyEnded).toHaveBeenCalledOnce();
   });
 });
 
@@ -425,6 +475,30 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     expect(state._followPanning).toBe(false);
   });
 
+  it('the setTimeout fallback clears _followPanning if moveend never fires', () => {
+    vi.useFakeTimers();
+    try {
+      dist = 500;
+      _followPanTo(49.5, 8.6);
+      expect(state._followPanning).toBe(true);
+      // moveend never fires; the 2500ms safety timeout must clear the flag.
+      vi.advanceTimersByTime(2500);
+      expect(state._followPanning).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the follow-log ring buffer is bounded at 120 entries (oldest shifted out)', () => {
+    dist = 500;
+    state._followLog = Array.from({ length: 120 }, (_, i) => ({ t: i, action: 'seed' }));
+    _followPanTo(49.5, 8.6);
+    expect(state._followLog.length).toBe(120); // capped, not 121
+    expect(state._followLog[state._followLog.length - 1].action).toBe('panTo');
+    expect(state._followLog[0].action).toBe('seed'); // still seeded entries, but shifted
+    expect(state._followLog[0].t).toBe(1); // entry t=0 was shifted out
+  });
+
   it('snaps with setView (no animation) for a large distance', () => {
     dist = 5000;
     _followPanTo(49.9, 8.6);
@@ -458,6 +532,21 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     dist = 500;
     _followPanTo(null, 8.6);
     expect(panTo).not.toHaveBeenCalled();
+  });
+
+  it('no-op when the map is not ready', () => {
+    state.map = null;
+    _followPanTo(49.5, 8.6);
+    expect(panTo).not.toHaveBeenCalled();
+    expect(setView).not.toHaveBeenCalled();
+  });
+
+  it('_flog lazily initialises state._followLog when it is null', () => {
+    dist = 500;
+    state._followLog = null;
+    _followPanTo(49.5, 8.6);
+    expect(Array.isArray(state._followLog)).toBe(true);
+    expect(state._followLog[state._followLog.length - 1].action).toBe('panTo');
   });
 
   it('_applyJourneyPayload pans to the journey position when following and the bus is OFF-ring (not in vehicles)', () => {
@@ -571,6 +660,14 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
     const p = _viewportPayload();
     expect(p.swLat).toBeCloseTo(49.341, 4);
     expect(p.neLat).toBeCloseTo(49.343, 4);
+  });
+
+  it('defaults posMode to CALC when settings.current is null', () => {
+    const saved = settings.current;
+    settings.current = null;
+    const p = _viewportPayload();
+    expect(p.posMode).toBe('CALC');
+    settings.current = saved;
   });
 });
 
@@ -774,6 +871,20 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.vehiclesCount).toBe(0);
   });
 
+  it('busradarDump vehicles returns [{error}] when the forEach throws', () => {
+    // A Map-like whose forEach throws → the inner try/catch returns [{error}].
+    state.vehicles = {
+      size: 1,
+      forEach() {
+        throw new Error('iter boom');
+      },
+    };
+    const d = JSON.parse(busradarDump());
+    expect(Array.isArray(d.vehicles)).toBe(true);
+    expect(typeof d.vehicles[0].error).toBe('string');
+    state.vehicles = new Map();
+  });
+
   it('busradarDump journey block returns {error} instead of throwing on bad data', () => {
     state.selectedJourneyData = {
       journey: {
@@ -804,6 +915,80 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     };
     const d = JSON.parse(busradarDump());
     expect(d.map.bounds).toBeNull();
+  });
+
+  it('busradarDump exercises the falsy sides of the field fallbacks', () => {
+    // mode null (settings.current falsy), hadPosJid truthy, a vehicle with no
+    // `.data`, a journey stop whose locX points past locL (no name), a DOM
+    // stop-item missing its sub-elements, a selectedStop with no name, and a
+    // null _followLog — every `x || y` / `x ? a : b` falsy branch in the dump.
+    const savedSettings = settings.current;
+    settings.current = null;
+    state._selectedHadPosJid = 'HADPOS';
+    state.selectedJid = 'JND';
+    state.vehicles = new Map();
+    state.vehicles.set('JND', { marker: { getLatLng: () => ({ lat: 1, lng: 2 }) } }); // no .data
+    state.selectedJourneyData = {
+      journey: { pos: null, stopL: [{ locX: 99 }] }, // locL[99] undefined → loc={}
+      common: { locL: [] },
+    };
+    state.selectedStop = { lid: 'A=1@L=1@' }; // no name/extId
+    state._followLog = null;
+
+    const list = document.createElement('ol');
+    list.id = 'stop-list';
+    const li = document.createElement('li');
+    li.className = 'stop-item'; // deliberately no .stop-name/.stop-times/.stop-dot children
+    list.appendChild(li);
+    document.body.appendChild(list);
+
+    const d = JSON.parse(busradarDump());
+    expect(d.mode).toBeNull();
+    expect(d.hadPosJid).toBe('HADPOS');
+    expect(d.journey.dataStops[0].name).toBeNull();
+    expect(d.journey.domStops[0].name).toBeNull();
+    expect(d.journey.domStops[0].times).toBeNull();
+    expect(d.journey.domStops[0].passed).toBeNull();
+    expect(d.stop.name).toBeNull();
+    expect(Array.isArray(d.followLog)).toBe(true);
+
+    document.body.removeChild(list);
+    settings.current = savedSettings;
+    state.selectedJourneyData = null;
+    state.selectedStop = null;
+    state._selectedHadPosJid = null;
+  });
+
+  it('busradarDump env fallbacks: languages absent and serviceWorker absent', () => {
+    const savedLang = Object.getOwnPropertyDescriptor(navigator, 'languages');
+    const savedSw = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    try {
+      Object.defineProperty(navigator, 'languages', { value: undefined, configurable: true });
+      Object.defineProperty(navigator, 'serviceWorker', { value: undefined, configurable: true });
+      const d = JSON.parse(busradarDump());
+      expect(d.env.languages).toBe(''); // (undefined || []).join(',')
+      expect(d.env.swController).toBe(false); // serviceWorker falsy short-circuit
+    } finally {
+      if (savedLang) Object.defineProperty(navigator, 'languages', savedLang);
+      else delete navigator.languages;
+      if (savedSw) Object.defineProperty(navigator, 'serviceWorker', savedSw);
+      else delete navigator.serviceWorker;
+    }
+  });
+
+  it('busradarDump env swController true when a controller is present', () => {
+    const savedSw = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    try {
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: { controller: {} },
+        configurable: true,
+      });
+      const d = JSON.parse(busradarDump());
+      expect(d.env.swController).toBe(true);
+    } finally {
+      if (savedSw) Object.defineProperty(navigator, 'serviceWorker', savedSw);
+      else delete navigator.serviceWorker;
+    }
   });
 });
 
@@ -967,5 +1152,22 @@ describe('_copyDump — clipboard copy with data-recovery fallback', () => {
     window.dispatchEvent(ev);
     expect(prevent).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('a thrown clipboard access is caught → report(false) echoes the full dump', () => {
+    // navigator.clipboard getter throws (hardened browser) → outer try/catch
+    // falls back to report(false), which logs the notice and the JSON.
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      get() {
+        throw new Error('clipboard blocked');
+      },
+    });
+    _copyDump();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('clipboard unavailable'));
+    const dumpCall = logSpy.mock.calls.find(
+      (c) => typeof c[0] === 'string' && c[0].indexOf('"mode": "CALC"') !== -1,
+    );
+    expect(dumpCall).toBeTruthy();
   });
 });

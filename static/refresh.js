@@ -400,6 +400,9 @@ function _forceReconnect(reason) {
   const now = Date.now();
   if (now - _lastForceReconnectAt < FORCE_RECONNECT_COOLDOWN_MS) return;
   _lastForceReconnectAt = now;
+  // Every caller (1s ticker, visibilitychange) guards on `_es` being truthy
+  // before reaching here, so the else is defensive-only and cannot be hit.
+  /* v8 ignore next 5 -- unreachable: all callers guarantee _es is set */
   if (_es) {
     try {
       _es.close();
@@ -932,6 +935,9 @@ export function busradarDownloadDump() {
   }
 }
 
+// The module registers window listeners at load-time above, so it cannot run
+// without a window; this typeof-guard's else is dead SSR-defensive code.
+/* v8 ignore next -- unreachable: module already used window at load */
 if (typeof window !== 'undefined') {
   window.busradarDump = busradarDump;
   window.busradarCopyDump = _copyDump;
