@@ -43,7 +43,6 @@ export var state = {
   // no watch is active. Replaces the old per-tick getCurrentPosition poll.
   _geoWatchId: null,
   _needsImmediateRefresh: false,
-  _stationRefreshSeq: 0,
   _pendingRestore: null,
   _restoreInProgress: false,
   _errorUntil: 0,

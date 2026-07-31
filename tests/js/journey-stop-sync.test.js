@@ -140,6 +140,26 @@ describe('ui.updateJourneyStopDelays — rebuild on structural change, patch oth
       vi.useRealTimers();
     }
   });
+
+  it('rebuilds when a stop is swapped (same length + times, different locX)', () => {
+    buildDom(2);
+    state._renderedStopSig = ui._stopSig([
+      { locX: 0, dTimeS: '100000' },
+      { locX: 1, dTimeS: '101000' },
+    ]);
+    const swapped = {
+      journey: {
+        stopL: [
+          { locX: 0, dTimeS: '100000' },
+          { locX: 2, dTimeS: '101000' }, // reroute: different stop, same time
+        ],
+      },
+      common: { locL: [{ name: 'X' }] },
+    };
+    const spy = vi.spyOn(ui, 'renderJourneyStops').mockImplementation(() => {});
+    ui.updateJourneyStopDelays(swapped);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ui._nowMin — unified server-now in fractional minutes-of-day', () => {

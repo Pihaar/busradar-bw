@@ -42,18 +42,28 @@ function panelFixture() {
   ui.detailDelay = document.createElement('div');
   ui.stopList = document.createElement('ol');
   ui.departureList = document.createElement('div');
+  ui.departureList.id = 'departure-list';
+  const arr = document.createElement('div');
+  arr.id = 'arrival-list';
   const ja = document.createElement('div');
   ja.id = 'journey-actions';
-  document.body.appendChild(ja);
-  document.body.appendChild(ui.departureList);
+  document.body.append(ja, ui.departureList, arr, ui.stopList);
   state.selectedJid = null;
   state.selectedStop = null;
   state._selectedStopMarker = null;
+  state._endedJid = null;
+  state._notStartedJid = null;
+  state._selectedHadPosJid = null;
   state.panelState = 'half';
+  state.serverTimeMin = 600;
+  state.serverTimeStamp = null;
+  state.map = { setView: vi.fn(), getCenter: () => ({ lat: 49.3, lng: 8.6 }), getZoom: () => 15 };
   vi.spyOn(ui, '_disableFollow').mockImplementation(() => {});
   vi.spyOn(ui, 'setTabMode').mockImplementation(() => {});
   vi.spyOn(ui, 'switchTab').mockImplementation(() => {});
   vi.spyOn(ui, 'clearRoute').mockImplementation(() => {});
+  vi.spyOn(ui, 'renderJourneyStops').mockImplementation(() => {});
+  vi.spyOn(ui, 'drawRoute').mockImplementation(() => {});
 }
 
 describe('ui.focusJourneyById — subscribes the journey SSE stream', () => {
@@ -76,6 +86,37 @@ describe('ui.focusJourneyById — subscribes the journey SSE stream', () => {
     ui.focusJourneyById(JID, {}, true);
     expect(api.getJourney).toHaveBeenCalledWith(JID, { userInitiated: true });
     expect(api.selectStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets stale selection flags up front (before the SSE push can arrive)', () => {
+    // A previous selection left these set; without an up-front reset an early
+    // SSE push would drive _applyJourneyPayload against stale flags.
+    state._endedJid = 'OLD';
+    state._notStartedJid = 'OLD';
+    state._selectedHadPosJid = 'OLD';
+    ui.focusJourneyById(JID, {}, true);
+    expect(state._endedJid).toBeNull();
+    expect(state._notStartedJid).toBeNull();
+    expect(state._selectedHadPosJid).toBeNull();
+  });
+
+  it('records the journey as seen-live (hadPosJid=jid) when getJourney returns a position', async () => {
+    api.getJourney.mockReturnValueOnce(
+      Promise.resolve({
+        journey: {
+          pos: { x: 8660000, y: 49340000 },
+          stopL: [{ locX: 0, dTimeS: '134500' }],
+          dirTxt: 'Ziel',
+        },
+        common: { prodL: [{ nameS: '751', name: 'Bus 751' }], locL: [{ name: 'A' }] },
+      }),
+    );
+    ui.focusJourneyById(JID, {}, true);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Live at selection → must be flagged seen-live so a later pos-loss is
+    // detected as "ended", not "not started".
+    expect(state._selectedHadPosJid).toBe(JID);
   });
 });
 
@@ -124,6 +165,46 @@ describe('ui.loadDepartures — subscribes on fetch error so SSE can recover', (
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
 
     await ui.loadDepartures({ lid: LID, name: 'Sandhausen' }, '6003411', 60, false);
+
+    expect(api.selectStream).not.toHaveBeenCalled();
+  });
+
+  it('does NOT subscribe from .catch when the active board is ARR (wrong tab)', async () => {
+    const LID = 'A=1@L=6003411@';
+    state.selectedStop = { lid: LID };
+    state._activeStationBoardType = 'ARR'; // user switched to arrivals
+    api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('x')));
+
+    await ui.loadDepartures({ lid: LID, name: 'S' }, '6003411', 60, false);
+
+    expect(api.selectStream).not.toHaveBeenCalled();
+  });
+});
+
+describe('ui.loadArrivals — subscribes on fetch error (ARR mirror)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    panelFixture();
+  });
+
+  it('subscribes stationboard ARR when the initial getStationBoard rejects and ARR is active', async () => {
+    const LID = 'A=1@L=6003411@';
+    state.selectedStop = { lid: LID };
+    state._activeStationBoardType = 'ARR';
+    api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
+
+    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411', 60, false);
+
+    expect(api.selectStream).toHaveBeenCalledWith('stationboard', LID, 'ARR', 60);
+  });
+
+  it('does NOT subscribe from .catch when the active board is DEP (wrong tab)', async () => {
+    const LID = 'A=1@L=6003411@';
+    state.selectedStop = { lid: LID };
+    state._activeStationBoardType = 'DEP';
+    api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('x')));
+
+    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411', 60, false);
 
     expect(api.selectStream).not.toHaveBeenCalled();
   });

@@ -1256,7 +1256,6 @@ export var ui = {
     state.selectedStop = loc;
     state._autoExpandingDep = false;
     state._autoExpandingArr = false;
-    state._stationRefreshSeq++;
     if (state._selectedStopMarker) {
       state._selectedStopMarker.remove();
       state._selectedStopMarker = null;
@@ -2158,6 +2157,16 @@ export var ui = {
     if (state._cancelMapClick) state._cancelMapClick();
     state._navigating = true;
     ui._disableFollow();
+    // Reset the selection-tracking flags up front (as selectJourney does).
+    // Since we now subscribe SSE synchronously below, a journey push for this
+    // jid can arrive before the one-shot getJourney resolves; without this
+    // reset _applyJourneyPayload would run against stale flags from the
+    // previous selection (e.g. a leftover _endedJid suppressing the marker).
+    state._notStartedJid = null;
+    state._notStartedSince = 0;
+    state._notStartedLastPoll = 0;
+    state._selectedHadPosJid = null;
+    state._endedJid = null;
     state.selectedJid = jid;
     state.selectedStop = null;
     if (state._selectedStopMarker) {
@@ -2289,7 +2298,12 @@ export var ui = {
         state._notStartedJid = null;
         state._notStartedSince = 0;
         state._notStartedLastPoll = 0;
-        state._selectedHadPosJid = null;
+        // The journey has a live position at this moment, so record it as
+        // seen-live (mirrors _applyJourneyPayload's has-pos branch). Leaving
+        // this null let a bus that ends before the first pos-bearing SSE tick
+        // fall into the never-live branch and show "not started" instead of
+        // "Fahrt beendet" — and off-map it never self-heals.
+        state._selectedHadPosJid = jid;
         state._endedJid = null;
         state.selectedJourneyData = data;
 

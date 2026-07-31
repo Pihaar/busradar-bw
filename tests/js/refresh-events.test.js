@@ -766,6 +766,45 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     document.body.removeChild(list);
     state.selectedJourneyData = null;
   });
+
+  it('busradarDump vehicles is [] when state.vehicles is null (guard branch)', () => {
+    state.vehicles = null;
+    const d = JSON.parse(busradarDump());
+    expect(d.vehicles).toEqual([]);
+    expect(d.vehiclesCount).toBe(0);
+  });
+
+  it('busradarDump journey block returns {error} instead of throwing on bad data', () => {
+    state.selectedJourneyData = {
+      journey: {
+        get stopL() {
+          throw new Error('boom-journey');
+        },
+      },
+    };
+    const d = JSON.parse(busradarDump());
+    expect(typeof d.journey.error).toBe('string');
+    state.selectedJourneyData = null;
+  });
+
+  it('busradarDump stop block returns {error} instead of throwing on bad data', () => {
+    state.selectedStop = {
+      get lid() {
+        throw new Error('boom-stop');
+      },
+    };
+    const d = JSON.parse(busradarDump());
+    expect(typeof d.stop.error).toBe('string');
+    state.selectedStop = null;
+  });
+
+  it('busradarDump map.bounds is null when getBounds throws (guard branch)', () => {
+    state.map.getBounds = () => {
+      throw new Error('not ready');
+    };
+    const d = JSON.parse(busradarDump());
+    expect(d.map.bounds).toBeNull();
+  });
 });
 
 describe('busradarDownloadDump — download the dump as a .json file', () => {
