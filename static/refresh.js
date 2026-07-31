@@ -1,12 +1,35 @@
 import { CONFIG } from './config.js';
-import { state, settings, t, getDelayClass, getDelayText, parseHafasTimeToMin, debugLog } from './state.js';
+import {
+  state,
+  settings,
+  t,
+  getDelayClass,
+  getDelayText,
+  parseHafasTimeToMin,
+  debugLog,
+} from './state.js';
 import { api } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { ui } from './ui.js';
-import { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce, formatStatusText } from './status.js';
+import {
+  updateStatus,
+  getServerTimeStr,
+  showError,
+  showPersistentError,
+  clearPersistentError,
+  announce,
+  formatStatusText,
+} from './status.js';
 
 // Re-export for init.js and other consumers
-export { updateStatus, getServerTimeStr, showError, showPersistentError, clearPersistentError, announce };
+export {
+  updateStatus,
+  getServerTimeStr,
+  showError,
+  showPersistentError,
+  clearPersistentError,
+  announce,
+};
 
 // === SSE event-stream driver ===
 // Polling is gone. We hold one EventSource open for the lifetime of the tab,
@@ -54,7 +77,7 @@ function _setSseState(s) {
   if (s === 'reconnecting' || s === 'failed-terminal') {
     state.consecutiveErrors = (state.consecutiveErrors || 0) + 1;
     showPersistentError(
-      s === 'failed-terminal' ? t('connection_lost_terminal') : t('connection_lost')
+      s === 'failed-terminal' ? t('connection_lost_terminal') : t('connection_lost'),
     );
   } else if (s === 'open') {
     clearPersistentError();
@@ -73,7 +96,12 @@ function _maybeUpdateAppVersion(v) {
 
 function _onTerminal() {
   _setSseState('failed-terminal');
-  if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+  if (_es) {
+    try {
+      _es.close();
+    } catch (e) {}
+    _es = null;
+  }
   state._lastConnectedClients = null;
   if (ui && typeof ui.showTerminalBanner === 'function') {
     ui.showTerminalBanner();
@@ -91,10 +119,13 @@ function _scheduleReconnect() {
   _reconnectAttempt++;
   const jitter = Math.floor((Math.random() - 0.5) * base * 0.4);
   const delay = Math.max(0, base + jitter);
-  if (window.__busradarVerbose) debugLog('sse reconnect scheduled', { attempt: _reconnectAttempt, delayMs: delay });
+  if (window.__busradarVerbose)
+    debugLog('sse reconnect scheduled', { attempt: _reconnectAttempt, delayMs: delay });
   _setSseState('reconnecting');
   clearTimeout(_reconnectTimer);
-  _reconnectTimer = setTimeout(function () { startStream(); }, delay);
+  _reconnectTimer = setTimeout(function () {
+    startStream();
+  }, delay);
 }
 
 // Re-POST the currently-selected journey or stop so detail (journey /
@@ -113,7 +144,12 @@ export function _resendActiveSelection() {
 }
 
 export function startStream() {
-  if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+  if (_es) {
+    try {
+      _es.close();
+    } catch (e) {}
+    _es = null;
+  }
   _setSseState('connecting');
   try {
     _es = new EventSource(CONFIG.apiBase + '/stream/');
@@ -149,7 +185,9 @@ export function startStream() {
         // Server speaks a different SSE protocol than this tab knows.
         // Reloading is the only safe recovery — the event shapes may have
         // shifted. Skip the reconnect loop and go straight to terminal.
-        try { _es.close(); } catch (e) {}
+        try {
+          _es.close();
+        } catch (e) {}
         _es = null;
         state._lastConnectedClients = null;
         if (ui && typeof ui.showVersionUpdateBanner === 'function') {
@@ -183,7 +221,11 @@ export function startStream() {
 
   _es.addEventListener('vehicles', function (ev) {
     let data;
-    try { data = JSON.parse(ev.data); } catch (e) { return; }
+    try {
+      data = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
     if (window.__busradarVerbose) debugLog('sse vehicles', { count: (data.vehicles || []).length });
     _handleVehiclesPayload(data);
   });
@@ -194,12 +236,17 @@ export function startStream() {
     // the panel — the server filters on its end too, but a late-delivered
     // payload still has to be filtered client-side.
     let data;
-    try { data = JSON.parse(ev.data); } catch (e) { return; }
+    try {
+      data = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
     if (!data || !data.jid) return;
     if (state.selectedJid !== data.jid) return;
     const journeyData = data.journey;
     if (!journeyData) return;
-    if (window.__busradarVerbose) debugLog('sse journey', { jid: data.jid, hasPos: !!(journeyData.pos) });
+    if (window.__busradarVerbose)
+      debugLog('sse journey', { jid: data.jid, hasPos: !!journeyData.pos });
     _applyJourneyPayload(data.jid, journeyData);
   });
 
@@ -208,12 +255,22 @@ export function startStream() {
     // (DEP or ARR) follows the user's current tab; the payload includes a
     // `boardType` field so the client renders the right list.
     let data;
-    try { data = JSON.parse(ev.data); } catch (e) { return; }
+    try {
+      data = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
     if (!data || !data.lid) return;
     if (!state.selectedStop || state.selectedStop.lid !== data.lid) return;
     try {
-      ui.applyPushedStationboard(state.selectedStop, data.stationboard || {}, data.boardType || 'DEP');
-    } catch (e) { console.warn('stationboard SSE handler:', e); }
+      ui.applyPushedStationboard(
+        state.selectedStop,
+        data.stationboard || {},
+        data.boardType || 'DEP',
+      );
+    } catch (e) {
+      console.warn('stationboard SSE handler:', e);
+    }
   });
 
   _es.addEventListener('error', function (ev) {
@@ -279,7 +336,12 @@ function _forceReconnect(reason) {
   const now = Date.now();
   if (now - _lastForceReconnectAt < FORCE_RECONNECT_COOLDOWN_MS) return;
   _lastForceReconnectAt = now;
-  if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+  if (_es) {
+    try {
+      _es.close();
+    } catch (e) {}
+    _es = null;
+  }
   _reconnectAttempt = 0;
   clearTimeout(_reconnectTimer);
   startStream();
@@ -302,7 +364,7 @@ function _forceReconnect(reason) {
 const STALE_THRESHOLD_CALC_MS = 45000;
 const STALE_THRESHOLD_REPORT_ONLY_MS = 75000;
 function _staleThresholdMs() {
-  return (settings.current && settings.current.posMode === 'REPORT_ONLY')
+  return settings.current && settings.current.posMode === 'REPORT_ONLY'
     ? STALE_THRESHOLD_REPORT_ONLY_MS
     : STALE_THRESHOLD_CALC_MS;
 }
@@ -337,9 +399,18 @@ setInterval(function () {
   if (state._currentStopL && state.selectedJid) {
     ui.updateStopProgress(state._currentStopL);
   }
-  if (state.serverTimeStamp && state._lastBusCount !== undefined && !(state._errorUntil && Date.now() < state._errorUntil)) {
+  if (
+    state.serverTimeStamp &&
+    state._lastBusCount !== undefined &&
+    !(state._errorUntil && Date.now() < state._errorUntil)
+  ) {
     const textEl = document.getElementById('status-text');
-    if (textEl) textEl.textContent = formatStatusText(state._lastBusCount, state._lastConnectedClients, getServerTimeStr());
+    if (textEl)
+      textEl.textContent = formatStatusText(
+        state._lastBusCount,
+        state._lastConnectedClients,
+        getServerTimeStr(),
+      );
   }
   // Stale-stream guard. lastUpdate is bumped by every vehicles event;
   // when it ages past STALE_THRESHOLD_MS we transition the dot to
@@ -350,7 +421,11 @@ setInterval(function () {
   var offlineByNavigator = typeof navigator !== 'undefined' && navigator.onLine === false;
   if (staleByTime || offlineByNavigator) {
     var dot = document.querySelector('.status-dot');
-    if (dot && !dot.classList.contains('status-dot--offline') && !dot.classList.contains('status-dot--error')) {
+    if (
+      dot &&
+      !dot.classList.contains('status-dot--offline') &&
+      !dot.classList.contains('status-dot--error')
+    ) {
       showPersistentError(t('connection_stale'));
     }
   }
@@ -390,7 +465,12 @@ export function notifyViewportChange() {
 // silently fail and no vehicles events arrive.
 function _recoverIfBrokenSession(resp) {
   if (resp.status === 401 || resp.status === 409) {
-    if (_es) { try { _es.close(); } catch (e) {} _es = null; }
+    if (_es) {
+      try {
+        _es.close();
+      } catch (e) {}
+      _es = null;
+    }
     _reconnectAttempt = 0;
     clearTimeout(_reconnectTimer);
     startStream();
@@ -408,7 +488,10 @@ export function _viewportPayload() {
   const b = state.map.getBounds();
   const sw = b.getSouthWest();
   const ne = b.getNorthEast();
-  let swLat = sw.lat, swLon = sw.lng, neLat = ne.lat, neLon = ne.lng;
+  let swLat = sw.lat,
+    swLon = sw.lng,
+    neLat = ne.lat,
+    neLon = ne.lng;
 
   // When following a bus, keep the FETCH ring large enough that the bus stays
   // inside it across zoom levels. The server ring ≈ max(span)/2 shrinks with
@@ -422,7 +505,7 @@ export function _viewportPayload() {
   if (state.followBus && state.selectedJid) {
     const c = state.map.getCenter();
     const dLat = FOLLOW_MIN_RING_M / 111000;
-    const dLon = FOLLOW_MIN_RING_M / (111000 * Math.cos(c.lat * Math.PI / 180));
+    const dLon = FOLLOW_MIN_RING_M / (111000 * Math.cos((c.lat * Math.PI) / 180));
     swLat = Math.max(-90, Math.min(swLat, c.lat - dLat));
     neLat = Math.min(90, Math.max(neLat, c.lat + dLat));
     swLon = Math.max(-180, Math.min(swLon, c.lng - dLon));
@@ -434,7 +517,7 @@ export function _viewportPayload() {
     swLon: swLon,
     neLat: neLat,
     neLon: neLon,
-    posMode: settings.current && settings.current.posMode || 'CALC',
+    posMode: (settings.current && settings.current.posMode) || 'CALC',
   };
 }
 
@@ -447,14 +530,17 @@ function _sendCurrentViewport() {
   }
   const payload = _viewportPayload();
   if (window.__busradarVerbose) debugLog('viewport POST', payload);
-  window.fetch(CONFIG.apiBase + '/stream/viewport', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    credentials: 'same-origin',
-  }).then(function (resp) {
-    _recoverIfBrokenSession(resp);
-  }).catch(function () {});
+  window
+    .fetch(CONFIG.apiBase + '/stream/viewport', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+    })
+    .then(function (resp) {
+      _recoverIfBrokenSession(resp);
+    })
+    .catch(function () {});
 }
 
 // Public alias kept so existing callers (init.js URL-restore flow) still work.
@@ -483,7 +569,10 @@ function _flog(action, dist, reason) {
 // the target is within 5 m of the current center. Exported for tests.
 export function _followPanTo(lat, lon) {
   if (!state.map) return;
-  if (lat == null || lon == null) { _flog('skip', null, 'nullpos'); return; }
+  if (lat == null || lon == null) {
+    _flog('skip', null, 'nullpos');
+    return;
+  }
   const target = L.latLng(lat, lon);
   const followDist = Math.round(state.map.getCenter().distanceTo(target));
   // Distance is computed before this guard (unlike the original early-return)
@@ -493,7 +582,10 @@ export function _followPanTo(lat, lon) {
     _flog('skip', followDist, state._followPanning ? 'panning' : 'navigating');
     return;
   }
-  if (followDist <= 5) { _flog('skip', followDist, 'near'); return; }
+  if (followDist <= 5) {
+    _flog('skip', followDist, 'near');
+    return;
+  }
   state._followPanning = true;
   if (followDist > 3000) {
     // Big jump (bus already far off-screen): snap, don't animate across the map.
@@ -501,11 +593,18 @@ export function _followPanTo(lat, lon) {
     state._followPanning = false;
     _flog('setView', followDist);
   } else {
-    const panDur = 2;  // 2s default pan duration
+    const panDur = 2; // 2s default pan duration
     state.map.panTo(target, { duration: panDur });
-    state.map.once('moveend', function () { state._followPanning = false; });
+    state.map.once('moveend', function () {
+      state._followPanning = false;
+    });
     clearTimeout(state._followPanTimeout);
-    state._followPanTimeout = setTimeout(function () { state._followPanning = false; }, (panDur * 1000) + 500);
+    state._followPanTimeout = setTimeout(
+      function () {
+        state._followPanning = false;
+      },
+      panDur * 1000 + 500,
+    );
     _flog('panTo', followDist);
   }
 }
@@ -524,8 +623,9 @@ export function busradarDump() {
       const ml = sel.marker.getLatLng();
       const c = m.getCenter();
       markerInfo = {
-        markerLat: +ml.lat.toFixed(6), markerLon: +ml.lng.toFixed(6),
-        offsetMeters: Math.round(c.distanceTo(ml)),  // marker vs map center = divergence
+        markerLat: +ml.lat.toFixed(6),
+        markerLon: +ml.lng.toFixed(6),
+        offsetMeters: Math.round(c.distanceTo(ml)), // marker vs map center = divergence
       };
     } catch (e) {}
   }
@@ -534,10 +634,20 @@ export function busradarDump() {
     url: location.href,
     appVersion: state._appVersion || null,
     mode: (settings.current && settings.current.posMode) || null,
-    follow: state.followBus, followPanning: state._followPanning, navigating: state._navigating,
-    selectedJid: state.selectedJid || null, endedJid: state._endedJid || null,
-    notStartedJid: state._notStartedJid || null, hadPosJid: state._selectedHadPosJid || null,
-    map: m ? { centerLat: +m.getCenter().lat.toFixed(6), centerLon: +m.getCenter().lng.toFixed(6), zoom: m.getZoom() } : null,
+    follow: state.followBus,
+    followPanning: state._followPanning,
+    navigating: state._navigating,
+    selectedJid: state.selectedJid || null,
+    endedJid: state._endedJid || null,
+    notStartedJid: state._notStartedJid || null,
+    hadPosJid: state._selectedHadPosJid || null,
+    map: m
+      ? {
+          centerLat: +m.getCenter().lat.toFixed(6),
+          centerLon: +m.getCenter().lng.toFixed(6),
+          zoom: m.getZoom(),
+        }
+      : null,
     selectedMarker: markerInfo,
     vehiclesCount: state.vehicles ? state.vehicles.size : 0,
     followLog: (state._followLog || []).slice(-120),
@@ -551,14 +661,31 @@ export function busradarDump() {
 export function _copyDump() {
   const text = busradarDump();
   const report = function (ok) {
-    console.log('[dump] ' + (ok ? 'copied to clipboard' : 'clipboard unavailable — full JSON below') + ' (' + text.length + ' chars)');
+    console.log(
+      '[dump] ' +
+        (ok ? 'copied to clipboard' : 'clipboard unavailable — full JSON below') +
+        ' (' +
+        text.length +
+        ' chars)',
+    );
     if (!ok) console.log(text);
   };
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { report(true); }, function () { report(false); });
-    } else { report(false); }
-  } catch (e) { report(false); }
+      navigator.clipboard.writeText(text).then(
+        function () {
+          report(true);
+        },
+        function () {
+          report(false);
+        },
+      );
+    } else {
+      report(false);
+    }
+  } catch (e) {
+    report(false);
+  }
 }
 
 // Download the dump as a .json file. A file is easier to hand over than a
@@ -577,7 +704,11 @@ export function busradarDownloadDump() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 10000);
+    setTimeout(function () {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {}
+    }, 10000);
     console.log('[dump] download triggered (' + text.length + ' chars)');
   } catch (e) {
     console.warn('[dump] download failed, falling back to clipboard copy:', e);
@@ -620,9 +751,10 @@ function _handleVehiclesPayload(data) {
     if (isNaN(ss)) ss = 0;
     if (!isNaN(sh) && !isNaN(sm)) {
       const newMin = sh * 60 + sm + ss / 60;
-      const oldDisplayMin = state.serverTimeMin != null
-        ? state.serverTimeMin + (Date.now() - state.serverTimeStamp) / 60000
-        : -1;
+      const oldDisplayMin =
+        state.serverTimeMin != null
+          ? state.serverTimeMin + (Date.now() - state.serverTimeStamp) / 60000
+          : -1;
       if (newMin >= oldDisplayMin - 0.05 || oldDisplayMin < 0) {
         state.serverTimeMin = newMin;
         state.serverTimeStamp = Date.now();
@@ -644,9 +776,8 @@ function _handleVehiclesPayload(data) {
   // markers.updateAll exposes the in-bbox count it just rendered; using
   // that keeps the status counter aligned with the actual marker set on
   // screen (vehicles.length would include the ring-but-not-bbox tail).
-  const visibleCount = markers._lastVisibleCount != null
-    ? markers._lastVisibleCount
-    : vehicles.length;
+  const visibleCount =
+    markers._lastVisibleCount != null ? markers._lastVisibleCount : vehicles.length;
   updateStatus(visibleCount, data.dataAge, state._lastConnectedClients);
 
   if (state.followBus && state.selectedJid) {
@@ -685,7 +816,14 @@ function _handleVehiclesPayload(data) {
         });
         // SEC-100: extId MUST be digits-only before LID concat
         if (!stopEntry && /^\d+$/.test(pr.stop)) {
-          stopEntry = { name: '', lid: 'A=1@L=' + pr.stop + '@', lat: 0, lon: 0, extId: pr.stop, platform: '' };
+          stopEntry = {
+            name: '',
+            lid: 'A=1@L=' + pr.stop + '@',
+            lat: 0,
+            lon: 0,
+            extId: pr.stop,
+            platform: '',
+          };
         }
         if (stopEntry) {
           ui.showStationBoard(stopEntry, true);
@@ -797,10 +935,12 @@ export function _applyJourneyPayload(jid, journeyData) {
   // delay-aware); both branches below use it.
   const stopL = journey.stopL || [];
   const lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
-  const lastTime = lastStop ? (lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || '') : '';
+  const lastTime = lastStop
+    ? lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || ''
+    : '';
   let lastMin = lastTime ? parseHafasTimeToMin(lastTime) : 0;
   if (lastMin === null) lastMin = 0;
-  const elMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+  const elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
   const nowM = (state.serverTimeMin || 0) + elMs / 60000;
   if (nowM > 1080 && lastMin < 360) lastMin += 1440;
   if (nowM < 360 && lastMin > 1080) lastMin -= 1440;
@@ -821,7 +961,7 @@ export function _applyJourneyPayload(jid, journeyData) {
   // an ended journey. +1 min slop past the (delay-aware) last stop absorbs
   // clock skew.
   if (state._selectedHadPosJid === jid) {
-    if (lastTime && (lastMin + 1) <= nowM) {
+    if (lastTime && lastMin + 1 <= nowM) {
       ui.showJourneyEnded();
     } else {
       ui.updateJourneyStopDelays(journeyData);
@@ -831,7 +971,7 @@ export function _applyJourneyPayload(jid, journeyData) {
 
   // Journey we never saw live (selected after it ended, or not yet started).
   // More conservative "last stop + 5 min" rule since we have no live-history.
-  if (lastTime && (lastMin + 5) <= nowM) {
+  if (lastTime && lastMin + 5 <= nowM) {
     ui.showJourneyEnded();
     return;
   }

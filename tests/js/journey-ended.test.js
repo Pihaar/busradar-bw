@@ -60,7 +60,7 @@ describe('ui.showJourneyEnded — remove the stale bus marker on journey end', (
   it('does not crash when the selected entry has no in-flight glide', () => {
     const remove = vi.fn();
     state.selectedJid = 'JE';
-    state.vehicles.set('JE', { marker: { remove }, data: {} });  // no _animFrame
+    state.vehicles.set('JE', { marker: { remove }, data: {} }); // no _animFrame
     ui.showJourneyEnded();
     expect(remove).toHaveBeenCalledOnce();
     expect(globalThis.cancelAnimationFrame).not.toHaveBeenCalled();

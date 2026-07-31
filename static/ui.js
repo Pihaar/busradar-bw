@@ -1,5 +1,17 @@
 import { CONFIG } from './config.js';
-import { state, settings, t, decodePolyline, formatTime, getDayOffset, parseHafasTimeToMin, calcDelay, getDelayClass, getDelayText, extractHafasMessages } from './state.js';
+import {
+  state,
+  settings,
+  t,
+  decodePolyline,
+  formatTime,
+  getDayOffset,
+  parseHafasTimeToMin,
+  calcDelay,
+  getDelayClass,
+  getDelayText,
+  extractHafasMessages,
+} from './state.js';
 import { api, urlState } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { announce } from './status.js';
@@ -22,7 +34,7 @@ export var ui = {
   stopList: null,
   departureList: null,
 
-  init: function() {
+  init: function () {
     this.panel = document.getElementById('detail-panel');
     this.detailLine = document.getElementById('detail-line');
     this.detailDir = document.getElementById('detail-direction');
@@ -30,7 +42,7 @@ export var ui = {
     this.stopList = document.getElementById('stop-list');
     this.departureList = document.getElementById('departure-list');
 
-    document.getElementById('detail-back').addEventListener('click', function() {
+    document.getElementById('detail-back').addEventListener('click', function () {
       state._userInteractionSeq++;
       if (urlState._pushCount > 0) {
         history.back();
@@ -39,7 +51,7 @@ export var ui = {
       }
     });
 
-    document.addEventListener('keydown', function(e) {
+    document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         var aboutDlg = document.getElementById('about-dialog');
         if (aboutDlg && aboutDlg.open) return;
@@ -50,15 +62,15 @@ export var ui = {
       }
     });
 
-    document.getElementById('tab-stops').addEventListener('click', function() {
+    document.getElementById('tab-stops').addEventListener('click', function () {
       state._userInteractionSeq++;
       ui.switchTab('stops');
     });
-    document.getElementById('tab-departures').addEventListener('click', function() {
+    document.getElementById('tab-departures').addEventListener('click', function () {
       state._userInteractionSeq++;
       ui.switchTab('departures');
     });
-    document.getElementById('tab-arrivals').addEventListener('click', function() {
+    document.getElementById('tab-arrivals').addEventListener('click', function () {
       state._userInteractionSeq++;
       ui.switchTab('arrivals');
     });
@@ -67,14 +79,14 @@ export var ui = {
     this.initJourneyActions();
     this.initSwipeTabs();
 
-    document.getElementById('detail-share').addEventListener('click', function(e) {
+    document.getElementById('detail-share').addEventListener('click', function (e) {
       e.stopPropagation();
       if (state._cancelMapClick) state._cancelMapClick();
       ui.share();
     });
   },
 
-  _disableFollow: function() {
+  _disableFollow: function () {
     state.followBus = false;
     state._followPanning = false;
     clearTimeout(state._followPanTimeout);
@@ -86,7 +98,7 @@ export var ui = {
     ui._updateFollowUrl();
   },
 
-  _updateFollowUrl: function() {
+  _updateFollowUrl: function () {
     var params = urlState.parse();
     if (state.followBus) {
       params.follow = '1';
@@ -96,7 +108,7 @@ export var ui = {
     urlState.replace(params);
   },
 
-  _updateFollowButton: function() {
+  _updateFollowButton: function () {
     var btn = document.getElementById('btn-follow');
     if (btn) {
       btn.classList.toggle('action-btn--active', state.followBus);
@@ -104,43 +116,55 @@ export var ui = {
     }
   },
 
-  showVersionUpdateBanner: function() {
+  showVersionUpdateBanner: function () {
     var banner = document.getElementById('version-banner');
     if (!banner || !banner.hidden) return;
     banner.hidden = false;
     var reloadBtn = banner.querySelector('.version-banner__reload');
     var dismissBtn = banner.querySelector('.version-banner__dismiss');
     if (reloadBtn) {
-      reloadBtn.addEventListener('click', function() {
-        location.reload();
-      }, { once: true });
+      reloadBtn.addEventListener(
+        'click',
+        function () {
+          location.reload();
+        },
+        { once: true },
+      );
     }
     if (dismissBtn) {
-      dismissBtn.addEventListener('click', function() {
-        banner.hidden = true;
-      }, { once: true });
+      dismissBtn.addEventListener(
+        'click',
+        function () {
+          banner.hidden = true;
+        },
+        { once: true },
+      );
     }
   },
 
-  showTerminalBanner: function() {
+  showTerminalBanner: function () {
     var banner = document.getElementById('terminal-banner');
     if (!banner || !banner.hidden) return;
     banner.hidden = false;
     var reloadBtn = banner.querySelector('.version-banner__reload');
     if (reloadBtn) {
-      reloadBtn.addEventListener('click', function() {
-        location.reload();
-      }, { once: true });
+      reloadBtn.addEventListener(
+        'click',
+        function () {
+          location.reload();
+        },
+        { once: true },
+      );
     }
   },
 
-  updateSseState: function(s) {
+  updateSseState: function (s) {
     var el = document.getElementById('sse-state-indicator');
     if (el) el.setAttribute('data-state', s);
   },
 
-  initJourneyActions: function() {
-    document.getElementById('btn-follow').addEventListener('click', function() {
+  initJourneyActions: function () {
+    document.getElementById('btn-follow').addEventListener('click', function () {
       state.followBus = !state.followBus;
       ui._updateFollowButton();
       ui._updateFollowUrl();
@@ -154,7 +178,7 @@ export var ui = {
             if (jStopL.length > 0) {
               var fLoc = jLocL[jStopL[0].locX] || {};
               if (fLoc.crd && fLoc.crd.y && fLoc.crd.x) {
-                state.map.panTo([fLoc.crd.y / 1e6, fLoc.crd.x / 1e6], {duration: 1});
+                state.map.panTo([fLoc.crd.y / 1e6, fLoc.crd.x / 1e6], { duration: 1 });
               }
             }
           }
@@ -170,9 +194,13 @@ export var ui = {
                 state._followPanning = false;
               } else {
                 state.map.panTo(target, { duration: Math.min(dist / 500, 2) });
-                state.map.once('moveend', function() { state._followPanning = false; });
+                state.map.once('moveend', function () {
+                  state._followPanning = false;
+                });
                 clearTimeout(state._followPanTimeout);
-                state._followPanTimeout = setTimeout(function() { state._followPanning = false; }, 2500);
+                state._followPanTimeout = setTimeout(function () {
+                  state._followPanning = false;
+                }, 2500);
               }
             }
           }
@@ -180,7 +208,7 @@ export var ui = {
       }
     });
 
-    document.getElementById('btn-fitroute').addEventListener('click', function() {
+    document.getElementById('btn-fitroute').addEventListener('click', function () {
       if (!state.routeCoords || state.routeCoords.length < 2) return;
       ui._disableFollow();
 
@@ -191,45 +219,74 @@ export var ui = {
         opts.paddingBottomRight = [panelRect.width + 30, 30];
         opts.paddingTopLeft = [30, 30];
       } else {
-        var bottomPad = Math.max(30, Math.min(window.innerHeight * 0.55, window.innerHeight - panelRect.top + 30));
+        var bottomPad = Math.max(
+          30,
+          Math.min(window.innerHeight * 0.55, window.innerHeight - panelRect.top + 30),
+        );
         opts.paddingBottomRight = [30, bottomPad];
         opts.paddingTopLeft = [30, 80];
       }
 
       state._navigating = true;
       state.map.fitBounds(L.latLngBounds(state.routeCoords), opts);
-      state.map.once('moveend', function() { state._navigating = false; });
-      setTimeout(function() { state._navigating = false; }, 3000);
+      state.map.once('moveend', function () {
+        state._navigating = false;
+      });
+      setTimeout(function () {
+        state._navigating = false;
+      }, 3000);
     });
   },
 
-  initSwipeTabs: function() {
+  initSwipeTabs: function () {
     var content = document.getElementById('detail-content');
     if (!content) return;
-    var startX = 0, startY = 0, active = false, captured = false;
+    var startX = 0,
+      startY = 0,
+      active = false,
+      captured = false;
 
-    content.addEventListener('pointerdown', function(e) {
-      if (!e.isPrimary || state._tabMode !== 'station') { active = false; captured = false; return; }
-      startX = e.clientX; startY = e.clientY;
-      active = true; captured = false;
+    content.addEventListener('pointerdown', function (e) {
+      if (!e.isPrimary || state._tabMode !== 'station') {
+        active = false;
+        captured = false;
+        return;
+      }
+      startX = e.clientX;
+      startY = e.clientY;
+      active = true;
+      captured = false;
     });
 
-    content.addEventListener('pointermove', function(e) {
+    content.addEventListener('pointermove', function (e) {
       if (!active || !e.isPrimary) return;
-      var absDx = Math.abs(e.clientX - startX), absDy = Math.abs(e.clientY - startY);
+      var absDx = Math.abs(e.clientX - startX),
+        absDy = Math.abs(e.clientY - startY);
       if (!captured) {
         if (absDx < 10 && absDy < 10) return;
-        if (absDx <= absDy * 1.5) { active = false; return; }
+        if (absDx <= absDy * 1.5) {
+          active = false;
+          return;
+        }
         captured = true;
-        try { content.setPointerCapture(e.pointerId); } catch(_) {}
+        try {
+          content.setPointerCapture(e.pointerId);
+        } catch (_) {}
       }
     });
 
-    content.addEventListener('pointerup', function(e) {
-      if (!active || !e.isPrimary) { active = false; captured = false; return; }
+    content.addEventListener('pointerup', function (e) {
+      if (!active || !e.isPrimary) {
+        active = false;
+        captured = false;
+        return;
+      }
       var dx = e.clientX - startX;
-      active = false; captured = false;
-      try { content.releasePointerCapture(e.pointerId); } catch(_) {}
+      active = false;
+      captured = false;
+      try {
+        content.releasePointerCapture(e.pointerId);
+      } catch (_) {}
       if (state._tabMode !== 'station') return;
       if (Math.abs(dx) < 30) return;
       state._userInteractionSeq++;
@@ -237,17 +294,27 @@ export var ui = {
       else if (dx > 0 && state._activeTab === 'arrivals') ui.switchTab('departures');
     });
 
-    content.addEventListener('pointercancel', function(e) {
-      active = false; captured = false;
-      try { content.releasePointerCapture(e.pointerId); } catch(_) {}
+    content.addEventListener('pointercancel', function (e) {
+      active = false;
+      captured = false;
+      try {
+        content.releasePointerCapture(e.pointerId);
+      } catch (_) {}
     });
-    content.addEventListener('lostpointercapture', function() { active = false; captured = false; });
+    content.addEventListener('lostpointercapture', function () {
+      active = false;
+      captured = false;
+    });
   },
 
-  initBottomSheet: function() {
+  initBottomSheet: function () {
     var handle = this.panel.querySelector('.detail-handle');
     var header = this.panel.querySelector('.detail-header');
-    var startY = 0, startX = 0, startHeight = 0, isDown = false, isDragging = false;
+    var startY = 0,
+      startX = 0,
+      startHeight = 0,
+      isDown = false,
+      isDragging = false;
 
     function onDown(e) {
       if (!e.isPrimary) return;
@@ -275,7 +342,11 @@ export var ui = {
           if (dy < 0) return;
         }
         isDragging = true;
-        ui.panel.classList.remove('detail-panel--collapsed', 'detail-panel--half', 'detail-panel--open');
+        ui.panel.classList.remove(
+          'detail-panel--collapsed',
+          'detail-panel--half',
+          'detail-panel--open',
+        );
         ui.panel.style.height = startHeight + 'px';
         ui.panel.style.transition = 'none';
       }
@@ -284,7 +355,10 @@ export var ui = {
       ui.panel.style.height = newHeight + 'px';
     }
     function onUp(e) {
-      if (!e.isPrimary || !isDragging) { isDown = false; return; }
+      if (!e.isPrimary || !isDragging) {
+        isDown = false;
+        return;
+      }
       isDown = false;
       isDragging = false;
       ui.panel.style.transition = '';
@@ -319,9 +393,13 @@ export var ui = {
     header.addEventListener('lostpointercapture', onCancel);
   },
 
-  setPanelState: function(newState) {
+  setPanelState: function (newState) {
     state.panelState = newState;
-    this.panel.classList.remove('detail-panel--collapsed', 'detail-panel--half', 'detail-panel--open');
+    this.panel.classList.remove(
+      'detail-panel--collapsed',
+      'detail-panel--half',
+      'detail-panel--open',
+    );
     this.panel.setAttribute('aria-expanded', newState === 'open' ? 'true' : 'false');
     this.panel.style.height = '';
 
@@ -343,7 +421,7 @@ export var ui = {
     }
   },
 
-  closePanel: function() {
+  closePanel: function () {
     this.setPanelState('hidden');
     state.selectedJid = null;
     state.selectedJourneyData = null;
@@ -356,24 +434,29 @@ export var ui = {
     // Tell the SSE stream we no longer have a selection, so the
     // server stops shipping journey/stationboard events for this subscriber.
     api.selectStream('none').catch(function () {});
-    if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
+    if (state._selectedStopMarker) {
+      state._selectedStopMarker.remove();
+      state._selectedStopMarker = null;
+    }
     markers.highlightSelected(null);
     this.clearRoute();
     document.getElementById('journey-actions').hidden = true;
     urlState.saveMapPosition();
   },
 
-  clearRoute: function() {
+  clearRoute: function () {
     if (state.routeLayer) {
       state.routeLayer.remove();
       state.routeLayer = null;
     }
-    state.routeStopMarkers.forEach(function(m) { m.remove(); });
+    state.routeStopMarkers.forEach(function (m) {
+      m.remove();
+    });
     state.routeStopMarkers = [];
     state.routeCoords = null;
   },
 
-  selectJourney: function(vehicle, skipHistory) {
+  selectJourney: function (vehicle, skipHistory) {
     if (state._cancelMapClick) state._cancelMapClick();
     state._navigating = true;
     ui._disableFollow();
@@ -384,14 +467,24 @@ export var ui = {
     state._endedJid = null;
     state.selectedJid = vehicle.jid;
     state.selectedStop = null;
-    if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
+    if (state._selectedStopMarker) {
+      state._selectedStopMarker.remove();
+      state._selectedStopMarker = null;
+    }
     markers.highlightSelected(vehicle.jid);
     if (!skipHistory) {
       var center = state.map.getCenter();
       var zoom = state.map.getZoom();
-      urlState.push({ jid: vehicle.jid, lat: center.lat.toFixed(5), lon: center.lng.toFixed(5), z: zoom });
+      urlState.push({
+        jid: vehicle.jid,
+        lat: center.lat.toFixed(5),
+        lon: center.lng.toFixed(5),
+        z: zoom,
+      });
     }
-    setTimeout(function() { state._navigating = false; }, 600);
+    setTimeout(function () {
+      state._navigating = false;
+    }, 600);
 
     document.getElementById('journey-actions').hidden = true;
 
@@ -409,19 +502,22 @@ export var ui = {
       this.setPanelState('half');
     }
 
-    api.getJourney(vehicle.jid, {userInitiated: true}).then(function(data) {
-      state.selectedJourneyData = data;
-      ui.renderJourneyStops(data, vehicle);
-      ui.drawRoute(data, vehicle);
-      // Subscribe the SSE stream to push journey updates every tick. The
-      // one-off getJourney above is still needed so the panel renders
-      // synchronously on click; SSE then drives every subsequent refresh.
-      api.selectStream('journey', vehicle.jid).catch(function () {});
-      announce(t('route_loaded', {line: vehicle.line}));
-    }).catch(function(err) {
-      if (err.name === 'AbortError') return;
-      ui.stopList.replaceChildren(_createStateItem('empty-state', t('route_unavailable')));
-    });
+    api
+      .getJourney(vehicle.jid, { userInitiated: true })
+      .then(function (data) {
+        state.selectedJourneyData = data;
+        ui.renderJourneyStops(data, vehicle);
+        ui.drawRoute(data, vehicle);
+        // Subscribe the SSE stream to push journey updates every tick. The
+        // one-off getJourney above is still needed so the panel renders
+        // synchronously on click; SSE then drives every subsequent refresh.
+        api.selectStream('journey', vehicle.jid).catch(function () {});
+        announce(t('route_loaded', { line: vehicle.line }));
+      })
+      .catch(function (err) {
+        if (err.name === 'AbortError') return;
+        ui.stopList.replaceChildren(_createStateItem('empty-state', t('route_unavailable')));
+      });
   },
 
   // Build the stop time display inside `timesEl`. Handles three cases:
@@ -429,7 +525,7 @@ export var ui = {
   // For intermediate stops with realtime dwell >= 1 min the arrival and
   // departure are stacked on two lines (each with its own planned/real and
   // delay badge); otherwise a single time row is shown.
-  _populateStopTimes: function(timesEl, stop) {
+  _populateStopTimes: function (timesEl, stop) {
     timesEl.replaceChildren();
 
     var hasArr = !!(stop.aTimeS || stop.aTimeR);
@@ -456,9 +552,14 @@ export var ui = {
       var arrRow = ui._buildStopTimeRow(stop.aTimeS, stop.aTimeR, aDelay, t('stop_arrival_label'));
       arrRow.classList.add('stop-time-row--arrival');
       timesEl.appendChild(arrRow);
-      var depRow = ui._buildStopTimeRow(stop.dTimeS, stop.dTimeR, dDelay, t('stop_departure_label'));
+      var depRow = ui._buildStopTimeRow(
+        stop.dTimeS,
+        stop.dTimeR,
+        dDelay,
+        t('stop_departure_label'),
+      );
       depRow.classList.add('stop-time-row--departure');
-      depRow.setAttribute('aria-label', t('stop_dwell_aria', {n: dwell}));
+      depRow.setAttribute('aria-label', t('stop_dwell_aria', { n: dwell }));
       timesEl.appendChild(depRow);
     } else {
       // Single row: prefer departure side for intermediates and starts; fall
@@ -484,7 +585,7 @@ export var ui = {
 
   // Build one time-row element: planned/real times plus an optional delay badge.
   // `label` (when given) is rendered as a small prefix for split rows.
-  _buildStopTimeRow: function(timeS, timeR, delay, label) {
+  _buildStopTimeRow: function (timeS, timeR, delay, label) {
     var row = document.createElement('span');
     row.className = 'stop-time-row';
 
@@ -513,7 +614,8 @@ export var ui = {
 
     if (delay !== null && delay !== undefined && delay !== 0) {
       var badge = document.createElement('span');
-      badge.className = 'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
+      badge.className =
+        'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
       badge.textContent = getDelayText(delay);
       row.appendChild(badge);
     }
@@ -521,7 +623,7 @@ export var ui = {
     return row;
   },
 
-  renderJourneyStops: function(data, vehicle) {
+  renderJourneyStops: function (data, vehicle) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
     var common = data.common || {};
@@ -546,7 +648,7 @@ export var ui = {
     if (msgs.journeyLevel.length > 0) {
       var msgContainer = document.createElement('div');
       msgContainer.className = 'journey-msg-container';
-      msgs.journeyLevel.forEach(function(m) {
+      msgs.journeyLevel.forEach(function (m) {
         var div = document.createElement('div');
         div.className = 'journey-msg-banner';
         var span = document.createElement('span');
@@ -562,9 +664,9 @@ export var ui = {
     var prevStopMin = null;
     var shownMsgLocX = Object.create(null);
 
-    stopL.forEach(function(stop, idx) {
+    stopL.forEach(function (stop, idx) {
       var locIdx = stop.locX != null ? stop.locX : -1;
-      var loc = (locIdx >= 0 && locIdx < locL.length) ? locL[locIdx] : {};
+      var loc = locIdx >= 0 && locIdx < locL.length ? locL[locIdx] : {};
 
       var li = document.createElement('li');
       li.className = 'stop-item';
@@ -590,7 +692,7 @@ export var ui = {
 
       var nameEl = document.createElement('div');
       nameEl.className = 'stop-name';
-      nameEl.textContent = loc.name || t('stop_fallback', {idx: idx + 1});
+      nameEl.textContent = loc.name || t('stop_fallback', { idx: idx + 1 });
 
       var timesEl = document.createElement('div');
       timesEl.className = 'stop-times';
@@ -613,7 +715,7 @@ export var ui = {
       if (cumulativeDayOffset > 0) {
         var badge = document.createElement('span');
         badge.className = 'departure-day-badge';
-        badge.textContent = t('day_offset_badge', {n: cumulativeDayOffset});
+        badge.textContent = t('day_offset_badge', { n: cumulativeDayOffset });
         badge.setAttribute('aria-label', t('day_offset_aria'));
         timesEl.appendChild(badge);
       }
@@ -624,7 +726,7 @@ export var ui = {
       var stopLocX = stop.locX != null ? stop.locX : -1;
       if (!shownMsgLocX[stopLocX]) {
         var stopMsgs = msgs.perStopByLocX[stopLocX] || [];
-        stopMsgs.forEach(function(m) {
+        stopMsgs.forEach(function (m) {
           var msgEl = document.createElement('div');
           msgEl.className = 'stop-msg';
           msgEl.textContent = m.text;
@@ -641,7 +743,7 @@ export var ui = {
         nameEl.style.textDecoration = 'underline';
         nameEl.style.textDecorationColor = 'var(--color-ontime)';
         nameEl.style.textUnderlineOffset = '2px';
-        nameEl.addEventListener('click', function(e) {
+        nameEl.addEventListener('click', function (e) {
           e.stopPropagation();
           state._navigating = true;
           state.map.setView([loc.crd.y / 1e6, loc.crd.x / 1e6], 16);
@@ -651,14 +753,19 @@ export var ui = {
           var locLat = loc.crd.y / 1e6;
           var locLon = loc.crd.x / 1e6;
           if (locExtId) {
-            state.allStops.forEach(function(entry) {
+            state.allStops.forEach(function (entry) {
               if (!cachedStop && entry.data.extId === locExtId) cachedStop = entry.data;
             });
           }
           if (!cachedStop) {
-            state.allStops.forEach(function(entry) {
+            state.allStops.forEach(function (entry) {
               var s = entry.data;
-              if (s.name === loc.name || (Math.abs(s.lat - locLat) < 0.002 && Math.abs(s.lon - locLon) < 0.002 && s.name.indexOf(loc.name.split(',')[0]) >= 0)) {
+              if (
+                s.name === loc.name ||
+                (Math.abs(s.lat - locLat) < 0.002 &&
+                  Math.abs(s.lon - locLon) < 0.002 &&
+                  s.name.indexOf(loc.name.split(',')[0]) >= 0)
+              ) {
                 if (!cachedStop || !cachedStop.platform) cachedStop = s;
               }
             });
@@ -683,19 +790,19 @@ export var ui = {
     });
 
     state._currentStopL = stopL;
-    setTimeout(function() {
+    setTimeout(function () {
       ui.updateStopProgress(stopL);
     }, 100);
   },
 
-  buildLineFilter: function(data, filteredJnyL) {
+  buildLineFilter: function (data, filteredJnyL) {
     var filterEl = document.getElementById('line-filter');
     var common = data.common || {};
     var prodL = common.prodL || [];
     var jnyL = filteredJnyL || data.jnyL || [];
 
     var lines = new Set();
-    jnyL.forEach(function(jny) {
+    jnyL.forEach(function (jny) {
       var prod = prodL[jny.prodX] || {};
       if (prod.nameS) lines.add(prod.nameS);
     });
@@ -714,27 +821,35 @@ export var ui = {
     allBtn.className = 'filter-chip' + (activeFilter === null ? ' filter-chip--active' : '');
     allBtn.textContent = t('filter_all');
     allBtn.dataset.line = '';
-    allBtn.addEventListener('click', function() { ui.applyLineFilter(null); });
+    allBtn.addEventListener('click', function () {
+      ui.applyLineFilter(null);
+    });
     filterEl.appendChild(allBtn);
 
     var lang = (settings.current && settings.current.lang) || 'de';
-    Array.from(lines).sort(function(a, b) { return a.localeCompare(b, lang, { numeric: true }); }).forEach(function(line) {
-      var btn = document.createElement('button');
-      btn.className = 'filter-chip' + (line === activeFilter ? ' filter-chip--active' : '');
-      btn.textContent = line;
-      btn.dataset.line = line;
-      btn.addEventListener('click', function() { ui.applyLineFilter(line); });
-      filterEl.appendChild(btn);
-    });
+    Array.from(lines)
+      .sort(function (a, b) {
+        return a.localeCompare(b, lang, { numeric: true });
+      })
+      .forEach(function (line) {
+        var btn = document.createElement('button');
+        btn.className = 'filter-chip' + (line === activeFilter ? ' filter-chip--active' : '');
+        btn.textContent = line;
+        btn.dataset.line = line;
+        btn.addEventListener('click', function () {
+          ui.applyLineFilter(line);
+        });
+        filterEl.appendChild(btn);
+      });
   },
 
-  hideLineFilter: function() {
+  hideLineFilter: function () {
     var filterEl = document.getElementById('line-filter');
     filterEl.hidden = true;
     filterEl.replaceChildren();
   },
 
-  applyLineFilter: function(line) {
+  applyLineFilter: function (line) {
     if (state._activeTab === 'arrivals') {
       state._arrFilter = line;
     } else {
@@ -742,26 +857,38 @@ export var ui = {
     }
 
     var filterEl = document.getElementById('line-filter');
-    filterEl.querySelectorAll('.filter-chip').forEach(function(btn) {
+    filterEl.querySelectorAll('.filter-chip').forEach(function (btn) {
       var isActive = (line === null && btn.dataset.line === '') || btn.dataset.line === line;
       btn.classList.toggle('filter-chip--active', isActive);
     });
 
     if (state._activeTab === 'arrivals' && state._stationArrData) {
       ui.renderArrivals(state._stationArrData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton('arrival-list', state._stationLoc, state._stationExtId, state._stationArrDur || 60, 'ARR');
+      ui.addLoadMoreButton(
+        'arrival-list',
+        state._stationLoc,
+        state._stationExtId,
+        state._stationArrDur || 60,
+        'ARR',
+      );
     } else if (state._stationDepData) {
       ui.renderDepartures(state._stationDepData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton('departure-list', state._stationLoc, state._stationExtId, state._stationDepDur || 60, 'DEP');
+      ui.addLoadMoreButton(
+        'departure-list',
+        state._stationLoc,
+        state._stationExtId,
+        state._stationDepDur || 60,
+        'DEP',
+      );
     }
   },
 
-  updateJourneyStopDelays: function(data) {
+  updateJourneyStopDelays: function (data) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
     var items = ui.stopList.querySelectorAll('.stop-item');
 
-    var elapsedMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+    var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
     var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
 
     for (var idx = 0; idx < Math.min(stopL.length, items.length); idx++) {
@@ -798,14 +925,14 @@ export var ui = {
     }
   },
 
-  updateStopProgress: function(stopL) {
+  updateStopProgress: function (stopL) {
     var progressEl = document.getElementById('stop-progress');
     if (!progressEl || !stopL || stopL.length < 2) return;
 
     var items = ui.stopList.querySelectorAll('.stop-item');
     if (items.length === 0) return;
 
-    var elapsedMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+    var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
     var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
 
     var times = [];
@@ -839,7 +966,7 @@ export var ui = {
       var nextIdx = lastPassedIdx + 1;
       var lastTime = times[lastPassedIdx];
       var nextTime = times[nextIdx];
-      var timeDiff = (nextTime !== null && lastTime !== null) ? nextTime - lastTime : 0;
+      var timeDiff = nextTime !== null && lastTime !== null ? nextTime - lastTime : 0;
       var progress = timeDiff > 0 ? (nowMin - lastTime) / timeDiff : 0;
       progress = Math.max(0, Math.min(1, progress));
 
@@ -853,7 +980,7 @@ export var ui = {
     progressEl.style.height = pixelHeight + 'px';
   },
 
-  drawRoute: function(data, vehicle) {
+  drawRoute: function (data, vehicle) {
     this.clearRoute();
     var common = data.common || {};
     var polyL = common.polyL || [];
@@ -867,7 +994,7 @@ export var ui = {
         var firstStop = stopL[0];
         if (firstStop) {
           var firstLoc = locL[firstStop.locX] || {};
-          var expectedLat = (firstLoc.crd && firstLoc.crd.y) ? firstLoc.crd.y / 1e6 : null;
+          var expectedLat = firstLoc.crd && firstLoc.crd.y ? firstLoc.crd.y / 1e6 : null;
           var decodedLat = coords[0][0];
           if (expectedLat && Math.abs(decodedLat - expectedLat) > 1) {
             coords = decodePolyline(polyL[0].crdEncYX, 1e6);
@@ -886,7 +1013,7 @@ export var ui = {
           var busLon = vehicle.lon;
           var ppLocRefL = polyL[0].ppLocRefL || [];
 
-          var elapsedMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
+          var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
           var nowMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
 
           var lastPassedPolyIdx = 0;
@@ -904,8 +1031,12 @@ export var ui = {
                 for (var pi = 0; pi < ppLocRefL.length; pi++) {
                   if (ppLocRefL[pi].locX === s.locX) {
                     var candidateIdx = ppLocRefL[pi].ppIdx;
-                    if (typeof candidateIdx === 'number' && isFinite(candidateIdx) &&
-                        candidateIdx >= 0 && candidateIdx < coords.length) {
+                    if (
+                      typeof candidateIdx === 'number' &&
+                      isFinite(candidateIdx) &&
+                      candidateIdx >= 0 &&
+                      candidateIdx < coords.length
+                    ) {
                       lastPassedPolyIdx = candidateIdx;
                     }
                     break;
@@ -930,9 +1061,13 @@ export var ui = {
                   var sLon = stopCrd.x / 1e6;
                   var bestD = Infinity;
                   for (var pj = lastPassedPolyIdx; pj < coords.length; pj++) {
-                    var d = (coords[pj][0] - sLat) * (coords[pj][0] - sLat) +
-                            (coords[pj][1] - sLon) * (coords[pj][1] - sLon);
-                    if (d < bestD) { bestD = d; lastPassedPolyIdx = pj; }
+                    var d =
+                      (coords[pj][0] - sLat) * (coords[pj][0] - sLat) +
+                      (coords[pj][1] - sLon) * (coords[pj][1] - sLon);
+                    if (d < bestD) {
+                      bestD = d;
+                      lastPassedPolyIdx = pj;
+                    }
                   }
                 }
               }
@@ -944,7 +1079,10 @@ export var ui = {
             var dLat = coords[ci][0] - busLat;
             var dLon = coords[ci][1] - busLon;
             var dist = dLat * dLat + dLon * dLon;
-            if (dist < minDist) { minDist = dist; splitIdx = ci; }
+            if (dist < minDist) {
+              minDist = dist;
+              splitIdx = ci;
+            }
           }
           if (splitIdx < lastPassedPolyIdx) splitIdx = lastPassedPolyIdx;
         }
@@ -971,8 +1109,8 @@ export var ui = {
       }
     } else if (stopL.length >= 2) {
       var fallbackCoords = [];
-      stopL.forEach(function(s) {
-        var loc = (s.locX >= 0 && s.locX < locL.length) ? locL[s.locX] : {};
+      stopL.forEach(function (s) {
+        var loc = s.locX >= 0 && s.locX < locL.length ? locL[s.locX] : {};
         if (loc.crd && loc.crd.y && loc.crd.x) {
           fallbackCoords.push([loc.crd.y / 1e6, loc.crd.x / 1e6]);
         }
@@ -984,16 +1122,19 @@ export var ui = {
           document.getElementById('journey-actions').hidden = false;
         }
         L.polyline(fallbackCoords, {
-          color: '#00f5d4', weight: 3, opacity: 0.7,
-          dashArray: '8 5', className: 'route-remain'
+          color: '#00f5d4',
+          weight: 3,
+          opacity: 0.7,
+          dashArray: '8 5',
+          className: 'route-remain',
         }).addTo(state.routeLayer);
         state.routeLayer.addTo(state.map);
       }
     }
 
-    stopL.forEach(function(stop) {
+    stopL.forEach(function (stop) {
       var locIdx = stop.locX != null ? stop.locX : -1;
-      var loc = (locIdx >= 0 && locIdx < locL.length) ? locL[locIdx] : {};
+      var loc = locIdx >= 0 && locIdx < locL.length ? locL[locIdx] : {};
       if (!loc.crd) return;
 
       var lat = loc.crd.y / 1e6;
@@ -1008,14 +1149,18 @@ export var ui = {
         className: 'route-stop-dot',
       }).addTo(state.map);
 
-      m.bindTooltip(loc.name || '', { className: 'route-tooltip', direction: 'top', offset: [0, -8] });
+      m.bindTooltip(loc.name || '', {
+        className: 'route-tooltip',
+        direction: 'top',
+        offset: [0, -8],
+      });
 
-      m.on('click', function() {
+      m.on('click', function () {
         if (!loc.lid) return;
         var cachedStop = null;
         var locExtId = loc.extId || '';
         if (locExtId) {
-          state.allStops.forEach(function(entry) {
+          state.allStops.forEach(function (entry) {
             if (!cachedStop && entry.data.extId === locExtId) {
               cachedStop = entry.data;
             }
@@ -1028,7 +1173,7 @@ export var ui = {
     });
   },
 
-  showStationBoard: function(loc, skipHistory) {
+  showStationBoard: function (loc, skipHistory) {
     if (state._cancelMapClick) state._cancelMapClick();
     state._navigating = true;
     ui._disableFollow();
@@ -1044,10 +1189,16 @@ export var ui = {
     state._autoExpandingDep = false;
     state._autoExpandingArr = false;
     state._stationRefreshSeq++;
-    if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
+    if (state._selectedStopMarker) {
+      state._selectedStopMarker.remove();
+      state._selectedStopMarker = null;
+    }
     if (loc.lat && loc.lon) {
       state._selectedStopMarker = L.circleMarker([loc.lat, loc.lon], {
-        radius: 9, fillOpacity: 1, weight: 2.5, interactive: false,
+        radius: 9,
+        fillOpacity: 1,
+        weight: 2.5,
+        interactive: false,
         className: 'stop-marker-selected',
       }).addTo(state.map);
     }
@@ -1055,11 +1206,18 @@ export var ui = {
     if (!skipHistory && loc.extId) {
       var center = state.map.getCenter();
       var zoom = state.map.getZoom();
-      urlState.push({ stop: loc.extId, lat: center.lat.toFixed(5), lon: center.lng.toFixed(5), z: zoom });
+      urlState.push({
+        stop: loc.extId,
+        lat: center.lat.toFixed(5),
+        lon: center.lng.toFixed(5),
+        z: zoom,
+      });
     }
-    setTimeout(function() { state._navigating = false; }, 600);
+    setTimeout(function () {
+      state._navigating = false;
+    }, 600);
 
-    var displayName = loc.name || t('stop_fallback', {idx: ''});
+    var displayName = loc.name || t('stop_fallback', { idx: '' });
     if (loc.platform) displayName += ' (' + t('platform_prefix') + ' ' + loc.platform + ')';
 
     this.detailLine.textContent = '';
@@ -1072,7 +1230,9 @@ export var ui = {
     if (state.panelState === 'hidden' || state.panelState === 'collapsed') {
       this.setPanelState('half');
     }
-    this.departureList.replaceChildren(_createStateItem('loading-spinner', '', t('loading_departures')));
+    this.departureList.replaceChildren(
+      _createStateItem('loading-spinner', '', t('loading_departures')),
+    );
     document.getElementById('arrival-list').replaceChildren();
     state._depFilter = null;
     state._arrFilter = null;
@@ -1115,114 +1275,139 @@ export var ui = {
     }
   },
 
-  loadDepartures: function(loc, stopExtId, dur, autoExpand) {
+  loadDepartures: function (loc, stopExtId, dur, autoExpand) {
     if (autoExpand) state._autoExpandingDep = true;
     var capturedLid = loc.lid;
-    return api.getStationBoard(loc.lid, 'DEP', dur).then(function(data) {
-      if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-        state._autoExpandingDep = false;
-        return;
-      }
-      state._stationDepData = data;
-      state._stationDepDur = dur;
-      var filterLine = state._depFilter || null;
-      var displayedJnyL = ui.renderDepartures(data, loc, stopExtId, filterLine);
-      ui.discoverPlatforms(data);
-
-      var prevCount = state._stationDepCount || 0;
-      state._stationDepCount = displayedJnyL.length;
-      var hasNewResults = displayedJnyL.length > prevCount;
-      state._depExpandCount = (state._depExpandCount || 0) + (autoExpand ? 1 : 0);
-
-      if (!hasNewResults && autoExpand && dur < 1440 && state._depExpandCount < CONFIG.maxExpandIterations) {
+    return api
+      .getStationBoard(loc.lid, 'DEP', dur)
+      .then(function (data) {
         if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
           state._autoExpandingDep = false;
           return;
         }
-        var newDur = Math.min(dur + 60, 1440);
-        ui.loadDepartures(loc, stopExtId, newDur, true);
-      } else {
+        state._stationDepData = data;
+        state._stationDepDur = dur;
+        var filterLine = state._depFilter || null;
+        var displayedJnyL = ui.renderDepartures(data, loc, stopExtId, filterLine);
+        ui.discoverPlatforms(data);
+
+        var prevCount = state._stationDepCount || 0;
+        state._stationDepCount = displayedJnyL.length;
+        var hasNewResults = displayedJnyL.length > prevCount;
+        state._depExpandCount = (state._depExpandCount || 0) + (autoExpand ? 1 : 0);
+
+        if (
+          !hasNewResults &&
+          autoExpand &&
+          dur < 1440 &&
+          state._depExpandCount < CONFIG.maxExpandIterations
+        ) {
+          if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
+            state._autoExpandingDep = false;
+            return;
+          }
+          var newDur = Math.min(dur + 60, 1440);
+          ui.loadDepartures(loc, stopExtId, newDur, true);
+        } else {
+          state._autoExpandingDep = false;
+          if (state._activeTab === 'departures' || !state._activeTab)
+            ui.buildLineFilter(data, displayedJnyL);
+          ui.addLoadMoreButton('departure-list', loc, stopExtId, dur, 'DEP');
+          if (autoExpand && dur === 60) {
+            announce(t('departures_loaded', { name: loc.name || t('stop_fallback', { idx: '' }) }));
+          }
+          // The SSE stationboard push must match the final window we just
+          // rendered, or the next tick replaces the expanded list with the
+          // narrower default and midnight-wrap entries disappear.
+          if (state._activeStationBoardType === 'DEP') {
+            api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
+          }
+        }
+      })
+      .catch(function (err) {
         state._autoExpandingDep = false;
-        if (state._activeTab === 'departures' || !state._activeTab) ui.buildLineFilter(data, displayedJnyL);
-        ui.addLoadMoreButton('departure-list', loc, stopExtId, dur, 'DEP');
-        if (autoExpand && dur === 60) {
-          announce(t('departures_loaded', {name: loc.name || t('stop_fallback', {idx: ''})}));
+        if (err.name === 'AbortError') return;
+        // Don't wipe an already-shown list on a transient error / rate-limit
+        // (a load-more cascade across a service gap can trip the per-IP limit).
+        // Keep the departures and restore the load-more button so the user can
+        // retry; only show the error state when nothing was displayed yet.
+        if (ui.departureList.querySelector('.departure-item')) {
+          ui.addLoadMoreButton(
+            'departure-list',
+            loc,
+            stopExtId,
+            state._stationDepDur || dur,
+            'DEP',
+          );
+          return;
         }
-        // The SSE stationboard push must match the final window we just
-        // rendered, or the next tick replaces the expanded list with the
-        // narrower default and midnight-wrap entries disappear.
-        if (state._activeStationBoardType === 'DEP') {
-          api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
-        }
-      }
-    }).catch(function(err) {
-      state._autoExpandingDep = false;
-      if (err.name === 'AbortError') return;
-      // Don't wipe an already-shown list on a transient error / rate-limit
-      // (a load-more cascade across a service gap can trip the per-IP limit).
-      // Keep the departures and restore the load-more button so the user can
-      // retry; only show the error state when nothing was displayed yet.
-      if (ui.departureList.querySelector('.departure-item')) {
-        ui.addLoadMoreButton('departure-list', loc, stopExtId, state._stationDepDur || dur, 'DEP');
-        return;
-      }
-      ui.departureList.replaceChildren(_createStateItem('empty-state', t('departures_unavailable')));
-    });
+        ui.departureList.replaceChildren(
+          _createStateItem('empty-state', t('departures_unavailable')),
+        );
+      });
   },
 
-  loadArrivals: function(loc, stopExtId, dur, autoExpand) {
+  loadArrivals: function (loc, stopExtId, dur, autoExpand) {
     if (autoExpand) state._autoExpandingArr = true;
     var capturedLid = loc.lid;
-    return api.getStationBoard(loc.lid, 'ARR', dur).then(function(data) {
-      if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-        state._autoExpandingArr = false;
-        return;
-      }
-      state._stationArrData = data;
-      state._stationArrDur = dur;
-      var filterLine = state._arrFilter || null;
-      var filteredArr = ui.renderArrivals(data, loc, stopExtId, filterLine);
-      ui.discoverPlatforms(data);
-
-      var prevCount = state._stationArrCount || 0;
-      var arrCount = filteredArr ? filteredArr.length : 0;
-      state._stationArrCount = arrCount;
-      var hasNewResults = arrCount > prevCount;
-      state._arrExpandCount = (state._arrExpandCount || 0) + (autoExpand ? 1 : 0);
-
-      if (!hasNewResults && autoExpand && dur < 1440 && state._arrExpandCount < CONFIG.maxExpandIterations) {
+    return api
+      .getStationBoard(loc.lid, 'ARR', dur)
+      .then(function (data) {
         if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
           state._autoExpandingArr = false;
           return;
         }
-        var newDur = Math.min(dur + 60, 1440);
-        ui.loadArrivals(loc, stopExtId, newDur, true);
-      } else {
-        state._autoExpandingArr = false;
-        if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
-        ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
-        // Same dur-must-match story as DEP — keep the SSE push aligned with
-        // the actually-rendered window.
-        if (state._activeStationBoardType === 'ARR') {
-          api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
+        state._stationArrData = data;
+        state._stationArrDur = dur;
+        var filterLine = state._arrFilter || null;
+        var filteredArr = ui.renderArrivals(data, loc, stopExtId, filterLine);
+        ui.discoverPlatforms(data);
+
+        var prevCount = state._stationArrCount || 0;
+        var arrCount = filteredArr ? filteredArr.length : 0;
+        state._stationArrCount = arrCount;
+        var hasNewResults = arrCount > prevCount;
+        state._arrExpandCount = (state._arrExpandCount || 0) + (autoExpand ? 1 : 0);
+
+        if (
+          !hasNewResults &&
+          autoExpand &&
+          dur < 1440 &&
+          state._arrExpandCount < CONFIG.maxExpandIterations
+        ) {
+          if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
+            state._autoExpandingArr = false;
+            return;
+          }
+          var newDur = Math.min(dur + 60, 1440);
+          ui.loadArrivals(loc, stopExtId, newDur, true);
+        } else {
+          state._autoExpandingArr = false;
+          if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
+          ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
+          // Same dur-must-match story as DEP — keep the SSE push aligned with
+          // the actually-rendered window.
+          if (state._activeStationBoardType === 'ARR') {
+            api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
+          }
         }
-      }
-    }).catch(function(err) {
-      state._autoExpandingArr = false;
-      if (err.name === 'AbortError') return;
-      // See loadDepartures: keep an already-shown list on a transient error /
-      // rate-limit and restore the load-more button; only show the error state
-      // when nothing was displayed yet.
-      var arrEl = document.getElementById('arrival-list');
-      if (arrEl.querySelector('.departure-item')) {
-        ui.addLoadMoreButton('arrival-list', loc, stopExtId, state._stationArrDur || dur, 'ARR');
-        return;
-      }
-      arrEl.replaceChildren(_createStateItem('empty-state', t('arrivals_unavailable')));
-    });
+      })
+      .catch(function (err) {
+        state._autoExpandingArr = false;
+        if (err.name === 'AbortError') return;
+        // See loadDepartures: keep an already-shown list on a transient error /
+        // rate-limit and restore the load-more button; only show the error state
+        // when nothing was displayed yet.
+        var arrEl = document.getElementById('arrival-list');
+        if (arrEl.querySelector('.departure-item')) {
+          ui.addLoadMoreButton('arrival-list', loc, stopExtId, state._stationArrDur || dur, 'ARR');
+          return;
+        }
+        arrEl.replaceChildren(_createStateItem('empty-state', t('arrivals_unavailable')));
+      });
   },
 
-  addLoadMoreButton: function(listId, loc, stopExtId, currentDur, type) {
+  addLoadMoreButton: function (listId, loc, stopExtId, currentDur, type) {
     var list = document.getElementById(listId);
     var existing = list.querySelector('.load-more-item');
     if (existing) existing.remove();
@@ -1245,7 +1430,7 @@ export var ui = {
     var btn = document.createElement('button');
     btn.className = 'load-more-btn';
     btn.textContent = type === 'ARR' ? t('load_more_arr') : t('load_more_dep');
-    btn.addEventListener('click', function() {
+    btn.addEventListener('click', function () {
       var newDur = Math.min(currentDur + 60, 1440);
       btn.textContent = t('loading');
       btn.disabled = true;
@@ -1269,12 +1454,12 @@ export var ui = {
     list.appendChild(li);
   },
 
-  discoverPlatforms: function(data) {
+  discoverPlatforms: function (data) {
     var common = data.common || {};
     var locL = common.locL || [];
     var added = false;
 
-    locL.forEach(function(loc) {
+    locL.forEach(function (loc) {
       if (!loc.lid || !loc.crd) return;
       if (state.allStops.has(loc.lid)) return;
       var lat = loc.crd.y / 1e6;
@@ -1282,7 +1467,9 @@ export var ui = {
       if (lat === 0 && lon === 0) return;
 
       var gidL = loc.gidL || [];
-      var hasPhysicalStop = gidL.some(function(g) { return g.indexOf('b×') === 0; });
+      var hasPhysicalStop = gidL.some(function (g) {
+        return g.indexOf('b×') === 0;
+      });
       if (!hasPhysicalStop) return;
 
       var platform = '';
@@ -1311,7 +1498,7 @@ export var ui = {
     if (added) stopsLayer.saveToCache();
   },
 
-  renderArrivals: function(data, loc, filterExtId, filterLine) {
+  renderArrivals: function (data, loc, filterExtId, filterLine) {
     var jnyL = data.jnyL || [];
     var common = data.common || {};
     var prodL = common.prodL || [];
@@ -1320,19 +1507,23 @@ export var ui = {
 
     if (filterExtId) {
       var hasPlatform = loc && loc.platform;
-      var extIdKnown = locL.some(function(l) { return l.extId === filterExtId; });
+      var extIdKnown = locL.some(function (l) {
+        return l.extId === filterExtId;
+      });
       var shouldFilter = false;
       if (!hasPlatform && extIdKnown) {
         var filterLoc = null;
         var otherLocs = [];
-        locL.forEach(function(l) {
+        locL.forEach(function (l) {
           if (l.extId === filterExtId) filterLoc = l;
           else if (l.name === (loc && loc.name) && l.crd) otherLocs.push(l);
         });
         if (filterLoc && filterLoc.crd && otherLocs.length > 0) {
           for (var si = 0; si < otherLocs.length; si++) {
-            var dlat = Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6 * 111000;
-            var dlon = Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6 * 111000 * 0.65;
+            var dlat =
+              (Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6) * 111000;
+            var dlon =
+              (Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6) * 111000 * 0.65;
             if (Math.sqrt(dlat * dlat + dlon * dlon) > 1) {
               shouldFilter = true;
               break;
@@ -1340,11 +1531,13 @@ export var ui = {
           }
         }
       } else if (!hasPlatform && !extIdKnown && locL.length > 0) {
-        var hasOtherWithSameName = locL.some(function(l) { return l.name === (loc && loc.name); });
+        var hasOtherWithSameName = locL.some(function (l) {
+          return l.name === (loc && loc.name);
+        });
         if (hasOtherWithSameName) shouldFilter = true;
       }
       if (hasPlatform || shouldFilter) {
-        jnyL = jnyL.filter(function(jny) {
+        jnyL = jnyL.filter(function (jny) {
           var stb = jny.stbStop || {};
           var locIdx = stb.locX != null ? stb.locX : -1;
           if (locIdx < 0 || locIdx >= locL.length) return false;
@@ -1356,14 +1549,14 @@ export var ui = {
     var filteredByExtId = jnyL;
 
     if (filterLine) {
-      jnyL = jnyL.filter(function(jny) {
+      jnyL = jnyL.filter(function (jny) {
         var prod = prodL[jny.prodX] || {};
         return prod.nameS === filterLine;
       });
     }
 
     var seenKeys = {};
-    jnyL = jnyL.filter(function(jny) {
+    jnyL = jnyL.filter(function (jny) {
       var stb = jny.stbStop || {};
       var time = stb.aTimeS || stb.dTimeS || '';
       var key = (jny.prodX || 0) + '|' + time + '|' + (jny.dirTxt || '');
@@ -1380,14 +1573,19 @@ export var ui = {
       if (state._autoExpandingArr && arrList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
-      var arrEmptyText = arrDurMin >= 1440 ? t('arr_empty_24h') : arrDurMin >= 120 ? t('arr_empty_hours', {n: Math.round(arrDurMin / 60)}) : t('arr_empty_minutes', {n: arrDurMin});
+      var arrEmptyText =
+        arrDurMin >= 1440
+          ? t('arr_empty_24h')
+          : arrDurMin >= 120
+            ? t('arr_empty_hours', { n: Math.round(arrDurMin / 60) })
+            : t('arr_empty_minutes', { n: arrDurMin });
       arrList.replaceChildren(_createStateItem('empty-state', arrEmptyText));
       return filteredByExtId;
     }
 
-    jnyL.forEach(function(jny) {
+    jnyL.forEach(function (jny) {
       var prodIdx = jny.prodX != null ? jny.prodX : -1;
-      var prod = (prodIdx >= 0 && prodIdx < prodL.length) ? prodL[prodIdx] : {};
+      var prod = prodIdx >= 0 && prodIdx < prodL.length ? prodL[prodIdx] : {};
       var stbStop = jny.stbStop || {};
       var timeS = stbStop.aTimeS || stbStop.dTimeS || '';
       var timeR = stbStop.aTimeR || stbStop.dTimeR || '';
@@ -1400,7 +1598,7 @@ export var ui = {
       var vehicleOnMap = jid ? state.vehicles.get(jid) : null;
       if (jid) {
         li.style.cursor = 'pointer';
-        li.addEventListener('click', function() {
+        li.addEventListener('click', function () {
           state._userInteractionSeq++;
           if (vehicleOnMap) {
             state._navigating = true;
@@ -1441,7 +1639,7 @@ export var ui = {
       if (dayOffset > 0) {
         var dayBadge = document.createElement('span');
         dayBadge.className = 'departure-day-badge';
-        dayBadge.textContent = t('day_offset_badge', {n: dayOffset});
+        dayBadge.textContent = t('day_offset_badge', { n: dayOffset });
         dayBadge.setAttribute('aria-label', t('day_offset_aria'));
         timeEl.appendChild(dayBadge);
       }
@@ -1472,7 +1670,7 @@ export var ui = {
     return filteredByExtId;
   },
 
-  renderDepartures: function(data, loc, filterExtId, filterLine) {
+  renderDepartures: function (data, loc, filterExtId, filterLine) {
     var jnyL = data.jnyL || [];
     var common = data.common || {};
     var prodL = common.prodL || [];
@@ -1480,19 +1678,23 @@ export var ui = {
 
     if (filterExtId) {
       var hasPlatform = loc && loc.platform;
-      var extIdKnown = locL.some(function(l) { return l.extId === filterExtId; });
+      var extIdKnown = locL.some(function (l) {
+        return l.extId === filterExtId;
+      });
       var shouldFilter = false;
       if (!hasPlatform && extIdKnown) {
         var filterLoc = null;
         var otherLocs = [];
-        locL.forEach(function(l) {
+        locL.forEach(function (l) {
           if (l.extId === filterExtId) filterLoc = l;
           else if (l.name === (loc && loc.name) && l.crd) otherLocs.push(l);
         });
         if (filterLoc && filterLoc.crd && otherLocs.length > 0) {
           for (var si = 0; si < otherLocs.length; si++) {
-            var dlat = Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6 * 111000;
-            var dlon = Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6 * 111000 * 0.65;
+            var dlat =
+              (Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6) * 111000;
+            var dlon =
+              (Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6) * 111000 * 0.65;
             if (Math.sqrt(dlat * dlat + dlon * dlon) > 1) {
               shouldFilter = true;
               break;
@@ -1500,11 +1702,13 @@ export var ui = {
           }
         }
       } else if (!hasPlatform && !extIdKnown && locL.length > 0) {
-        var hasOtherWithSameName = locL.some(function(l) { return l.name === (loc && loc.name); });
+        var hasOtherWithSameName = locL.some(function (l) {
+          return l.name === (loc && loc.name);
+        });
         if (hasOtherWithSameName) shouldFilter = true;
       }
       if (hasPlatform || shouldFilter) {
-        jnyL = jnyL.filter(function(jny) {
+        jnyL = jnyL.filter(function (jny) {
           var stb = jny.stbStop || {};
           var locIdx = stb.locX != null ? stb.locX : -1;
           if (locIdx < 0 || locIdx >= locL.length) return false;
@@ -1516,7 +1720,7 @@ export var ui = {
     var filteredByExtId = jnyL;
 
     if (filterLine) {
-      jnyL = jnyL.filter(function(jny) {
+      jnyL = jnyL.filter(function (jny) {
         var prod = prodL[jny.prodX] || {};
         return prod.nameS === filterLine;
       });
@@ -1530,7 +1734,7 @@ export var ui = {
     var frag = document.createDocumentFragment();
 
     var seenKeys = {};
-    jnyL = jnyL.filter(function(jny) {
+    jnyL = jnyL.filter(function (jny) {
       var stb = jny.stbStop || {};
       var time = stb.dTimeS || stb.aTimeS || '';
       var key = (jny.prodX || 0) + '|' + time + '|' + (jny.dirTxt || '');
@@ -1551,14 +1755,19 @@ export var ui = {
       if (state._autoExpandingDep && ui.departureList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
-      var depEmptyText = depDurMin >= 1440 ? t('dep_empty_24h') : depDurMin >= 120 ? t('dep_empty_hours', {n: Math.round(depDurMin / 60)}) : t('dep_empty_minutes', {n: depDurMin});
+      var depEmptyText =
+        depDurMin >= 1440
+          ? t('dep_empty_24h')
+          : depDurMin >= 120
+            ? t('dep_empty_hours', { n: Math.round(depDurMin / 60) })
+            : t('dep_empty_minutes', { n: depDurMin });
       this.departureList.replaceChildren(_createStateItem('empty-state', depEmptyText));
       return filteredByExtId;
     }
 
-    jnyL.forEach(function(jny) {
+    jnyL.forEach(function (jny) {
       var prodIdx = jny.prodX != null ? jny.prodX : -1;
-      var prod = (prodIdx >= 0 && prodIdx < prodL.length) ? prodL[prodIdx] : {};
+      var prod = prodIdx >= 0 && prodIdx < prodL.length ? prodL[prodIdx] : {};
       var stbStop = jny.stbStop || {};
       var timeS = stbStop.dTimeS || stbStop.aTimeS || '';
       var timeR = stbStop.dTimeR || stbStop.aTimeR || '';
@@ -1571,7 +1780,7 @@ export var ui = {
       var vehicleOnMap = jid ? state.vehicles.get(jid) : null;
       if (jid) {
         li.style.cursor = 'pointer';
-        li.addEventListener('click', function() {
+        li.addEventListener('click', function () {
           state._userInteractionSeq++;
           if (vehicleOnMap) {
             state._navigating = true;
@@ -1612,7 +1821,7 @@ export var ui = {
       if (dayOffset > 0) {
         var dayBadge = document.createElement('span');
         dayBadge.className = 'departure-day-badge';
-        dayBadge.textContent = t('day_offset_badge', {n: dayOffset});
+        dayBadge.textContent = t('day_offset_badge', { n: dayOffset });
         dayBadge.setAttribute('aria-label', t('day_offset_aria'));
         timeEl.appendChild(dayBadge);
       }
@@ -1643,7 +1852,7 @@ export var ui = {
     return filteredByExtId;
   },
 
-  switchTab: function(tab) {
+  switchTab: function (tab) {
     var tabStops = document.getElementById('tab-stops');
     var tabDep = document.getElementById('tab-departures');
     var tabArr = document.getElementById('tab-arrivals');
@@ -1651,7 +1860,7 @@ export var ui = {
     var panelDep = document.getElementById('tabpanel-departures');
     var panelArr = document.getElementById('tabpanel-arrivals');
 
-    [tabStops, tabDep, tabArr].forEach(function(tab) {
+    [tabStops, tabDep, tabArr].forEach(function (tab) {
       tab.classList.remove('detail-tab--active');
       tab.setAttribute('aria-selected', 'false');
     });
@@ -1679,11 +1888,14 @@ export var ui = {
     // board_type field changes. We update it only when a stop is selected
     // and the new tab is a stationboard tab.
     if (state.selectedStop && (tab === 'departures' || tab === 'arrivals')) {
-      var newBoardType = (tab === 'arrivals') ? 'ARR' : 'DEP';
+      var newBoardType = tab === 'arrivals' ? 'ARR' : 'DEP';
       if (state._activeStationBoardType !== newBoardType) {
         state._activeStationBoardType = newBoardType;
-        var switchDur = (newBoardType === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
-        api.selectStream('stationboard', state.selectedStop.lid, newBoardType, switchDur).catch(function () {});
+        var switchDur =
+          (newBoardType === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
+        api
+          .selectStream('stationboard', state.selectedStop.lid, newBoardType, switchDur)
+          .catch(function () {});
       }
     }
     if (tab === 'departures' && state._stationDepData) {
@@ -1695,7 +1907,7 @@ export var ui = {
     }
   },
 
-  setTabMode: function(mode) {
+  setTabMode: function (mode) {
     var tabStops = document.getElementById('tab-stops');
     var tabDep = document.getElementById('tab-departures');
     var tabArr = document.getElementById('tab-arrivals');
@@ -1715,7 +1927,7 @@ export var ui = {
     state._tabMode = mode;
   },
 
-  showJourneyEnded: function() {
+  showJourneyEnded: function () {
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_ended')));
     // The bus completed its run — remove its now-stale marker so it doesn't
     // linger on the map. The selected bus is exempt from the normal removal in
@@ -1736,7 +1948,7 @@ export var ui = {
     state._endedJid = state.selectedJid;
   },
 
-  _showJourneyCancelled: function() {
+  _showJourneyCancelled: function () {
     state._notStartedJid = null;
     state._notStartedSince = 0;
     state._notStartedLastPoll = 0;
@@ -1746,7 +1958,7 @@ export var ui = {
     this.stopList.replaceChildren(_createStateItem('empty-state', t('journey_cancelled')));
   },
 
-  _transitionToRunning: function(data) {
+  _transitionToRunning: function (data) {
     var journey = data.journey || {};
     var common = data.common || {};
     var prodL = common.prodL || [];
@@ -1766,8 +1978,12 @@ export var ui = {
       line: journeyProd.nameS || journeyProd.name || '?',
       lineFull: journeyProd.name || '?',
       direction: journey.dirTxt || '?',
-      lat: lat, lon: lon,
-      delay: null, dirGeo: null, progress: null, stops: []
+      lat: lat,
+      lon: lon,
+      delay: null,
+      dirGeo: null,
+      progress: null,
+      stops: [],
     };
     state.selectedJourneyData = data;
     state._currentStopL = journey.stopL || [];
@@ -1779,14 +1995,16 @@ export var ui = {
     ui.drawRoute(data, vehicle);
 
     state._navigating = true;
-    state.map.panTo([lat, lon], {duration: 1.2});
-    setTimeout(function() { state._navigating = false; }, 2500);
+    state.map.panTo([lat, lon], { duration: 1.2 });
+    setTimeout(function () {
+      state._navigating = false;
+    }, 2500);
 
     state._needsImmediateRefresh = true;
-    announce(t('journey_started_announce', {line: vehicle.line}));
+    announce(t('journey_started_announce', { line: vehicle.line }));
   },
 
-  refreshStationBoard: function(loc) {
+  refreshStationBoard: function (loc) {
     if (state._autoExpandingDep || state._autoExpandingArr) return;
     var refreshSeq = ++state._stationRefreshSeq;
     var capturedLid = loc.lid;
@@ -1802,41 +2020,69 @@ export var ui = {
     var depDur = state._stationDepDur || 60;
     var arrDur = state._stationArrDur || 60;
 
-    var boardSig = function(jnyL) {
-      return (jnyL || []).map(function(j) {
-        var stb = j.stbStop || {};
-        return (j.jid || '') + '|' + (j.prodX != null ? j.prodX : '') + '|' + (j.dirTxt || '') + '|' + (j.date || '') + '|' + (stb.locX != null ? stb.locX : '') + '|' + (stb.dTimeS || '') + '|' + (stb.dTimeR || '') + '|' + (stb.aTimeS || '') + '|' + (stb.aTimeR || '');
-      }).join(';');
+    var boardSig = function (jnyL) {
+      return (jnyL || [])
+        .map(function (j) {
+          var stb = j.stbStop || {};
+          return (
+            (j.jid || '') +
+            '|' +
+            (j.prodX != null ? j.prodX : '') +
+            '|' +
+            (j.dirTxt || '') +
+            '|' +
+            (j.date || '') +
+            '|' +
+            (stb.locX != null ? stb.locX : '') +
+            '|' +
+            (stb.dTimeS || '') +
+            '|' +
+            (stb.dTimeR || '') +
+            '|' +
+            (stb.aTimeS || '') +
+            '|' +
+            (stb.aTimeR || '')
+          );
+        })
+        .join(';');
     };
 
     var content = document.getElementById('detail-content');
     var fixedHeight = content.offsetHeight;
     content.style.minHeight = fixedHeight + 'px';
 
-    api.getStationBoard(loc.lid, 'DEP', depDur).then(function(data) {
-      if (state._stationRefreshSeq !== refreshSeq) return;
-      if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
-      var sig = boardSig(data.jnyL);
-      if (sig !== state._lastDepSig) {
-        state._lastDepSig = sig;
-        state._stationDepData = data;
-        ui.renderDepartures(data, loc, stopExtId, depFilterLine);
-        ui.addLoadMoreButton('departure-list', loc, stopExtId, depDur, 'DEP');
-      }
-      content.style.minHeight = '';
-    }).catch(function() { content.style.minHeight = ''; });
+    api
+      .getStationBoard(loc.lid, 'DEP', depDur)
+      .then(function (data) {
+        if (state._stationRefreshSeq !== refreshSeq) return;
+        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+        var sig = boardSig(data.jnyL);
+        if (sig !== state._lastDepSig) {
+          state._lastDepSig = sig;
+          state._stationDepData = data;
+          ui.renderDepartures(data, loc, stopExtId, depFilterLine);
+          ui.addLoadMoreButton('departure-list', loc, stopExtId, depDur, 'DEP');
+        }
+        content.style.minHeight = '';
+      })
+      .catch(function () {
+        content.style.minHeight = '';
+      });
 
-    api.getStationBoard(loc.lid, 'ARR', arrDur).then(function(data) {
-      if (state._stationRefreshSeq !== refreshSeq) return;
-      if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
-      var sig = boardSig(data.jnyL);
-      if (sig !== state._lastArrSig) {
-        state._lastArrSig = sig;
-        state._stationArrData = data;
-        ui.renderArrivals(data, loc, stopExtId, arrFilterLine);
-        ui.addLoadMoreButton('arrival-list', loc, stopExtId, arrDur, 'ARR');
-      }
-    }).catch(function() {});
+    api
+      .getStationBoard(loc.lid, 'ARR', arrDur)
+      .then(function (data) {
+        if (state._stationRefreshSeq !== refreshSeq) return;
+        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+        var sig = boardSig(data.jnyL);
+        if (sig !== state._lastArrSig) {
+          state._lastArrSig = sig;
+          state._stationArrData = data;
+          ui.renderArrivals(data, loc, stopExtId, arrFilterLine);
+          ui.addLoadMoreButton('arrival-list', loc, stopExtId, arrDur, 'ARR');
+        }
+      })
+      .catch(function () {});
   },
 
   // Consume server-pushed stationboard from the SSE `stationboard` event.
@@ -1844,7 +2090,7 @@ export var ui = {
   // the server included in the payload (matches the StationSelection
   // board_type field). Same de-dup signature as refreshStationBoard so
   // identical pushes don't flicker the DOM.
-  applyPushedStationboard: function(loc, data, boardType) {
+  applyPushedStationboard: function (loc, data, boardType) {
     if (state._autoExpandingDep || state._autoExpandingArr) return;
     var capturedLid = loc.lid;
     var stopExtId = '';
@@ -1855,13 +2101,33 @@ export var ui = {
       if (match) stopExtId = match[1];
     }
     var isArr = boardType === 'ARR';
-    var filterLine = isArr ? (state._arrFilter || null) : (state._depFilter || null);
-    var dur = isArr ? (state._stationArrDur || 60) : (state._stationDepDur || 60);
-    var boardSig = function(jnyL) {
-      return (jnyL || []).map(function(j) {
-        var stb = j.stbStop || {};
-        return (j.jid || '') + '|' + (j.prodX != null ? j.prodX : '') + '|' + (j.dirTxt || '') + '|' + (j.date || '') + '|' + (stb.locX != null ? stb.locX : '') + '|' + (stb.dTimeS || '') + '|' + (stb.dTimeR || '') + '|' + (stb.aTimeS || '') + '|' + (stb.aTimeR || '');
-      }).join(';');
+    var filterLine = isArr ? state._arrFilter || null : state._depFilter || null;
+    var dur = isArr ? state._stationArrDur || 60 : state._stationDepDur || 60;
+    var boardSig = function (jnyL) {
+      return (jnyL || [])
+        .map(function (j) {
+          var stb = j.stbStop || {};
+          return (
+            (j.jid || '') +
+            '|' +
+            (j.prodX != null ? j.prodX : '') +
+            '|' +
+            (j.dirTxt || '') +
+            '|' +
+            (j.date || '') +
+            '|' +
+            (stb.locX != null ? stb.locX : '') +
+            '|' +
+            (stb.dTimeS || '') +
+            '|' +
+            (stb.dTimeR || '') +
+            '|' +
+            (stb.aTimeS || '') +
+            '|' +
+            (stb.aTimeR || '')
+          );
+        })
+        .join(';');
     };
     if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
     var sig = boardSig(data.jnyL);
@@ -1880,19 +2146,24 @@ export var ui = {
     }
   },
 
-  focusJourneyById: function(jid, prod, skipHistory) {
+  focusJourneyById: function (jid, prod, skipHistory) {
     if (state._cancelMapClick) state._cancelMapClick();
     state._navigating = true;
     ui._disableFollow();
     state.selectedJid = jid;
     state.selectedStop = null;
-    if (state._selectedStopMarker) { state._selectedStopMarker.remove(); state._selectedStopMarker = null; }
+    if (state._selectedStopMarker) {
+      state._selectedStopMarker.remove();
+      state._selectedStopMarker = null;
+    }
     if (!skipHistory) {
       var center = state.map.getCenter();
       var zoom = state.map.getZoom();
       urlState.push({ jid: jid, lat: center.lat.toFixed(5), lon: center.lng.toFixed(5), z: zoom });
     }
-    setTimeout(function() { state._navigating = false; }, 600);
+    setTimeout(function () {
+      state._navigating = false;
+    }, 600);
     this.setTabMode('journey');
     this.switchTab('stops');
     if (state.panelState === 'hidden' || state.panelState === 'collapsed') {
@@ -1904,131 +2175,151 @@ export var ui = {
     this.detailDelay.className = 'detail-delay-badge';
     this.stopList.replaceChildren(_createStateItem('loading-spinner', '', t('loading_route')));
 
-    api.getJourney(jid, {userInitiated: true}).then(function(data) {
-      var journey = data.journey || {};
-      var common = data.common || {};
-      var prodL = common.prodL || [];
-      var journeyProd = prodL[journey.prodX] || prod || {};
+    api
+      .getJourney(jid, { userInitiated: true })
+      .then(function (data) {
+        var journey = data.journey || {};
+        var common = data.common || {};
+        var prodL = common.prodL || [];
+        var journeyProd = prodL[journey.prodX] || prod || {};
 
-      var pos = journey.pos || {};
-      var lat = pos.y ? pos.y / 1e6 : null;
-      var lon = pos.x ? pos.x / 1e6 : null;
+        var pos = journey.pos || {};
+        var lat = pos.y ? pos.y / 1e6 : null;
+        var lon = pos.x ? pos.x / 1e6 : null;
 
-      if (!lat || !lon) {
-        var stopL = journey.stopL || [];
-        var elapsedMs = state.serverTimeStamp ? (Date.now() - state.serverTimeStamp) : 0;
-        var curMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
+        if (!lat || !lon) {
+          var stopL = journey.stopL || [];
+          var elapsedMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
+          var curMin = (state.serverTimeMin || 0) + elapsedMs / 60000;
 
-        var lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
-        var lastArrTime = lastStop ? (lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || '') : '';
-        var lastMin = 0;
-        if (lastArrTime) {
-          lastMin = parseHafasTimeToMin(lastArrTime);
-          if (lastMin === null) lastMin = 0;
-          if (curMin > 1080 && lastMin < 360) lastMin += 1440;
-          if (curMin < 360 && lastMin > 1080) lastMin -= 1440;
-        }
+          var lastStop = stopL.length > 0 ? stopL[stopL.length - 1] : null;
+          var lastArrTime = lastStop
+            ? lastStop.aTimeR || lastStop.aTimeS || lastStop.dTimeR || lastStop.dTimeS || ''
+            : '';
+          var lastMin = 0;
+          if (lastArrTime) {
+            lastMin = parseHafasTimeToMin(lastArrTime);
+            if (lastMin === null) lastMin = 0;
+            if (curMin > 1080 && lastMin < 360) lastMin += 1440;
+            if (curMin < 360 && lastMin > 1080) lastMin -= 1440;
+          }
 
-        var journeyAlreadyEnded = lastArrTime && (lastMin + 5) <= curMin;
+          var journeyAlreadyEnded = lastArrTime && lastMin + 5 <= curMin;
 
-        if (journeyAlreadyEnded) {
+          if (journeyAlreadyEnded) {
+            ui.detailLine.textContent = journeyProd.nameS || journeyProd.name || '?';
+            ui.detailDir.textContent = journey.dirTxt || '?';
+            ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_ended')));
+            return;
+          }
+
           ui.detailLine.textContent = journeyProd.nameS || journeyProd.name || '?';
-          ui.detailDir.textContent = journey.dirTxt || '?';
-          ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_ended')));
+          ui.detailDir.textContent = (journey.dirTxt || '?') + ' ' + t('not_started_suffix');
+          ui.detailDelay.textContent = '';
+          ui.detailDelay.className = 'detail-delay-badge';
+          state.selectedJourneyData = data;
+
+          if (state._notStartedJid !== jid) {
+            state._notStartedJid = jid;
+            state._notStartedSince = Date.now();
+            state._notStartedLastPoll = 0;
+          }
+
+          stopL = journey.stopL || [];
+          if (stopL.length > 0) {
+            var pendingVehicle = {
+              jid: jid,
+              line: journeyProd.nameS || journeyProd.name || '?',
+              direction: journey.dirTxt || '?',
+              lat: null,
+              lon: null,
+              delay: null,
+              dirGeo: null,
+              progress: null,
+              stops: [],
+            };
+            ui.renderJourneyStops(data, pendingVehicle);
+            ui.drawRoute(data, pendingVehicle);
+            document.getElementById('journey-actions').hidden = false;
+            if (
+              state._notStartedLastPoll === 0 &&
+              state.routeCoords &&
+              state.routeCoords.length >= 2
+            ) {
+              state._navigating = true;
+              var panelRect = document.getElementById('detail-panel').getBoundingClientRect();
+              var isDesktop = window.innerWidth >= 1024;
+              var fitOpts = { maxZoom: 16 };
+              if (isDesktop) {
+                fitOpts.paddingBottomRight = [panelRect.width + 30, 30];
+                fitOpts.paddingTopLeft = [30, 30];
+              } else {
+                var initBottomPad = Math.max(
+                  30,
+                  Math.min(window.innerHeight * 0.55, window.innerHeight - panelRect.top + 30),
+                );
+                fitOpts.paddingBottomRight = [30, initBottomPad];
+                fitOpts.paddingTopLeft = [30, 80];
+              }
+              state.map.fitBounds(L.latLngBounds(state.routeCoords), fitOpts);
+              setTimeout(function () {
+                state._navigating = false;
+              }, 1500);
+            }
+          } else {
+            ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_not_started')));
+          }
           return;
         }
 
-        ui.detailLine.textContent = journeyProd.nameS || journeyProd.name || '?';
-        ui.detailDir.textContent = (journey.dirTxt || '?') + ' ' + t('not_started_suffix');
-        ui.detailDelay.textContent = '';
-        ui.detailDelay.className = 'detail-delay-badge';
+        state._notStartedJid = null;
+        state._notStartedSince = 0;
+        state._notStartedLastPoll = 0;
+        state._selectedHadPosJid = null;
+        state._endedJid = null;
         state.selectedJourneyData = data;
 
-        if (state._notStartedJid !== jid) {
-          state._notStartedJid = jid;
-          state._notStartedSince = Date.now();
-          state._notStartedLastPoll = 0;
-        }
+        var vehicle = {
+          jid: jid,
+          line: journeyProd.nameS || journeyProd.name || '?',
+          lineFull: journeyProd.name || '?',
+          direction: journey.dirTxt || '?',
+          lat: lat,
+          lon: lon,
+          delay: null,
+          dirGeo: null,
+          progress: null,
+          stops: [],
+        };
 
         stopL = journey.stopL || [];
-        if (stopL.length > 0) {
-          var pendingVehicle = {
-            jid: jid, line: journeyProd.nameS || journeyProd.name || '?',
-            direction: journey.dirTxt || '?', lat: null, lon: null,
-            delay: null, dirGeo: null, progress: null, stops: []
-          };
-          ui.renderJourneyStops(data, pendingVehicle);
-          ui.drawRoute(data, pendingVehicle);
-          document.getElementById('journey-actions').hidden = false;
-          if (state._notStartedLastPoll === 0 && state.routeCoords && state.routeCoords.length >= 2) {
-            state._navigating = true;
-            var panelRect = document.getElementById('detail-panel').getBoundingClientRect();
-            var isDesktop = window.innerWidth >= 1024;
-            var fitOpts = { maxZoom: 16 };
-            if (isDesktop) {
-              fitOpts.paddingBottomRight = [panelRect.width + 30, 30];
-              fitOpts.paddingTopLeft = [30, 30];
-            } else {
-              var initBottomPad = Math.max(30, Math.min(window.innerHeight * 0.55, window.innerHeight - panelRect.top + 30));
-              fitOpts.paddingBottomRight = [30, initBottomPad];
-              fitOpts.paddingTopLeft = [30, 80];
-            }
-            state.map.fitBounds(L.latLngBounds(state.routeCoords), fitOpts);
-            setTimeout(function() { state._navigating = false; }, 1500);
-          }
-        } else {
-          ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_not_started')));
+        for (var i = 0; i < stopL.length; i++) {
+          var s = stopL[i];
+          var d = null;
+          if (s.dTimeS && s.dTimeR) d = calcDelay(s.dTimeS, s.dTimeR);
+          else if (s.aTimeS && s.aTimeR) d = calcDelay(s.aTimeS, s.aTimeR);
+          if (d !== null) vehicle.delay = d;
         }
-        return;
-      }
 
-      state._notStartedJid = null;
-      state._notStartedSince = 0;
-      state._notStartedLastPoll = 0;
-      state._selectedHadPosJid = null;
-      state._endedJid = null;
-      state.selectedJourneyData = data;
+        ui.detailLine.textContent = vehicle.lineFull;
+        ui.detailDir.textContent = vehicle.direction;
+        var cls = getDelayClass(vehicle.delay);
+        ui.detailDelay.textContent = getDelayText(vehicle.delay);
+        ui.detailDelay.className = 'detail-delay-badge detail-delay-badge--' + cls;
 
-      var vehicle = {
-        jid: jid,
-        line: journeyProd.nameS || journeyProd.name || '?',
-        lineFull: journeyProd.name || '?',
-        direction: journey.dirTxt || '?',
-        lat: lat,
-        lon: lon,
-        delay: null,
-        dirGeo: null,
-        progress: null,
-        stops: [],
-      };
+        state.map.setView([lat, lon], 15);
 
-      stopL = journey.stopL || [];
-      for (var i = 0; i < stopL.length; i++) {
-        var s = stopL[i];
-        var d = null;
-        if (s.dTimeS && s.dTimeR) d = calcDelay(s.dTimeS, s.dTimeR);
-        else if (s.aTimeS && s.aTimeR) d = calcDelay(s.aTimeS, s.aTimeR);
-        if (d !== null) vehicle.delay = d;
-      }
-
-      ui.detailLine.textContent = vehicle.lineFull;
-      ui.detailDir.textContent = vehicle.direction;
-      var cls = getDelayClass(vehicle.delay);
-      ui.detailDelay.textContent = getDelayText(vehicle.delay);
-      ui.detailDelay.className = 'detail-delay-badge detail-delay-badge--' + cls;
-
-      state.map.setView([lat, lon], 15);
-
-      ui.renderJourneyStops(data, vehicle);
-      ui.drawRoute(data, vehicle);
-      announce(t('route_loaded', {line: vehicle.line}));
-    }).catch(function(err) {
-      if (err.name === 'AbortError') return;
-      ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_not_found')));
-    });
+        ui.renderJourneyStops(data, vehicle);
+        ui.drawRoute(data, vehicle);
+        announce(t('route_loaded', { line: vehicle.line }));
+      })
+      .catch(function (err) {
+        if (err.name === 'AbortError') return;
+        ui.stopList.replaceChildren(_createStateItem('empty-state', t('journey_not_found')));
+      });
   },
 
-  share: function() {
+  share: function () {
     var isJourney = state._tabMode === 'journey' && state.selectedJid;
     var isStation = state._tabMode === 'station' && state.selectedStop;
     if (!isJourney && !isStation) return;
@@ -2051,18 +2342,21 @@ export var ui = {
 
     var title;
     if (isJourney) {
-      title = t('share_title_journey', {line: (ui.detailLine.textContent || '').trim(), dir: (ui.detailDir.textContent || '').trim()});
+      title = t('share_title_journey', {
+        line: (ui.detailLine.textContent || '').trim(),
+        dir: (ui.detailDir.textContent || '').trim(),
+      });
     } else {
-      title = t('share_title_stop', {name: state.selectedStop.name || ''});
+      title = t('share_title_stop', { name: state.selectedStop.name || '' });
     }
 
     if (navigator.share) {
       try {
-        navigator.share({title: title, text: title, url: url}).catch(function(err) {
+        navigator.share({ title: title, text: title, url: url }).catch(function (err) {
           if (err && err.name === 'AbortError') return;
           ui._copyAndToast(url);
         });
-      } catch(e) {
+      } catch (e) {
         ui._copyAndToast(url);
       }
     } else {
@@ -2070,11 +2364,16 @@ export var ui = {
     }
   },
 
-  _copyAndToast: function(url) {
+  _copyAndToast: function (url) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url)
-        .then(function() { ui._showToast(t('share_copied')); })
-        .catch(function() { ui._showToast(t('share_failed')); });
+      navigator.clipboard
+        .writeText(url)
+        .then(function () {
+          ui._showToast(t('share_copied'));
+        })
+        .catch(function () {
+          ui._showToast(t('share_failed'));
+        });
     } else {
       try {
         var ta = document.createElement('textarea');
@@ -2093,7 +2392,7 @@ export var ui = {
     }
   },
 
-  _showToast: function(msg) {
+  _showToast: function (msg) {
     var el = document.getElementById('toast');
     if (!el) {
       el = document.createElement('div');
@@ -2105,12 +2404,11 @@ export var ui = {
     el.textContent = msg;
     el.classList.add('toast--visible');
     clearTimeout(ui._toastTimer);
-    ui._toastTimer = setTimeout(function() {
+    ui._toastTimer = setTimeout(function () {
       el.classList.remove('toast--visible');
     }, 2000);
     announce(msg);
   },
-
 };
 
 // === SEARCH ===
@@ -2119,31 +2417,31 @@ export var search = {
   results: null,
   debounceTimer: null,
 
-  init: function() {
+  init: function () {
     this.input = document.getElementById('search-input');
     this.results = document.getElementById('search-results');
 
     var self = this;
-    this.input.addEventListener('input', function() {
+    this.input.addEventListener('input', function () {
       clearTimeout(self.debounceTimer);
-      self.debounceTimer = setTimeout(function() {
+      self.debounceTimer = setTimeout(function () {
         self.doSearch(self.input.value.trim());
       }, 300);
     });
 
-    this.input.addEventListener('focus', function() {
+    this.input.addEventListener('focus', function () {
       if (self.input.value.trim().length >= 2) {
         self.results.hidden = false;
       }
     });
 
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', function (e) {
       if (!self.input.contains(e.target) && !self.results.contains(e.target)) {
         self.results.hidden = true;
       }
     });
 
-    this.input.addEventListener('keydown', function(e) {
+    this.input.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         self.results.hidden = true;
         self.input.blur();
@@ -2151,7 +2449,7 @@ export var search = {
     });
   },
 
-  doSearch: function(query) {
+  doSearch: function (query) {
     if (query.length < 2) {
       this.results.hidden = true;
       return;
@@ -2159,23 +2457,29 @@ export var search = {
 
     var self = this;
     var queryLower = query.toLowerCase();
-    var queryWords = queryLower.split(/\s+/).filter(function(w) { return w.length > 0; });
+    var queryWords = queryLower.split(/\s+/).filter(function (w) {
+      return w.length > 0;
+    });
     var searchId = ++this._searchSeq;
 
-    var matchesQuery = function(text) {
+    var matchesQuery = function (text) {
       var textLower = text.toLowerCase();
-      return queryWords.every(function(w) { return textLower.indexOf(w) >= 0; });
+      return queryWords.every(function (w) {
+        return textLower.indexOf(w) >= 0;
+      });
     };
 
-    var matchScore = function(text) {
+    var matchScore = function (text) {
       var textLower = text.toLowerCase();
       var count = 0;
-      queryWords.forEach(function(w) { if (textLower.indexOf(w) >= 0) count++; });
+      queryWords.forEach(function (w) {
+        if (textLower.indexOf(w) >= 0) count++;
+      });
       return count;
     };
 
     var localLines = [];
-    state.vehicles.forEach(function(entry) {
+    state.vehicles.forEach(function (entry) {
       var v = entry.data;
       if (v.line.toLowerCase() === queryLower || matchesQuery(v.lineFull) || matchesQuery(v.line)) {
         localLines.push({ type: 'line', vehicle: v });
@@ -2183,13 +2487,13 @@ export var search = {
     });
 
     var localStops = [];
-    state.allStops.forEach(function(entry) {
+    state.allStops.forEach(function (entry) {
       var s = entry.data;
       if (matchesQuery(s.name)) {
         localStops.push({ type: 'stop', stop: s, score: matchScore(s.name) });
       }
     });
-    localStops.sort(function(a, b) {
+    localStops.sort(function (a, b) {
       if (b.score !== a.score) return b.score - a.score;
       var center = state.map.getCenter();
       var da = Math.abs(a.stop.lat - center.lat) + Math.abs(a.stop.lon - center.lng);
@@ -2198,12 +2502,12 @@ export var search = {
     });
 
     var nameCount = {};
-    localStops.forEach(function(r) {
+    localStops.forEach(function (r) {
       var n = r.stop.name;
       nameCount[n] = (nameCount[n] || 0) + 1;
     });
     var nameSeen = {};
-    localStops = localStops.filter(function(r) {
+    localStops = localStops.filter(function (r) {
       if (nameCount[r.stop.name] > 1 && !r.stop.platform) {
         var key = r.stop.name + '|' + r.stop.lat + '|' + r.stop.lon;
         if (nameSeen[key]) return false;
@@ -2211,7 +2515,7 @@ export var search = {
       }
       return true;
     });
-    localStops.forEach(function(r) {
+    localStops.forEach(function (r) {
       if (nameCount[r.stop.name] > 1) {
         r.stop._disambig = true;
       }
@@ -2229,46 +2533,63 @@ export var search = {
     var isLineQuery = /^[a-z0-9]{1,6}$/i.test(query.trim());
 
     if (isLineQuery && localLines.length === 0) {
-      window.fetch(CONFIG.apiBase + '/line_search?q=' + encodeURIComponent(query.trim()))
-        .then(function(r) { return r.ok ? r.json() : null; })
-        .then(function(data) {
+      window
+        .fetch(CONFIG.apiBase + '/line_search?q=' + encodeURIComponent(query.trim()))
+        .then(function (r) {
+          return r.ok ? r.json() : null;
+        })
+        .then(function (data) {
           if (!data || self._searchSeq !== searchId) return;
-          self._asyncLines = (data.vehicles || []).map(function(v) {
+          self._asyncLines = (data.vehicles || []).map(function (v) {
             return { type: 'line', vehicle: v, remote: true };
           });
           self._renderCombined();
         })
-        .catch(function() {});
+        .catch(function () {});
     }
 
-    window.fetch(CONFIG.apiBase + '/search?q=' + encodeURIComponent(query) +
-      '&lat=' + center.lat.toFixed(5) + '&lon=' + center.lng.toFixed(5))
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(data) {
+    window
+      .fetch(
+        CONFIG.apiBase +
+          '/search?q=' +
+          encodeURIComponent(query) +
+          '&lat=' +
+          center.lat.toFixed(5) +
+          '&lon=' +
+          center.lng.toFixed(5),
+      )
+      .then(function (r) {
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
         if (!data || self._searchSeq !== searchId) return;
         var seen = new Set();
         var seenCoords = new Set();
-        self._localStops.forEach(function(r) {
+        self._localStops.forEach(function (r) {
           if (r.stop) {
             seen.add(r.stop.extId);
             seenCoords.add(r.stop.name + '|' + r.stop.lat + '|' + r.stop.lon);
           }
         });
-        self._asyncStops = (data.results || []).filter(function(s) {
-          if (seen.has(s.extId)) return false;
-          var coordKey = s.name + '|' + s.lat + '|' + s.lon;
-          if (seenCoords.has(coordKey)) return false;
-          return true;
-        }).map(function(s) {
-          return { type: 'stop', stop: s };
-        });
-        self._asyncStops.forEach(function(r) {
-          var sameName = self._localStops.some(function(l) { return l.stop && l.stop.name === r.stop.name; });
+        self._asyncStops = (data.results || [])
+          .filter(function (s) {
+            if (seen.has(s.extId)) return false;
+            var coordKey = s.name + '|' + s.lat + '|' + s.lon;
+            if (seenCoords.has(coordKey)) return false;
+            return true;
+          })
+          .map(function (s) {
+            return { type: 'stop', stop: s };
+          });
+        self._asyncStops.forEach(function (r) {
+          var sameName = self._localStops.some(function (l) {
+            return l.stop && l.stop.name === r.stop.name;
+          });
           if (sameName) r.stop._disambig = true;
         });
         self._renderCombined();
       })
-      .catch(function() {});
+      .catch(function () {});
   },
 
   _searchSeq: 0,
@@ -2277,17 +2598,19 @@ export var search = {
   _localLines: [],
   _localStops: [],
 
-  _renderCombined: function() {
+  _renderCombined: function () {
     var lines = this._asyncLines.length > 0 ? this._asyncLines : this._localLines;
     var qw = this._queryWords || [];
-    var asyncWithScore = this._asyncStops.map(function(r) {
+    var asyncWithScore = this._asyncStops.map(function (r) {
       var textLower = (r.stop.name || '').toLowerCase();
       var score = 0;
-      qw.forEach(function(w) { if (textLower.indexOf(w) >= 0) score++; });
+      qw.forEach(function (w) {
+        if (textLower.indexOf(w) >= 0) score++;
+      });
       return { type: r.type, stop: r.stop, score: score };
     });
     var stops = this._localStops.concat(asyncWithScore);
-    stops.sort(function(a, b) {
+    stops.sort(function (a, b) {
       var sa = a.score || 0;
       var sb = b.score || 0;
       return sb - sa;
@@ -2296,7 +2619,7 @@ export var search = {
     this.renderResults(combined);
   },
 
-  renderResults: function(results) {
+  renderResults: function (results) {
     this.results.replaceChildren();
     if (results.length === 0) {
       var emptyItem = document.createElement('div');
@@ -2314,7 +2637,7 @@ export var search = {
     }
 
     var self = this;
-    results.forEach(function(r) {
+    results.forEach(function (r) {
       var item = document.createElement('div');
       item.className = 'search-result-item';
 
@@ -2350,7 +2673,7 @@ export var search = {
           item.appendChild(delay);
         }
 
-        item.addEventListener('click', function() {
+        item.addEventListener('click', function () {
           self.results.hidden = true;
           self.input.value = '';
           state._navigating = true;
@@ -2363,7 +2686,6 @@ export var search = {
             ui.focusJourneyById(v.jid, { nameS: v.line, name: v.lineFull });
           }
         });
-
       } else if (r.type === 'stop') {
         var s = r.stop;
         var icon2 = document.createElement('span');
@@ -2374,7 +2696,8 @@ export var search = {
         info2.className = 'search-result-info';
         var name2 = document.createElement('div');
         name2.className = 'search-result-name';
-        name2.textContent = s.name + (s.platform ? ' (' + t('platform_prefix') + ' ' + s.platform + ')' : '');
+        name2.textContent =
+          s.name + (s.platform ? ' (' + t('platform_prefix') + ' ' + s.platform + ')' : '');
         info2.appendChild(name2);
 
         if (s._disambig) {
@@ -2387,7 +2710,7 @@ export var search = {
         item.appendChild(icon2);
         item.appendChild(info2);
 
-        item.addEventListener('click', function() {
+        item.addEventListener('click', function () {
           self.results.hidden = true;
           self.input.value = '';
           state._navigating = true;

@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { state, settings, SETTINGS_KEY, getDelayClass, getDelayText, decodePolyline, applyI18n, t, extractHafasMessages, formatTime } from '../../static/state.js';
+import {
+  state,
+  settings,
+  SETTINGS_KEY,
+  getDelayClass,
+  getDelayText,
+  decodePolyline,
+  applyI18n,
+  t,
+  extractHafasMessages,
+  formatTime,
+} from '../../static/state.js';
 import { api, urlState } from '../../static/api.js';
 
 describe('api.getStops', () => {
@@ -143,8 +154,8 @@ describe('api.selectStream (debounced)', () => {
 
   it('rejects all queued callers when the coalesced POST fails', async () => {
     window.fetch.mockResolvedValue({ ok: false, status: 500 });
-    const p1 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch(e => e);
-    const p2 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 120).catch(e => e);
+    const p1 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch((e) => e);
+    const p2 = api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 120).catch((e) => e);
     await vi.advanceTimersByTimeAsync(260);
     const [e1, e2] = await Promise.all([p1, p2]);
     expect(e1).toBeInstanceOf(Error);
@@ -190,7 +201,7 @@ describe('api.selectStream (debounced)', () => {
     const promises = [];
     for (let i = 0; i < 65; i++) {
       // Each call schedules a new timer, so the flush stays deferred.
-      promises.push(api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch(e => e));
+      promises.push(api.selectStream('stationboard', 'A=1@L=1@', 'DEP', 60).catch((e) => e));
     }
     // The oldest promise (index 0) resolves-to-error immediately when
     // the 65th call pushes it out — awaiting it must not hang.
@@ -301,7 +312,14 @@ describe('settings', () => {
   describe('_save', () => {
     beforeEach(() => {
       vi.useFakeTimers();
-      settings.current = { refreshInterval: 10000, theme: 'dark', interpolation: true, posMode: 'CALC', lang: 'de', showLocation: false };
+      settings.current = {
+        refreshInterval: 10000,
+        theme: 'dark',
+        interpolation: true,
+        posMode: 'CALC',
+        lang: 'de',
+        showLocation: false,
+      };
     });
     afterEach(() => {
       vi.useRealTimers();
@@ -329,17 +347,21 @@ describe('settings', () => {
       settings._save();
       settings._save();
       vi.advanceTimersByTime(300);
-      var calls = setSpy.mock.calls.filter(function(c) { return c[0] === SETTINGS_KEY; });
+      var calls = setSpy.mock.calls.filter(function (c) {
+        return c[0] === SETTINGS_KEY;
+      });
       expect(calls.length).toBe(1);
       setSpy.mockRestore();
     });
 
     it('swallows localStorage errors in debounced save', () => {
-      var setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(function() {
+      var setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(function () {
         throw new Error('quota exceeded');
       });
       settings._save();
-      expect(function() { vi.advanceTimersByTime(300); }).not.toThrow();
+      expect(function () {
+        vi.advanceTimersByTime(300);
+      }).not.toThrow();
       setSpy.mockRestore();
     });
   });
@@ -372,7 +394,14 @@ describe('settings', () => {
 
   describe('_updateHint', () => {
     beforeEach(() => {
-      settings.current = { refreshInterval: 10000, theme: 'dark', interpolation: true, posMode: 'CALC', lang: 'de', showLocation: false };
+      settings.current = {
+        refreshInterval: 10000,
+        theme: 'dark',
+        interpolation: true,
+        posMode: 'CALC',
+        lang: 'de',
+        showLocation: false,
+      };
       document.body.innerHTML = '<div id="settings-hint" hidden></div>';
     });
 
@@ -399,7 +428,14 @@ describe('settings', () => {
 
   describe('_applyThemeAttr', () => {
     beforeEach(() => {
-      settings.current = { refreshInterval: 10000, theme: 'dark', interpolation: true, posMode: 'CALC', lang: 'de', showLocation: false };
+      settings.current = {
+        refreshInterval: 10000,
+        theme: 'dark',
+        interpolation: true,
+        posMode: 'CALC',
+        lang: 'de',
+        showLocation: false,
+      };
       document.documentElement.setAttribute('data-theme', '');
       var existing = document.getElementById('meta-theme-color');
       if (existing) existing.remove();
@@ -431,14 +467,23 @@ describe('settings', () => {
 
     it('does not throw when meta-theme-color element is absent', () => {
       settings.current.theme = 'dark';
-      expect(function() { settings._applyThemeAttr(); }).not.toThrow();
+      expect(function () {
+        settings._applyThemeAttr();
+      }).not.toThrow();
       expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     });
   });
 
   describe('_applyPosModeConstraint', () => {
     beforeEach(() => {
-      settings.current = { refreshInterval: 10000, theme: 'dark', interpolation: true, posMode: 'CALC', lang: 'de', showLocation: false };
+      settings.current = {
+        refreshInterval: 10000,
+        theme: 'dark',
+        interpolation: true,
+        posMode: 'CALC',
+        lang: 'de',
+        showLocation: false,
+      };
       settings._userInterpolation = true;
       document.body.innerHTML =
         '<div id="setting-interpolation">' +
@@ -467,22 +512,30 @@ describe('settings', () => {
     });
 
     it('cancels animation frames and snaps markers when REPORT_ONLY', () => {
-      var cafSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(function() {});
+      var cafSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(function () {});
       var snapped = null;
       var entryWithFrame = {
         _animFrame: 42,
         data: { lat: 49.34, lon: 8.66 },
-        marker: { setLatLng: function(latLng) { snapped = latLng; } },
+        marker: {
+          setLatLng: function (latLng) {
+            snapped = latLng;
+          },
+        },
       };
       var entryWithoutFrame = {
         _animFrame: null,
         data: { lat: 49.35, lon: 8.67 },
-        marker: { setLatLng: function() {} },
+        marker: { setLatLng: function () {} },
       };
       var entryNoData = {
         _animFrame: 7,
         data: null,
-        marker: { setLatLng: function() { throw new Error('should not be called'); } },
+        marker: {
+          setLatLng: function () {
+            throw new Error('should not be called');
+          },
+        },
       };
       state.vehicles.clear();
       state.vehicles.set('v1', entryWithFrame);
@@ -512,10 +565,25 @@ describe('settings', () => {
 
     it('adds new layer and schedules old removal', () => {
       vi.useFakeTimers();
-      var added = false, removed = false;
-      var mockLayer = { addTo: function() { added = true; }, once: function(ev, fn) { fn(); } };
+      var added = false,
+        removed = false;
+      var mockLayer = {
+        addTo: function () {
+          added = true;
+        },
+        once: function (ev, fn) {
+          fn();
+        },
+      };
       var oldLayer = {};
-      state.map = { hasLayer: function(l) { return l === oldLayer; }, removeLayer: function() { removed = true; } };
+      state.map = {
+        hasLayer: function (l) {
+          return l === oldLayer;
+        },
+        removeLayer: function () {
+          removed = true;
+        },
+      };
       state.darkTileLayer = mockLayer;
       state.lightTileLayer = oldLayer;
       settings.current = { theme: 'dark' };
@@ -567,7 +635,7 @@ describe('settings', () => {
 
     it('disables interpolation when prefers-reduced-motion matches and no stored value', () => {
       var origMM = window.matchMedia;
-      window.matchMedia = function(q) {
+      window.matchMedia = function (q) {
         if (q === '(prefers-reduced-motion: reduce)') return { matches: true };
         return { matches: false };
       };
@@ -581,7 +649,7 @@ describe('settings', () => {
 
     it('honors stored interpolation over prefers-reduced-motion', () => {
       var origMM = window.matchMedia;
-      window.matchMedia = function(q) {
+      window.matchMedia = function (q) {
         if (q === '(prefers-reduced-motion: reduce)') return { matches: true };
         return { matches: false };
       };
@@ -596,7 +664,7 @@ describe('settings', () => {
 
     it('falls back to light theme when prefers-color-scheme is light and nothing stored', () => {
       var origMM = window.matchMedia;
-      window.matchMedia = function(q) {
+      window.matchMedia = function (q) {
         if (q === '(prefers-color-scheme: light)') return { matches: true };
         return { matches: false };
       };
@@ -743,7 +811,14 @@ describe('settings', () => {
 
   describe('settings._flushSave error handling', () => {
     beforeEach(() => {
-      settings.current = { refreshInterval: 10000, theme: 'dark', interpolation: true, posMode: 'CALC', lang: 'de', showLocation: false };
+      settings.current = {
+        refreshInterval: 10000,
+        theme: 'dark',
+        interpolation: true,
+        posMode: 'CALC',
+        lang: 'de',
+        showLocation: false,
+      };
       settings._userInterpolation = true;
     });
 
@@ -751,10 +826,12 @@ describe('settings', () => {
       vi.useFakeTimers();
       try {
         settings._save();
-        var setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(function() {
+        var setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(function () {
           throw new Error('quota exceeded');
         });
-        expect(function() { settings._flushSave(); }).not.toThrow();
+        expect(function () {
+          settings._flushSave();
+        }).not.toThrow();
         setSpy.mockRestore();
       } finally {
         vi.useRealTimers();
@@ -781,9 +858,19 @@ describe('settings', () => {
       vi.useFakeTimers();
       try {
         var added = false;
-        var lightLayer = { addTo: function() { added = true; }, once: function() {} };
+        var lightLayer = {
+          addTo: function () {
+            added = true;
+          },
+          once: function () {},
+        };
         var darkLayer = {};
-        state.map = { hasLayer: function() { return false; }, removeLayer: function() {} };
+        state.map = {
+          hasLayer: function () {
+            return false;
+          },
+          removeLayer: function () {},
+        };
         state.lightTileLayer = lightLayer;
         state.darkTileLayer = darkLayer;
         settings.current = { theme: 'light' };
@@ -795,13 +882,25 @@ describe('settings', () => {
     });
 
     it('returns early when new layer is already present', () => {
-      var lightLayer = { addTo: function() { throw new Error('should not be called'); }, once: function() {} };
+      var lightLayer = {
+        addTo: function () {
+          throw new Error('should not be called');
+        },
+        once: function () {},
+      };
       var darkLayer = {};
-      state.map = { hasLayer: function(l) { return l === lightLayer; }, removeLayer: function() {} };
+      state.map = {
+        hasLayer: function (l) {
+          return l === lightLayer;
+        },
+        removeLayer: function () {},
+      };
       state.lightTileLayer = lightLayer;
       state.darkTileLayer = darkLayer;
       settings.current = { theme: 'light' };
-      expect(function() { settings.applyTileLayers(); }).not.toThrow();
+      expect(function () {
+        settings.applyTileLayers();
+      }).not.toThrow();
     });
   });
 
@@ -907,9 +1006,7 @@ describe('settings', () => {
   });
 });
 
-
 // === Connected Clients header ===
 // The X-Client-Id header was an artefact of the UUID-keyed connected-clients
 // counter; both are gone since the polling-to-SSE switch. Counter is now
 // derived from len(SubscriberRegistry) server-side.
-

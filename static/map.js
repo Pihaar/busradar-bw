@@ -6,7 +6,7 @@ import * as refresh from './refresh.js';
 
 // === MAP MODULE ===
 export var mapModule = {
-  init: function() {
+  init: function () {
     state.map = L.map('map', {
       center: CONFIG.fallbackCenter,
       zoom: CONFIG.defaultZoom,
@@ -15,7 +15,7 @@ export var mapModule = {
     });
 
     var RetryTileLayer = L.TileLayer.extend({
-      createTile: function(coords, done) {
+      createTile: function (coords, done) {
         var tile = document.createElement('img');
         tile.alt = '';
         tile.setAttribute('role', 'presentation');
@@ -24,14 +24,19 @@ export var mapModule = {
         }
         tile.referrerPolicy = 'no-referrer';
 
-        var subs = (this.options.subdomains || 'abcd').split ? (this.options.subdomains || 'abcd').split('') : this.options.subdomains;
+        var subs = (this.options.subdomains || 'abcd').split
+          ? (this.options.subdomains || 'abcd').split('')
+          : this.options.subdomains;
         var baseUrl = this.getTileUrl(coords);
         var tried = 0;
 
         function attempt() {
           var url = baseUrl.replace(/\/\/[abcd]\./, '//' + subs[tried] + '.');
-          tile.onload = function() { tile.onload = tile.onerror = null; done(null, tile); };
-          tile.onerror = function() {
+          tile.onload = function () {
+            tile.onload = tile.onerror = null;
+            done(null, tile);
+          };
+          tile.onerror = function () {
             tried++;
             if (tried < subs.length) {
               attempt();
@@ -44,15 +49,25 @@ export var mapModule = {
         }
         attempt();
         return tile;
-      }
+      },
     });
 
     function createTileLayers(subs) {
-      var opts = { attribution: CONFIG.tileAttribution, maxZoom: 19, maxNativeZoom: 18, subdomains: subs };
-      if (state.darkTileLayer && state.map.hasLayer(state.darkTileLayer)) state.map.removeLayer(state.darkTileLayer);
-      if (state.lightTileLayer && state.map.hasLayer(state.lightTileLayer)) state.map.removeLayer(state.lightTileLayer);
+      var opts = {
+        attribution: CONFIG.tileAttribution,
+        maxZoom: 19,
+        maxNativeZoom: 18,
+        subdomains: subs,
+      };
+      if (state.darkTileLayer && state.map.hasLayer(state.darkTileLayer))
+        state.map.removeLayer(state.darkTileLayer);
+      if (state.lightTileLayer && state.map.hasLayer(state.lightTileLayer))
+        state.map.removeLayer(state.lightTileLayer);
       state.darkTileLayer = new RetryTileLayer(CONFIG.tileUrl, opts);
-      state.lightTileLayer = new RetryTileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', opts);
+      state.lightTileLayer = new RetryTileLayer(
+        'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        opts,
+      );
       state.darkTileLayer.on('tileerror', onTileError);
       state.darkTileLayer.on('tileload', onTileLoad);
       state.lightTileLayer.on('tileerror', onTileError);
@@ -73,18 +88,20 @@ export var mapModule = {
       var z = state.map.getZoom();
       brokenZooms[z] = true;
       if (!state.map.hasLayer(state._osmFallback)) {
-        var current = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+        var current =
+          settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
         if (state.map.hasLayer(current)) state.map.removeLayer(current);
         state._osmFallback.addTo(state.map);
       }
     }
     function onTileLoad() {}
 
-    state.map.on('zoomend', function() {
+    state.map.on('zoomend', function () {
       var z = state.map.getZoom();
       if (!brokenZooms[z] && state.map.hasLayer(state._osmFallback)) {
         state.map.removeLayer(state._osmFallback);
-        var current = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
+        var current =
+          settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
         if (!state.map.hasLayer(current)) current.addTo(state.map);
       } else if (brokenZooms[z] && !state.map.hasLayer(state._osmFallback)) {
         var cur = settings.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
@@ -99,7 +116,7 @@ export var mapModule = {
 
     var GpsControl = L.Control.extend({
       options: { position: 'bottomleft' },
-      onAdd: function() {
+      onAdd: function () {
         var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control gps-control');
         var link = L.DomUtil.create('a', '', container);
         link.href = '#';
@@ -107,29 +124,34 @@ export var mapModule = {
         link.setAttribute('aria-label', t('gps_center'));
         link.setAttribute('role', 'button');
         // Accepted innerHTML: static SVG literal, no user input (see TD-4 review)
-        link.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1" x2="8" y2="4"/><line x1="8" y1="12" x2="8" y2="15"/><line x1="1" y1="8" x2="4" y2="8"/><line x1="12" y1="8" x2="15" y2="8"/></svg>';
+        link.innerHTML =
+          '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1" x2="8" y2="4"/><line x1="8" y1="12" x2="8" y2="15"/><line x1="1" y1="8" x2="4" y2="8"/><line x1="12" y1="8" x2="15" y2="8"/></svg>';
         L.DomEvent.disableClickPropagation(container);
-        L.DomEvent.on(link, 'click', function(e) {
+        L.DomEvent.on(link, 'click', function (e) {
           L.DomEvent.preventDefault(e);
           if (!navigator.geolocation) {
             link.classList.add('gps-control--error');
-            setTimeout(function() { link.classList.remove('gps-control--error'); }, 1500);
+            setTimeout(function () {
+              link.classList.remove('gps-control--error');
+            }, 1500);
             return;
           }
           link.style.opacity = '0.5';
           navigator.geolocation.getCurrentPosition(
-            function(pos) {
+            function (pos) {
               link.style.opacity = '';
               state.map.setView([pos.coords.latitude, pos.coords.longitude], CONFIG.defaultZoom);
               setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
               startLocationWatch();
             },
-            function() {
+            function () {
               link.style.opacity = '';
               link.classList.add('gps-control--error');
-              setTimeout(function() { link.classList.remove('gps-control--error'); }, 1500);
+              setTimeout(function () {
+                link.classList.remove('gps-control--error');
+              }, 1500);
             },
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
           );
         });
         state._gpsControlContainer = container;
@@ -141,7 +163,7 @@ export var mapModule = {
 
     var AboutControl = L.Control.extend({
       options: { position: 'bottomleft' },
-      onAdd: function() {
+      onAdd: function () {
         var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control about-control');
         var link = L.DomUtil.create('a', '', container);
         link.href = '#';
@@ -150,7 +172,7 @@ export var mapModule = {
         link.setAttribute('role', 'button');
         link.textContent = 'i';
         L.DomEvent.disableClickPropagation(container);
-        L.DomEvent.on(link, 'click', function(e) {
+        L.DomEvent.on(link, 'click', function (e) {
           L.DomEvent.preventDefault(e);
           var dlg = document.getElementById('about-dialog');
           if (dlg && !dlg.open) {
@@ -162,20 +184,33 @@ export var mapModule = {
                 vNode.textContent = '…';
               } else {
                 vNode.textContent = '…';
-                var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
-                var timer = ctrl ? setTimeout(function() { ctrl.abort(); }, 10000) : null;
-                state._appVersionFetch = window.fetch(CONFIG.apiBase + '/health', ctrl ? {signal: ctrl.signal} : undefined)
-                  .then(function(r) { return r.ok ? r.json() : null; })
-                  .then(function(j) {
-                    if (j && typeof j.version === 'string' && /^[A-Za-z0-9._+-]{1,64}$/.test(j.version)) {
+                var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+                var timer = ctrl
+                  ? setTimeout(function () {
+                      ctrl.abort();
+                    }, 10000)
+                  : null;
+                state._appVersionFetch = window
+                  .fetch(CONFIG.apiBase + '/health', ctrl ? { signal: ctrl.signal } : undefined)
+                  .then(function (r) {
+                    return r.ok ? r.json() : null;
+                  })
+                  .then(function (j) {
+                    if (
+                      j &&
+                      typeof j.version === 'string' &&
+                      /^[A-Za-z0-9._+-]{1,64}$/.test(j.version)
+                    ) {
                       state._appVersion = j.version;
                       vNode.textContent = j.version;
                     } else {
                       vNode.textContent = '—';
                     }
                   })
-                  .catch(function() { vNode.textContent = '—'; })
-                  .then(function() {
+                  .catch(function () {
+                    vNode.textContent = '—';
+                  })
+                  .then(function () {
                     if (timer) clearTimeout(timer);
                     state._appVersionFetch = null;
                   });
@@ -192,31 +227,33 @@ export var mapModule = {
     state.map.attributionControl.setPosition('bottomleft');
 
     var clickTimeout = null;
-    state.map.on('click', function() {
+    state.map.on('click', function () {
       clearTimeout(clickTimeout);
-      clickTimeout = setTimeout(function() {
+      clickTimeout = setTimeout(function () {
         if (state._selectionJustMade) return;
         if (state.selectedJid || state.selectedStop) {
           ui.closePanel();
         }
       }, 550);
     });
-    state.map.getContainer().addEventListener('dblclick', function() {
+    state.map.getContainer().addEventListener('dblclick', function () {
       clearTimeout(clickTimeout);
     });
 
-    state._cancelMapClick = function() {
+    state._cancelMapClick = function () {
       clearTimeout(clickTimeout);
       state._selectionJustMade = true;
-      setTimeout(function() { state._selectionJustMade = false; }, 600);
+      setTimeout(function () {
+        state._selectionJustMade = false;
+      }, 600);
     };
 
     var moveDebounce = null;
     var lastRefreshCenter = state.map.getCenter();
     var lastRefreshZoom = state.map.getZoom();
-    state.map.on('moveend', function() {
+    state.map.on('moveend', function () {
       clearTimeout(moveDebounce);
-      moveDebounce = setTimeout(function() {
+      moveDebounce = setTimeout(function () {
         if (state._followPanning) return;
         var center = state.map.getCenter();
         var bounds = state.map.getBounds();
@@ -226,7 +263,7 @@ export var mapModule = {
         var dist = center.distanceTo(lastRefreshCenter);
         var zoom = state.map.getZoom();
         var viewportDiameter = bounds.getNorthEast().distanceTo(bounds.getSouthWest());
-        if (dist > viewportDiameter * 0.10 || zoom < lastRefreshZoom) {
+        if (dist > viewportDiameter * 0.1 || zoom < lastRefreshZoom) {
           lastRefreshCenter = center;
           lastRefreshZoom = zoom;
           refresh.refresh();
@@ -234,12 +271,11 @@ export var mapModule = {
       }, 500);
     });
 
-    state.map.on('dragstart', function() {
+    state.map.on('dragstart', function () {
       if (state.followBus || state._followPanning) {
         ui._disableFollow();
       }
     });
-
 
     var lastZoomBucket = -1;
     function updateMarkerScale() {
@@ -256,19 +292,25 @@ export var mapModule = {
     this.requestGPS();
   },
 
-  requestGPS: function() {
-    _gpsDebugSet("requestGPS: entry");
-    if (!navigator.geolocation) { _gpsDebugSet("no geolocation"); return; }
-    if (!settings.current.showLocation) { _gpsDebugSet("showLocation=off"); return; }
+  requestGPS: function () {
+    _gpsDebugSet('requestGPS: entry');
+    if (!navigator.geolocation) {
+      _gpsDebugSet('no geolocation');
+      return;
+    }
+    if (!settings.current.showLocation) {
+      _gpsDebugSet('showLocation=off');
+      return;
+    }
     // URL-restore (hash carries lat/lon/z) means we must NOT jump the map
     // to the GPS fix — the user just clicked a shared link and wants that
     // view. The dot itself is still expected though.
     var suppressView = !!(location.hash && location.hash.length > 1);
-    var standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
-    _gpsDebugSet("getCurrentPosition suppressView=" + suppressView + " pwa=" + standalone);
+    var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+    _gpsDebugSet('getCurrentPosition suppressView=' + suppressView + ' pwa=' + standalone);
     navigator.geolocation.getCurrentPosition(
-      function(pos) {
-        _gpsDebugSet("cb: showLoc=" + settings.current.showLocation);
+      function (pos) {
+        _gpsDebugSet('cb: showLoc=' + settings.current.showLocation);
         if (!settings.current.showLocation) return;
         var lat = pos.coords.latitude;
         var lon = pos.coords.longitude;
@@ -287,29 +329,31 @@ export var mapModule = {
         // whenReady runs synchronously if the map has already fired
         // load; otherwise it queues until the map is fully initialised.
         // Handles the PWA case where the map isn't quite ready yet.
-        state.map.whenReady(function() {
+        state.map.whenReady(function () {
           setUserLocationMarker(lat, lon);
         });
         // Belt-and-suspenders retries. Each retry also invalidates size
         // once more, in case the standalone chrome only settled after
         // our first attempt.
-        setTimeout(function() {
+        setTimeout(function () {
           state.map.invalidateSize();
           setUserLocationMarker(lat, lon);
         }, 100);
-        setTimeout(function() {
+        setTimeout(function () {
           state.map.invalidateSize();
           setUserLocationMarker(lat, lon);
         }, 1000);
-        setTimeout(function() { setUserLocationMarker(lat, lon); }, 5000);
+        setTimeout(function () {
+          setUserLocationMarker(lat, lon);
+        }, 5000);
         // Start continuous tracking so the dot follows the user instead of
         // sitting at the initial fix.
         startLocationWatch();
       },
-      function(err) {
-        _gpsDebugSet("err:" + (err && err.code));
+      function (err) {
+        _gpsDebugSet('err:' + (err && err.code));
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
     );
   },
 };
@@ -330,13 +374,13 @@ var _gpsDebugEnabled = false;
 // immediately rather than waiting for the next GPS event.
 function _gpsDebugEnsureEl() {
   if (!_gpsDebugEl) {
-    _gpsDebugEl = document.createElement("div");
-    _gpsDebugEl.id = "gps-debug";
+    _gpsDebugEl = document.createElement('div');
+    _gpsDebugEl.id = 'gps-debug';
     _gpsDebugEl.style.cssText =
-      "position:fixed;bottom:8px;left:8px;z-index:9999;" +
-      "background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;" +
-      "font:11px/1.3 monospace;border-radius:4px;max-width:60vw;" +
-      "pointer-events:none;";
+      'position:fixed;bottom:8px;left:8px;z-index:9999;' +
+      'background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;' +
+      'font:11px/1.3 monospace;border-radius:4px;max-width:60vw;' +
+      'pointer-events:none;';
     (document.body || document.documentElement).appendChild(_gpsDebugEl);
   }
   return _gpsDebugEl;
@@ -346,7 +390,7 @@ function _gpsDebugSet(msg) {
     if (!_gpsDebugEnabled) return;
     _gpsDebugEnsureEl();
     var ts = new Date().toISOString().slice(11, 19);
-    _gpsDebugEl.textContent = ts + " " + msg;
+    _gpsDebugEl.textContent = ts + ' ' + msg;
   } catch (e) {}
 }
 function _gpsDebugShow() {
@@ -354,7 +398,7 @@ function _gpsDebugShow() {
   try {
     _gpsDebugEnsureEl();
     var ts = new Date().toISOString().slice(11, 19);
-    _gpsDebugEl.textContent = ts + " gps-debug on";
+    _gpsDebugEl.textContent = ts + ' gps-debug on';
   } catch (e) {}
 }
 function _gpsDebugHide() {
@@ -366,7 +410,10 @@ try {
   window.__gpsDebug = {
     show: _gpsDebugShow,
     hide: _gpsDebugHide,
-    toggle: function () { if (_gpsDebugEnabled) _gpsDebugHide(); else _gpsDebugShow(); },
+    toggle: function () {
+      if (_gpsDebugEnabled) _gpsDebugHide();
+      else _gpsDebugShow();
+    },
   };
 } catch (e) {}
 
@@ -376,19 +423,19 @@ try {
 // (z-index 600), so when the user's GPS position happened to coincide
 // with a bus cluster, the blue dot was hidden underneath. A dedicated
 // pane at z-index 650 keeps the location dot on top of everything.
-var _GPS_PANE = "userLocationPane";
+var _GPS_PANE = 'userLocationPane';
 var _USER_LOCATION_ICON = null;
 function _ensureUserLocationPaneAndIcon() {
   if (!state.map) return null;
   if (!state.map.getPane(_GPS_PANE)) {
     var pane = state.map.createPane(_GPS_PANE);
-    pane.style.zIndex = "650";
+    pane.style.zIndex = '650';
     // Not interactive: clicks fall through to buses/stops underneath.
-    pane.style.pointerEvents = "none";
+    pane.style.pointerEvents = 'none';
   }
   if (_USER_LOCATION_ICON === null) {
     _USER_LOCATION_ICON = L.divIcon({
-      className: "user-location-marker",
+      className: 'user-location-marker',
       html: '<span class="user-location-marker__dot"></span>',
       iconSize: [22, 22],
       iconAnchor: [11, 11],
@@ -398,18 +445,27 @@ function _ensureUserLocationPaneAndIcon() {
 }
 
 export function setUserLocationMarker(lat, lon) {
-  if (!settings.current.showLocation) { _gpsDebugSet("setMarker skipped: showLoc=off"); return; }
-  if (!state.map) { _gpsDebugSet("setMarker skipped: no map"); return; }
+  if (!settings.current.showLocation) {
+    _gpsDebugSet('setMarker skipped: showLoc=off');
+    return;
+  }
+  if (!state.map) {
+    _gpsDebugSet('setMarker skipped: no map');
+    return;
+  }
   var icon = _ensureUserLocationPaneAndIcon();
-  if (!icon) { _gpsDebugSet("setMarker: no icon"); return; }
+  if (!icon) {
+    _gpsDebugSet('setMarker: no icon');
+    return;
+  }
   var ll = [lat, lon];
   if (state._userLocationMarker && !state._userLocationMarker._map) {
-    _gpsDebugSet("setMarker: stale ref detected, recreating");
+    _gpsDebugSet('setMarker: stale ref detected, recreating');
     state._userLocationMarker = null;
   }
   if (state._userLocationMarker) {
     state._userLocationMarker.setLatLng(ll);
-    _gpsDebugSet("setMarker: setLatLng " + lat.toFixed(4) + "," + lon.toFixed(4));
+    _gpsDebugSet('setMarker: setLatLng ' + lat.toFixed(4) + ',' + lon.toFixed(4));
   } else {
     state._userLocationMarker = L.marker(ll, {
       icon: icon,
@@ -418,8 +474,14 @@ export function setUserLocationMarker(lat, lon) {
       keyboard: false,
       zIndexOffset: 1000,
     }).addTo(state.map);
-    _gpsDebugSet("setMarker: created @" + lat.toFixed(4) + "," + lon.toFixed(4)
-                 + " map=" + !!state._userLocationMarker._map);
+    _gpsDebugSet(
+      'setMarker: created @' +
+        lat.toFixed(4) +
+        ',' +
+        lon.toFixed(4) +
+        ' map=' +
+        !!state._userLocationMarker._map,
+    );
   }
 }
 
@@ -433,13 +495,13 @@ export function setUserLocationMarker(lat, lon) {
 export function startLocationWatch() {
   if (!settings.current.showLocation) return;
   if (!navigator.geolocation || !navigator.geolocation.watchPosition) return;
-  if (state._geoWatchId != null) return;  // already watching
+  if (state._geoWatchId != null) return; // already watching
   state._geoWatchId = navigator.geolocation.watchPosition(
     function (pos) {
       setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
     },
     function () {},
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 },
   );
 }
 
@@ -457,10 +519,10 @@ var STOPS_CACHE_TTL = 24 * 60 * 60 * 1000;
 export var stopsLayer = {
   minZoom: 14,
 
-  init: function() {
+  init: function () {
     state.stopLayer = L.layerGroup().addTo(state.map);
     var self = this;
-    state.map.on('zoomend', function() {
+    state.map.on('zoomend', function () {
       var zoom = state.map.getZoom();
       if (zoom >= self.minZoom) {
         state.stopLayer.addTo(state.map);
@@ -475,7 +537,7 @@ export var stopsLayer = {
     this.loadFromCache();
   },
 
-  loadFromCache: function() {
+  loadFromCache: function () {
     try {
       var raw = localStorage.getItem(STOPS_CACHE_KEY);
       if (!raw) return;
@@ -485,26 +547,27 @@ export var stopsLayer = {
         return;
       }
       var stops = cached.stops || [];
-      stops.forEach(function(stop) {
+      stops.forEach(function (stop) {
         if (state.allStops.has(stop.lid)) return;
         stopsLayer.addStopMarker(stop);
       });
     } catch (e) {}
   },
 
-  saveToCache: function() {
+  saveToCache: function () {
     try {
       var stops = [];
-      state.allStops.forEach(function(entry) {
+      state.allStops.forEach(function (entry) {
         stops.push(entry.data);
       });
       localStorage.setItem(STOPS_CACHE_KEY, JSON.stringify({ ts: Date.now(), stops: stops }));
     } catch (e) {}
   },
 
-  addStopMarker: function(stop) {
+  addStopMarker: function (stop) {
     if (state.allStops.has(stop.lid)) return;
-    var label = stop.name + (stop.platform ? ' (' + t('platform_prefix') + ' ' + stop.platform + ')' : '');
+    var label =
+      stop.name + (stop.platform ? ' (' + t('platform_prefix') + ' ' + stop.platform + ')' : '');
     var m = L.circleMarker([stop.lat, stop.lon], {
       radius: 6,
       fillOpacity: 1,
@@ -513,35 +576,41 @@ export var stopsLayer = {
       className: 'stop-marker',
     });
     m.bindTooltip(label, { className: 'stop-tooltip', direction: 'top', offset: [0, -6] });
-    m.on('click', function() { state._userInteractionSeq++; ui.showStationBoard(stop); });
+    m.on('click', function () {
+      state._userInteractionSeq++;
+      ui.showStationBoard(stop);
+    });
     m.addTo(state.stopLayer);
     state.allStops.set(stop.lid, { marker: m, data: stop });
   },
 
-  loadAll: function(lat, lon, radius) {
+  loadAll: function (lat, lon, radius) {
     if (state.map.getZoom() < this.minZoom) return;
     var now = Date.now();
     var key = Math.round(lat * 100) + ',' + Math.round(lon * 100) + ',' + radius;
-    if (this._lastKey === key && this._lastFetch && (now - this._lastFetch) < 30000) return;
+    if (this._lastKey === key && this._lastFetch && now - this._lastFetch < 30000) return;
     this._lastFetch = now;
     this._lastKey = key;
-    api.getStops(lat, lon, radius || 5000).then(function(data) {
-      var stops = data.stops || [];
-      var added = false;
-      stops.forEach(function(stop) {
-        if (state.allStops.has(stop.lid)) return;
-        stopsLayer.addStopMarker(stop);
-        added = true;
-      });
-      if (added) stopsLayer.saveToCache();
-    }).catch(function() {});
+    api
+      .getStops(lat, lon, radius || 5000)
+      .then(function (data) {
+        var stops = data.stops || [];
+        var added = false;
+        stops.forEach(function (stop) {
+          if (state.allStops.has(stop.lid)) return;
+          stopsLayer.addStopMarker(stop);
+          added = true;
+        });
+        if (added) stopsLayer.saveToCache();
+      })
+      .catch(function () {});
   },
 
-  update: function(vehicles) {
+  update: function (vehicles) {
     var added = false;
-    vehicles.forEach(function(v) {
+    vehicles.forEach(function (v) {
       if (!v.stops) return;
-      v.stops.forEach(function(s) {
+      v.stops.forEach(function (s) {
         if (!s.lid || s.lat === 0 || s.lon === 0) return;
         if (state.allStops.has(s.lid)) return;
         stopsLayer.addStopMarker(s);
@@ -554,15 +623,21 @@ export var stopsLayer = {
 
 // === MARKERS MODULE ===
 export var markers = {
-  createIcon: function(vehicle) {
+  createIcon: function (vehicle) {
     var cls = getDelayClass(vehicle.delay);
     var rotation = vehicle._bearing;
 
     var div = document.createElement('div');
     div.className = 'bus-marker bus-marker--' + cls;
     div.setAttribute('role', 'button');
-    div.setAttribute('aria-label',
-      t('aria_bus', {line: vehicle.line, dir: vehicle.direction, delay: getDelayText(vehicle.delay)}));
+    div.setAttribute(
+      'aria-label',
+      t('aria_bus', {
+        line: vehicle.line,
+        dir: vehicle.direction,
+        delay: getDelayText(vehicle.delay),
+      }),
+    );
 
     if (rotation !== null) {
       var arrow = document.createElement('span');
@@ -584,16 +659,17 @@ export var markers = {
     });
   },
 
-  calcBearing: function(lat1, lon1, lat2, lon2) {
+  calcBearing: function (lat1, lon1, lat2, lon2) {
     var toRad = Math.PI / 180;
     var dLon = (lon2 - lon1) * toRad;
     var y = Math.sin(dLon) * Math.cos(lat2 * toRad);
-    var x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
-            Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
-    return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+    var x =
+      Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
+      Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
   },
 
-  animateMarker: function(entry, targetLatLng) {
+  animateMarker: function (entry, targetLatLng) {
     if (!settings.current.interpolation || state.map.getZoom() < CONFIG.zoomThresholdNoAnimation) {
       entry.marker.setLatLng(targetLatLng);
       return;
@@ -623,14 +699,19 @@ export var markers = {
     entry._animFrame = requestAnimationFrame(step);
   },
 
-  calcInitialBearing: function(vehicle) {
+  calcInitialBearing: function (vehicle) {
     if (!vehicle.stops || vehicle.stops.length < 2) return null;
-    var first = null, second = null;
+    var first = null,
+      second = null;
     for (var i = 0; i < vehicle.stops.length; i++) {
       var s = vehicle.stops[i];
       if (s.lat && s.lon && s.lat !== 0 && s.lon !== 0) {
-        if (!first) { first = s; }
-        else if (s.lat !== first.lat || s.lon !== first.lon) { second = s; break; }
+        if (!first) {
+          first = s;
+        } else if (s.lat !== first.lat || s.lon !== first.lon) {
+          second = s;
+          break;
+        }
       }
     }
     if (first && second) {
@@ -639,7 +720,7 @@ export var markers = {
     return null;
   },
 
-  updateAll: function(vehicles) {
+  updateAll: function (vehicles) {
     // `vehicles` here is the FULL server payload (the SSE handler returns
     // the HAFAS ring, which extends past the four-corner viewport). We
     // bbox-filter inside this function rather than upstream so we can
@@ -672,7 +753,7 @@ export var markers = {
     var inServerRing = new Set();
     var visibleCount = 0;
 
-    vehicles.forEach(function(v) {
+    vehicles.forEach(function (v) {
       // A journey that ended while selected must not be resurrected from a
       // still-interpolated payload (CALC keeps the bus in the ring past its
       // real end). showJourneyEnded removed its marker and set state._endedJid;
@@ -697,7 +778,8 @@ export var markers = {
           // map stopped following once the bus left the screen. setLatLng (no
           // animation) is fine — the marker is off-screen; the follow-pan pans
           // the map to it.
-          var offLat = v.lat, offLon = v.lon;
+          var offLat = v.lat,
+            offLon = v.lon;
           var offCur = existing.marker.getLatLng();
           if (offCur.lat !== offLat || offCur.lng !== offLon) {
             v._bearing = markers.calcBearing(offCur.lat, offCur.lng, offLat, offLon);
@@ -726,7 +808,11 @@ export var markers = {
         }
         var oldCls = getDelayClass(existing.data.delay);
         var newCls = getDelayClass(v.delay);
-        if (oldCls !== newCls || existing.data.line !== v.line || existing.data._bearing !== v._bearing) {
+        if (
+          oldCls !== newCls ||
+          existing.data.line !== v.line ||
+          existing.data._bearing !== v._bearing
+        ) {
           existing.marker.setIcon(markers.createIcon(v));
         }
         existing.data = v;
@@ -739,7 +825,7 @@ export var markers = {
           alt: 'Bus ' + v.line,
         }).addTo(state.map);
 
-        marker.on('click', function() {
+        marker.on('click', function () {
           state._userInteractionSeq++;
           var entry = state.vehicles.get(v.jid);
           if (entry) ui.selectJourney(entry.data);
@@ -749,7 +835,7 @@ export var markers = {
       }
     });
 
-    state.vehicles.forEach(function(entry, jid) {
+    state.vehicles.forEach(function (entry, jid) {
       if (!inServerRing.has(jid)) {
         // Case (b): vehicle not in this server payload. Two sub-cases:
         //
@@ -770,9 +856,7 @@ export var markers = {
         //        dropped frame doesn't blink the marker.
         var lastLat = entry.data ? entry.data.lat : null;
         var lastLon = entry.data ? entry.data.lon : null;
-        var lastVisible = lastLat != null && lastLon != null
-          ? inBbox(lastLat, lastLon)
-          : false;
+        var lastVisible = lastLat != null && lastLon != null ? inBbox(lastLat, lastLon) : false;
         if (!lastVisible && state.selectedJid !== jid) {
           // (b1) — drop now.
           entry.marker.remove();
@@ -796,8 +880,8 @@ export var markers = {
     markers._lastVisibleCount = visibleCount;
   },
 
-  highlightSelected: function(jid) {
-    state.vehicles.forEach(function(entry, id) {
+  highlightSelected: function (jid) {
+    state.vehicles.forEach(function (entry, id) {
       var el = entry.marker.getElement();
       if (!el) return;
       var inner = el.querySelector('.bus-marker');

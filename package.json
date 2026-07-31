@@ -3,7 +3,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "format": "prettier --write \"static/**/*.js\" \"tests/js/**/*.js\"",
+    "stylelint": "stylelint \"static/**/*.css\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -11,6 +13,9 @@
     "eslint": "^10.8.0",
     "globals": "^17.8.0",
     "happy-dom": "20.9.0",
+    "prettier": "^3.9.6",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
     "vitest": "4.1.8"
   }
 }

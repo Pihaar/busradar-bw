@@ -26,14 +26,17 @@ function toggleBtn(key) {
 }
 
 function actionBtn(text) {
-  return Array.prototype.slice.call(document.querySelectorAll('#debug-group .settings-opt'))
-    .find(b => b.textContent.indexOf(text) !== -1);
+  return Array.prototype.slice
+    .call(document.querySelectorAll('#debug-group .settings-opt'))
+    .find((b) => b.textContent.indexOf(text) !== -1);
 }
 
 describe('debug menu (?debug)', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    try { localStorage.clear(); } catch (e) {}
+    try {
+      localStorage.clear();
+    } catch (e) {}
     setLocation('');
     delete window.__busradarDebug;
     delete window.__busradarVerbose;
@@ -81,25 +84,45 @@ describe('debug menu (?debug)', () => {
   describe('tool-flag parsing', () => {
     it('defaults every tool off when the key is missing', async () => {
       const mod = await import('../../static/debug.js');
-      expect(mod._loadTools()).toEqual({ console: false, panlog: false, gps: false, verbose: false });
+      expect(mod._loadTools()).toEqual({
+        console: false,
+        panlog: false,
+        gps: false,
+        verbose: false,
+      });
     });
 
     it('falls back to all-off on malformed JSON instead of throwing', async () => {
       localStorage.setItem('busradar_debug_tools', '{ not valid json');
       const mod = await import('../../static/debug.js');
-      expect(mod._loadTools()).toEqual({ console: false, panlog: false, gps: false, verbose: false });
+      expect(mod._loadTools()).toEqual({
+        console: false,
+        panlog: false,
+        gps: false,
+        verbose: false,
+      });
     });
 
     it('ignores the literal string "null" (JSON.parse(null)-style)', async () => {
       localStorage.setItem('busradar_debug_tools', 'null');
       const mod = await import('../../static/debug.js');
-      expect(mod._loadTools()).toEqual({ console: false, panlog: false, gps: false, verbose: false });
+      expect(mod._loadTools()).toEqual({
+        console: false,
+        panlog: false,
+        gps: false,
+        verbose: false,
+      });
     });
 
     it('ignores non-boolean sub-values', async () => {
       localStorage.setItem('busradar_debug_tools', JSON.stringify({ console: 'yes', gps: true }));
       const mod = await import('../../static/debug.js');
-      expect(mod._loadTools()).toEqual({ console: false, panlog: false, gps: true, verbose: false });
+      expect(mod._loadTools()).toEqual({
+        console: false,
+        panlog: false,
+        gps: true,
+        verbose: false,
+      });
     });
   });
 
@@ -141,7 +164,8 @@ describe('debug menu (?debug)', () => {
       buildPanel();
       setLocation('?debug=1');
       await import('../../static/debug.js');
-      const show = vi.fn(), hide = vi.fn();
+      const show = vi.fn(),
+        hide = vi.fn();
       window.__debugConsole = { show, hide, toggle: vi.fn(), isOpen: vi.fn() };
       const btn = toggleBtn('console');
 
@@ -160,7 +184,8 @@ describe('debug menu (?debug)', () => {
       buildPanel();
       setLocation('?debug=1');
       await import('../../static/debug.js');
-      const show = vi.fn(), hide = vi.fn();
+      const show = vi.fn(),
+        hide = vi.fn();
       window.__gpsDebug = { show, hide, toggle: vi.fn() };
       toggleBtn('gps').click();
       expect(show).toHaveBeenCalledTimes(1);
@@ -198,7 +223,7 @@ describe('debug menu (?debug)', () => {
       const setSpy = vi.spyOn(global, 'setInterval');
       const mod = await import('../../static/debug.js');
       mod.setTool('panlog', true);
-      mod.setTool('panlog', true);  // idempotent
+      mod.setTool('panlog', true); // idempotent
       expect(setSpy).toHaveBeenCalledTimes(1);
       mod.setTool('panlog', false);
     });
@@ -236,26 +261,39 @@ describe('debug menu (?debug)', () => {
       setLocation('?debug=1');
       const clearSpy = vi.spyOn(global, 'clearInterval');
       const mod = await import('../../static/debug.js');
-      mod.setTool('panlog', true);  // start an interval to be torn down
+      mod.setTool('panlog', true); // start an interval to be torn down
       actionBtn('Debug aus').click();
       expect(document.getElementById('debug-group')).toBeNull();
       expect(localStorage.getItem('busradar_debug')).toBeNull();
       expect(window.__busradarDebug).toBe(false);
       expect(window.__debugMenu).toBeUndefined();
       expect(clearSpy).toHaveBeenCalled();
-      expect(JSON.parse(localStorage.getItem('busradar_debug_tools'))).toEqual(
-        { console: false, panlog: false, gps: false, verbose: false });
+      expect(JSON.parse(localStorage.getItem('busradar_debug_tools'))).toEqual({
+        console: false,
+        panlog: false,
+        gps: false,
+        verbose: false,
+      });
     });
 
     it('Debug aus hides console and gps tools that were active', async () => {
       buildPanel();
       setLocation('?debug=1');
-      localStorage.setItem('busradar_debug_tools', JSON.stringify({ console: true, gps: true, panlog: false, verbose: false }));
+      localStorage.setItem(
+        'busradar_debug_tools',
+        JSON.stringify({ console: true, gps: true, panlog: false, verbose: false }),
+      );
       const mod = await import('../../static/debug.js');
       // Replace the handles AFTER import (debug.js's import installs the real
       // __debugConsole) so disableDebug drives our spies.
-      const consoleHide = vi.fn(), gpsHide = vi.fn();
-      window.__debugConsole = { show: vi.fn(), hide: consoleHide, toggle: vi.fn(), isOpen: vi.fn() };
+      const consoleHide = vi.fn(),
+        gpsHide = vi.fn();
+      window.__debugConsole = {
+        show: vi.fn(),
+        hide: consoleHide,
+        toggle: vi.fn(),
+        isOpen: vi.fn(),
+      };
       window.__gpsDebug = { show: vi.fn(), hide: gpsHide, toggle: vi.fn() };
       mod.disableDebug();
       expect(consoleHide).toHaveBeenCalled();
@@ -267,7 +305,10 @@ describe('debug menu (?debug)', () => {
     it('drives active tools and reflects buttons at build time', async () => {
       buildPanel();
       setLocation('?debug=1');
-      localStorage.setItem('busradar_debug_tools', JSON.stringify({ console: true, panlog: false, gps: false, verbose: true }));
+      localStorage.setItem(
+        'busradar_debug_tools',
+        JSON.stringify({ console: true, panlog: false, gps: false, verbose: true }),
+      );
       await import('../../static/debug.js');
       // console tool persisted true → the real overlay was shown; verbose set.
       expect(document.getElementById('debug-console')).not.toBeNull();
@@ -280,7 +321,9 @@ describe('debug menu (?debug)', () => {
   describe('defensive / branch paths', () => {
     it('_resolveMaster returns false when localStorage throws', async () => {
       const mod = await import('../../static/debug.js');
-      const spy = vi.spyOn(localStorage, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+      const spy = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+        throw new Error('blocked');
+      });
       expect(mod._resolveMaster()).toBe(false);
       spy.mockRestore();
     });
@@ -289,9 +332,12 @@ describe('debug menu (?debug)', () => {
       buildPanel();
       setLocation('?debug=1');
       const orig = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
-      Object.defineProperty(document, 'readyState', { configurable: true, get: () => 'interactive' });
+      Object.defineProperty(document, 'readyState', {
+        configurable: true,
+        get: () => 'interactive',
+      });
       await import('../../static/debug.js');
-      expect(document.getElementById('debug-group')).toBeNull();  // deferred, not complete
+      expect(document.getElementById('debug-group')).toBeNull(); // deferred, not complete
       document.dispatchEvent(new Event('DOMContentLoaded'));
       expect(document.getElementById('debug-group')).not.toBeNull();
       if (orig) Object.defineProperty(document, 'readyState', orig);
@@ -305,15 +351,21 @@ describe('debug menu (?debug)', () => {
       // after import (as map.js would), then DOMContentLoaded drives the restore.
       buildPanel();
       setLocation('?debug=1');
-      localStorage.setItem('busradar_debug_tools', JSON.stringify({ gps: true, console: false, panlog: false, verbose: false }));
+      localStorage.setItem(
+        'busradar_debug_tools',
+        JSON.stringify({ gps: true, console: false, panlog: false, verbose: false }),
+      );
       const orig = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
-      Object.defineProperty(document, 'readyState', { configurable: true, get: () => 'interactive' });
+      Object.defineProperty(document, 'readyState', {
+        configurable: true,
+        get: () => 'interactive',
+      });
       await import('../../static/debug.js');
       const show = vi.fn();
-      window.__gpsDebug = { show, hide: vi.fn(), toggle: vi.fn() };  // set AFTER import, like map.js eval
-      expect(show).not.toHaveBeenCalled();  // not applied yet — deferred
+      window.__gpsDebug = { show, hide: vi.fn(), toggle: vi.fn() }; // set AFTER import, like map.js eval
+      expect(show).not.toHaveBeenCalled(); // not applied yet — deferred
       document.dispatchEvent(new Event('DOMContentLoaded'));
-      expect(show).toHaveBeenCalled();  // restored with the handle now present
+      expect(show).toHaveBeenCalled(); // restored with the handle now present
       if (orig) Object.defineProperty(document, 'readyState', orig);
       else delete document.readyState;
     });
@@ -323,9 +375,11 @@ describe('debug menu (?debug)', () => {
       setLocation('?debug=1');
       const mod = await import('../../static/debug.js');
       const { state } = await import('../../static/state.js');
-      state._followLog = [{ t: 0, action: 'panTo', dist: 800, reason: null },
-                          { t: 0, action: 'skip', dist: null, reason: 'panning' },
-                          { t: 0, action: 'skip', dist: null, reason: null }];
+      state._followLog = [
+        { t: 0, action: 'panTo', dist: 800, reason: null },
+        { t: 0, action: 'skip', dist: null, reason: 'panning' },
+        { t: 0, action: 'skip', dist: null, reason: null },
+      ];
       mod.setTool('panlog', true);
       const el = document.getElementById('debug-panlog');
       expect(el.textContent).toContain('panTo');
@@ -340,11 +394,14 @@ describe('debug menu (?debug)', () => {
       const mod = await import('../../static/debug.js');
       delete window.__debugConsole;
       delete window.__gpsDebug;
-      expect(() => { mod.setTool('console', true); mod.setTool('gps', true); }).not.toThrow();
+      expect(() => {
+        mod.setTool('console', true);
+        mod.setTool('gps', true);
+      }).not.toThrow();
     });
 
     it('_applyOnReady is a no-op when debug is off', async () => {
-      const mod = await import('../../static/debug.js');  // master off (no query/storage)
+      const mod = await import('../../static/debug.js'); // master off (no query/storage)
       buildPanel();
       mod._applyOnReady();
       expect(document.getElementById('debug-group')).toBeNull();

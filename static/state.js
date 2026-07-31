@@ -9,7 +9,7 @@ export var state = {
   selectedJid: null,
   selectedJourneyData: null,
   selectedStop: null,
-  _activeStationBoardType: 'DEP',  // mirrors StationSelection.board_type server-side
+  _activeStationBoardType: 'DEP', // mirrors StationSelection.board_type server-side
   routeLayer: null,
   routeStopMarkers: [],
   routeCoords: null,
@@ -68,7 +68,7 @@ export function t(key, params) {
   if (!table[key]) table = window.I18N.de;
   var str = table[key] || key;
   if (params) {
-    Object.keys(params).forEach(function(k) {
+    Object.keys(params).forEach(function (k) {
       str = str.split('{' + k + '}').join(String(params[k]));
     });
   }
@@ -76,13 +76,13 @@ export function t(key, params) {
 }
 
 export function applyI18n(root) {
-  root.querySelectorAll('[data-i18n]').forEach(function(el) {
+  root.querySelectorAll('[data-i18n]').forEach(function (el) {
     el.textContent = t(el.getAttribute('data-i18n'));
   });
-  root.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
+  root.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
     el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
   });
-  root.querySelectorAll('[data-i18n-aria]').forEach(function(el) {
+  root.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
     el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
   });
   document.documentElement.lang = (settings.current && settings.current.lang) || 'de';
@@ -100,7 +100,9 @@ export function debugLog() {
   if (!window.__busradarVerbose) return;
   var args = Array.prototype.slice.call(arguments);
   args.unshift('[verbose]');
-  try { console.log.apply(console, args); } catch (e) {}
+  try {
+    console.log.apply(console, args);
+  } catch (e) {}
 }
 
 // === UTILITIES ===
@@ -108,23 +110,28 @@ export function debugLog() {
 export function decodePolyline(encoded, precision) {
   precision = precision || 1e5;
   var points = [];
-  var index = 0, lat = 0, lng = 0;
+  var index = 0,
+    lat = 0,
+    lng = 0;
   while (index < encoded.length) {
-    var shift = 0, result = 0, byte;
+    var shift = 0,
+      result = 0,
+      byte;
     do {
       byte = encoded.charCodeAt(index++) - 63;
       result |= (byte & 0x1f) << shift;
       shift += 5;
     } while (byte >= 0x20);
-    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
 
-    shift = 0; result = 0;
+    shift = 0;
+    result = 0;
     do {
       byte = encoded.charCodeAt(index++) - 63;
       result |= (byte & 0x1f) << shift;
       shift += 5;
     } while (byte >= 0x20);
-    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
 
     points.push([lat / precision, lng / precision]);
   }
@@ -153,7 +160,7 @@ export function getDayOffset(hafasTime) {
     return isNaN(n) || n < 0 ? 0 : n;
   }
   var h = parseInt(hafasTime.slice(0, 2), 10);
-  return (!isNaN(h) && h >= 24) ? Math.floor(h / 24) : 0;
+  return !isNaN(h) && h >= 24 ? Math.floor(h / 24) : 0;
 }
 
 export function parseHafasTimeToMin(t) {
@@ -197,14 +204,14 @@ export function getDelayText(delay) {
 export function parseCoord(val, min, max) {
   if (!val || !val.trim()) return null;
   var n = Number(val);
-  return (isFinite(n) && n >= min && n <= max) ? n : null;
+  return isFinite(n) && n >= min && n <= max ? n : null;
 }
 
 export function parseZoom(val) {
   if (!val || !val.trim()) return null;
   if (!/^\d+(\.\d+)?$/.test(val.trim())) return null;
   var n = Number(val);
-  return (Number.isInteger(n) && n >= 1 && n <= 19) ? n : null;
+  return Number.isInteger(n) && n >= 1 && n <= 19 ? n : null;
 }
 
 // === HAFAS MESSAGES ===
@@ -219,11 +226,11 @@ export function parseZoom(val) {
 // codes stays here as a fast-path fallback for legacy categories we
 // already know about — `Set` for O(1) lookup so the list can grow with
 // future HAFAS rotations without slowing the per-message check.
-var HAFAS_IGNORE_CODES = new Set(['ae','au','az','ai','ac','ib','ic','ad','ii','ij']);
+var HAFAS_IGNORE_CODES = new Set(['ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic', 'ad', 'ii', 'ij']);
 var HAFAS_IGNORE_TEXT_PATTERNS = [
-  /^Fahrtart\s/i,                // Internal classification codes (L, X, LS, LM, …)
-  /\bin\s*mm\b/i,                // Vehicle dimensions in millimetres
-  /^Ohne\s+Einstiegshilfe\b/i,   // Negative accessibility info — DB itself hides this
+  /^Fahrtart\s/i, // Internal classification codes (L, X, LS, LM, …)
+  /\bin\s*mm\b/i, // Vehicle dimensions in millimetres
+  /^Ohne\s+Einstiegshilfe\b/i, // Negative accessibility info — DB itself hides this
 ];
 
 function _hafasShouldIgnoreText(text) {
@@ -237,10 +244,13 @@ export function extractHafasMessages(common, msgL, stopL) {
   var remL = (common && common.remL) || [];
   var journeyLevel = [];
   var perStopByLocX = Object.create(null);
-  if (!msgL || !msgL.length) return {journeyLevel: journeyLevel, perStopByLocX: perStopByLocX};
+  if (!msgL || !msgL.length) return { journeyLevel: journeyLevel, perStopByLocX: perStopByLocX };
 
-  var firstLocX = (stopL && stopL.length > 0 && stopL[0].locX != null) ? stopL[0].locX : -1;
-  var lastLocX = (stopL && stopL.length > 1 && stopL[stopL.length - 1].locX != null) ? stopL[stopL.length - 1].locX : -1;
+  var firstLocX = stopL && stopL.length > 0 && stopL[0].locX != null ? stopL[0].locX : -1;
+  var lastLocX =
+    stopL && stopL.length > 1 && stopL[stopL.length - 1].locX != null
+      ? stopL[stopL.length - 1].locX
+      : -1;
 
   var seen = Object.create(null);
   for (var i = 0; i < msgL.length; i++) {
@@ -253,29 +263,34 @@ export function extractHafasMessages(common, msgL, stopL) {
       var code = (rem.code || '').trim().toLowerCase();
       if (HAFAS_IGNORE_CODES.has(code)) continue;
       // Intentionally matches C0/C1 control chars to strip them from untrusted HAFAS text.
-      // eslint-disable-next-line no-control-regex
-      text = String(rem.txtN).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
+      text = String(rem.txtN)
+        .replace(/[\x00-\x1F\x7F]/g, ' ') // eslint-disable-line no-control-regex
+        .trim()
+        .slice(0, 500);
       if (_hafasShouldIgnoreText(text)) continue;
     } else if (msg.type === 'HIM') {
       var himL = (common && common.himL) || [];
       var him = himL[msg.himX];
       if (!him || !him.head) continue;
       // Intentionally matches C0/C1 control chars to strip them from untrusted HAFAS text.
-      // eslint-disable-next-line no-control-regex
-      text = String(him.head).replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 500);
+      text = String(him.head)
+        .replace(/[\x00-\x1F\x7F]/g, ' ') // eslint-disable-line no-control-regex
+        .trim()
+        .slice(0, 500);
     }
     if (!text) continue;
 
     var key = (rem ? rem.code || '' : 'HIM:' + (msg.himX || 0)) + '|' + text;
 
-    var hasScopedRange = msg.fLocX != null && msg.tLocX != null && msg.fLocX >= 0 && msg.tLocX >= msg.fLocX;
+    var hasScopedRange =
+      msg.fLocX != null && msg.tLocX != null && msg.fLocX >= 0 && msg.tLocX >= msg.fLocX;
     var isJourneyWide;
     if (!hasScopedRange) {
       isJourneyWide = true;
     } else if (firstLocX === lastLocX) {
-      isJourneyWide = (msg.fLocX === firstLocX && msg.tLocX === lastLocX);
+      isJourneyWide = msg.fLocX === firstLocX && msg.tLocX === lastLocX;
     } else {
-      isJourneyWide = (msg.fLocX <= firstLocX && msg.tLocX >= lastLocX);
+      isJourneyWide = msg.fLocX <= firstLocX && msg.tLocX >= lastLocX;
     }
 
     if (hasScopedRange && !isJourneyWide) {
@@ -284,21 +299,28 @@ export function extractHafasMessages(common, msgL, stopL) {
       if (!seen[stopKey]) {
         seen[stopKey] = true;
         if (!perStopByLocX[startIdx]) perStopByLocX[startIdx] = [];
-        perStopByLocX[startIdx].push({text: text});
+        perStopByLocX[startIdx].push({ text: text });
       }
     } else {
       if (seen['j:' + key]) continue;
       seen['j:' + key] = true;
-      journeyLevel.push({text: text});
+      journeyLevel.push({ text: text });
     }
   }
-  return {journeyLevel: journeyLevel, perStopByLocX: perStopByLocX};
+  return { journeyLevel: journeyLevel, perStopByLocX: perStopByLocX };
 }
 
 // === SETTINGS ===
 export var SETTINGS_KEY = 'busradar_settings_v1';
 export var settings = {
-  defaults: { refreshInterval: 10000, interpolation: true, theme: 'dark', posMode: 'CALC', lang: 'de', showLocation: false },
+  defaults: {
+    refreshInterval: 10000,
+    interpolation: true,
+    theme: 'dark',
+    posMode: 'CALC',
+    lang: 'de',
+    showLocation: false,
+  },
   current: null,
   _saveTimer: null,
   _userInterpolation: true,
@@ -309,16 +331,24 @@ export var settings = {
   // where the async cb would otherwise resurrect showLocation=true.
   _locationToggleNonce: 0,
 
-  init: function() {
+  init: function () {
     var stored = this._loadAndValidate();
-    if (!stored.theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+    if (
+      !stored.theme &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: light)').matches
+    ) {
       stored.theme = 'light';
     }
     if (!stored.lang) {
       stored.lang = (navigator.language || 'de').toLowerCase().startsWith('en') ? 'en' : 'de';
     }
     this.current = Object.assign({}, this.defaults, stored);
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches && !('interpolation' in stored)) {
+    if (
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+      !('interpolation' in stored)
+    ) {
       this.current.interpolation = false;
     }
     this._userInterpolation = this.current.interpolation;
@@ -327,7 +357,7 @@ export var settings = {
     applyI18n(document.body);
   },
 
-  _loadAndValidate: function() {
+  _loadAndValidate: function () {
     try {
       var raw = localStorage.getItem(SETTINGS_KEY);
       if (!raw) return {};
@@ -352,13 +382,15 @@ export var settings = {
         validated.showLocation = parsed.showLocation;
       }
       return validated;
-    } catch (e) { return {}; }
+    } catch (e) {
+      return {};
+    }
   },
 
-  _save: function() {
+  _save: function () {
     var self = this;
     clearTimeout(this._saveTimer);
-    this._saveTimer = setTimeout(function() {
+    this._saveTimer = setTimeout(function () {
       try {
         var toSave = Object.assign({}, self.current, {
           interpolation: self._userInterpolation,
@@ -369,7 +401,7 @@ export var settings = {
     }, 300);
   },
 
-  _flushSave: function() {
+  _flushSave: function () {
     if (this._saveTimer) {
       clearTimeout(this._saveTimer);
       this._saveTimer = null;
@@ -383,13 +415,13 @@ export var settings = {
     }
   },
 
-  _applyThemeAttr: function() {
+  _applyThemeAttr: function () {
     document.documentElement.setAttribute('data-theme', this.current.theme);
     var meta = document.getElementById('meta-theme-color');
     if (meta) meta.content = this.current.theme === 'light' ? '#f5f6fa' : '#0a0e1a';
   },
 
-  applyTileLayers: function() {
+  applyTileLayers: function () {
     if (!state.map) return;
     var newLayer = this.current.theme === 'light' ? state.lightTileLayer : state.darkTileLayer;
     var oldLayer = this.current.theme === 'light' ? state.darkTileLayer : state.lightTileLayer;
@@ -401,17 +433,20 @@ export var settings = {
     newLayer.addTo(state.map);
   },
 
-  _updateGroup: function(groupId, value) {
-    document.querySelectorAll('#' + groupId + ' .settings-opt').forEach(function(opt) {
+  _updateGroup: function (groupId, value) {
+    document.querySelectorAll('#' + groupId + ' .settings-opt').forEach(function (opt) {
       var isActive = opt.dataset.value === value;
       opt.classList.toggle('settings-opt--active', isActive);
       opt.setAttribute('aria-checked', String(isActive));
     });
   },
 
-  _updateHint: function() {
+  _updateHint: function () {
     var hint = document.getElementById('settings-hint');
-    if (!state.map) { hint.hidden = true; return; }
+    if (!state.map) {
+      hint.hidden = true;
+      return;
+    }
     var zoom = state.map.getZoom();
     var msgs = [];
     if (zoom < CONFIG.zoomThresholdNoAnimation) {
@@ -425,7 +460,7 @@ export var settings = {
     }
   },
 
-  _applyPosModeConstraint: function() {
+  _applyPosModeConstraint: function () {
     var disable = this.current.posMode === 'REPORT_ONLY';
     this.current.interpolation = disable ? false : this._userInterpolation;
     this._updateGroup('setting-interpolation', this.current.interpolation ? 'on' : 'off');
@@ -433,7 +468,7 @@ export var settings = {
     if (group) {
       group.setAttribute('aria-disabled', String(disable));
       group.classList.toggle('settings-options--disabled', disable);
-      group.querySelectorAll('.settings-opt').forEach(function(btn) {
+      group.querySelectorAll('.settings-opt').forEach(function (btn) {
         if (disable) {
           btn.setAttribute('disabled', '');
           btn.setAttribute('tabindex', '-1');
@@ -446,7 +481,7 @@ export var settings = {
     var hint = document.getElementById('hint-animation-disabled');
     if (hint) hint.hidden = !disable;
     if (disable) {
-      state.vehicles.forEach(function(entry) {
+      state.vehicles.forEach(function (entry) {
         if (entry._animFrame) {
           cancelAnimationFrame(entry._animFrame);
           entry._animFrame = null;
@@ -459,7 +494,7 @@ export var settings = {
     if (refreshGroup) {
       refreshGroup.setAttribute('aria-disabled', String(disable));
       refreshGroup.classList.toggle('settings-options--disabled', disable);
-      refreshGroup.querySelectorAll('.settings-opt').forEach(function(btn) {
+      refreshGroup.querySelectorAll('.settings-opt').forEach(function (btn) {
         if (disable) {
           btn.setAttribute('disabled', '');
           btn.setAttribute('tabindex', '-1');

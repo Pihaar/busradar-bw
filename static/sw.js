@@ -35,26 +35,41 @@ var PRECACHE_URLS = [
   '/icons/apple-touch-icon.png',
 ];
 
-self.addEventListener('install', function(event) {
+self.addEventListener('install', function (event) {
   event.waitUntil(
-    caches.open(CACHE).then(function(cache) {
-      return cache.addAll(PRECACHE_URLS);
-    }).then(function() { return self.skipWaiting(); })
+    caches
+      .open(CACHE)
+      .then(function (cache) {
+        return cache.addAll(PRECACHE_URLS);
+      })
+      .then(function () {
+        return self.skipWaiting();
+      }),
   );
 });
 
-self.addEventListener('activate', function(event) {
+self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches.keys().then(function(keys) {
-      return Promise.all(
-        keys.filter(function(k) { return k !== CACHE && k.indexOf('busradar-') === 0; })
-            .map(function(k) { return caches.delete(k); })
-      );
-    }).then(function() { return self.clients.claim(); })
+    caches
+      .keys()
+      .then(function (keys) {
+        return Promise.all(
+          keys
+            .filter(function (k) {
+              return k !== CACHE && k.indexOf('busradar-') === 0;
+            })
+            .map(function (k) {
+              return caches.delete(k);
+            }),
+        );
+      })
+      .then(function () {
+        return self.clients.claim();
+      }),
   );
 });
 
-self.addEventListener('fetch', function(event) {
+self.addEventListener('fetch', function (event) {
   var url = new URL(event.request.url);
 
   if (event.request.method !== 'GET') return;
@@ -63,11 +78,19 @@ self.addEventListener('fetch', function(event) {
 
   if (event.request.mode === 'navigate') {
     var controller = new AbortController();
-    var timeout = setTimeout(function() { controller.abort(); }, 3000);
+    var timeout = setTimeout(function () {
+      controller.abort();
+    }, 3000);
     event.respondWith(
-      fetch(event.request, {signal: controller.signal})
-        .then(function(resp) { clearTimeout(timeout); return resp; })
-        .catch(function() { clearTimeout(timeout); return caches.match('/index.html'); })
+      fetch(event.request, { signal: controller.signal })
+        .then(function (resp) {
+          clearTimeout(timeout);
+          return resp;
+        })
+        .catch(function () {
+          clearTimeout(timeout);
+          return caches.match('/index.html');
+        }),
     );
     return;
   }
@@ -81,7 +104,8 @@ self.addEventListener('fetch', function(event) {
   // fallback when offline. Immutable assets below stay cache-first.
   var p = url.pathname;
   var isVendor = p.indexOf('/vendor/') === 0;
-  var isAppCode = !isVendor && (p.endsWith('.js') || p.endsWith('.css') || p.endsWith('.webmanifest'));
+  var isAppCode =
+    !isVendor && (p.endsWith('.js') || p.endsWith('.css') || p.endsWith('.webmanifest'));
 
   if (isAppCode) {
     event.respondWith(
@@ -91,15 +115,19 @@ self.addEventListener('fetch', function(event) {
       // the network-first fetch was silently served from the HTTP cache —
       // stale app code — so a deploy still didn't reach the client. The
       // server returns 304 (tiny) when unchanged, 200 fresh when changed.
-      fetch(event.request, {cache: 'no-cache'}).then(function(resp) {
-        if (resp && resp.ok) {
-          var clone = resp.clone();
-          caches.open(CACHE).then(function(c) { c.put(event.request, clone); });
-        }
-        return resp;
-      }).catch(function() {
-        return caches.match(event.request);
-      })
+      fetch(event.request, { cache: 'no-cache' })
+        .then(function (resp) {
+          if (resp && resp.ok) {
+            var clone = resp.clone();
+            caches.open(CACHE).then(function (c) {
+              c.put(event.request, clone);
+            });
+          }
+          return resp;
+        })
+        .catch(function () {
+          return caches.match(event.request);
+        }),
     );
     return;
   }
@@ -107,15 +135,17 @@ self.addEventListener('fetch', function(event) {
   // Immutable / rarely-changing assets (fonts, icons, favicon, vendored
   // Leaflet): cache-first is correct and keeps them instant + offline.
   event.respondWith(
-    caches.match(event.request).then(function(cached) {
+    caches.match(event.request).then(function (cached) {
       if (cached) return cached;
-      return fetch(event.request).then(function(resp) {
+      return fetch(event.request).then(function (resp) {
         if (resp.ok) {
           var clone = resp.clone();
-          caches.open(CACHE).then(function(c) { c.put(event.request, clone); });
+          caches.open(CACHE).then(function (c) {
+            c.put(event.request, clone);
+          });
         }
         return resp;
       });
-    })
+    }),
   );
 });

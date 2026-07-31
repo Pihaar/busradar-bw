@@ -97,6 +97,28 @@ if [[ "${#js_files[@]}" -gt 0 ]]; then
   fi
 fi
 
+# --- Prettier (JS format check) — only the changed JS, resolved from node_modules ---
+mapfile -t prettier_files < <(staged_files '^(static|tests/js)/.*\.js$' | grep -v '^static/vendor/' || true)
+if [[ "${#prettier_files[@]}" -gt 0 ]]; then
+  if command -v npx >/dev/null 2>&1 && npx --no-install prettier --version >/dev/null 2>&1; then
+    echo "pre-commit: prettier --check (${#prettier_files[@]} file(s))"
+    npx --no-install prettier --check "${prettier_files[@]}" || { echo "  run: npm run format"; status=1; }
+  else
+    echo "pre-commit: prettier not found — skipping (npm i -D prettier)"
+  fi
+fi
+
+# --- stylelint (CSS lint) — only the changed non-vendor CSS ---
+mapfile -t css_files < <(staged_files '^static/.*\.css$' | grep -v '^static/vendor/' || true)
+if [[ "${#css_files[@]}" -gt 0 ]]; then
+  if command -v npx >/dev/null 2>&1 && npx --no-install stylelint --version >/dev/null 2>&1; then
+    echo "pre-commit: stylelint (${#css_files[@]} file(s))"
+    npx --no-install stylelint "${css_files[@]}" || { echo "  run: npx stylelint \"static/**/*.css\" --fix"; status=1; }
+  else
+    echo "pre-commit: stylelint not found — skipping (npm i -D stylelint)"
+  fi
+fi
+
 if [[ "${status}" -ne 0 ]]; then
   echo "pre-commit: checks failed — commit aborted." >&2
 fi

@@ -39,7 +39,14 @@ vi.mock('../../static/status.js', () => ({
   formatStatusText: vi.fn(() => 'status'),
 }));
 
-const { _applyJourneyPayload, _resendActiveSelection, _followPanTo, _viewportPayload, busradarDump, busradarDownloadDump } = await import('../../static/refresh.js');
+const {
+  _applyJourneyPayload,
+  _resendActiveSelection,
+  _followPanTo,
+  _viewportPayload,
+  busradarDump,
+  busradarDownloadDump,
+} = await import('../../static/refresh.js');
 const { state, settings, debugLog } = await import('../../static/state.js');
 const { api } = await import('../../static/api.js');
 
@@ -56,7 +63,7 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     state._selectedHadPosJid = null;
     state.vehicles = new Map();
     state.serverTimeStamp = Date.now();
-    state.serverTimeMin = 720;  // 12:00
+    state.serverTimeMin = 720; // 12:00
   });
 
   it('branch 1: position present + vehicle in BBox → drawRoute + updateJourneyStopDelays', () => {
@@ -127,7 +134,9 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
 
   it('live journey that loses its position with a PAST last stop → ended immediately, NOT not-started', () => {
     // Live first (now 12:00; last stop 11:00 is already past).
-    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] } });
+    _applyJourneyPayload('JL', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] },
+    });
     expect(state._selectedHadPosJid).toBe('JL');
     _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '110000' }] } });
     expect(uiMock.showJourneyEnded).toHaveBeenCalledOnce();
@@ -135,7 +144,9 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
   });
 
   it('live journey losing position with a FUTURE last stop keeps the panel (mid-route gap / near terminus): NOT ended, NOT not-started', () => {
-    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] } });
+    _applyJourneyPayload('JL', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] },
+    });
     // now 12:00, last stop 14:00 in the future → still en route, no live pos.
     _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }] } });
     expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
@@ -149,7 +160,9 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
   });
 
   it('ended stays ended and idempotent across repeated no-pos frames (never flips to not-started)', () => {
-    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] } });
+    _applyJourneyPayload('JL', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '110000' }] },
+    });
     for (let i = 0; i < 3; i++) {
       _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '110000' }] } });
     }
@@ -171,8 +184,12 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
   });
 
   it('a live journey that gets cancelled shows cancelled regardless of last stop time', () => {
-    _applyJourneyPayload('JL', { journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] } });
-    _applyJourneyPayload('JL', { journey: { pos: {}, stopL: [{ aTimeS: '140000' }], isCncl: true } });
+    _applyJourneyPayload('JL', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [{ aTimeS: '140000' }] },
+    });
+    _applyJourneyPayload('JL', {
+      journey: { pos: {}, stopL: [{ aTimeS: '140000' }], isCncl: true },
+    });
     expect(uiMock._showJourneyCancelled).toHaveBeenCalledOnce();
     expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
   });
@@ -193,10 +210,31 @@ function applyPushedStationboard(loc, data, boardType, sink) {
   if (state._autoExpandingDep || state._autoExpandingArr) return;
   const capturedLid = loc.lid;
   const isArr = boardType === 'ARR';
-  const boardSig = (jnyL) => (jnyL || []).map((j) => {
-    const stb = j.stbStop || {};
-    return (j.jid || '') + '|' + (j.prodX != null ? j.prodX : '') + '|' + (j.dirTxt || '') + '|' + (j.date || '') + '|' + (stb.locX != null ? stb.locX : '') + '|' + (stb.dTimeS || '') + '|' + (stb.dTimeR || '') + '|' + (stb.aTimeS || '') + '|' + (stb.aTimeR || '');
-  }).join(';');
+  const boardSig = (jnyL) =>
+    (jnyL || [])
+      .map((j) => {
+        const stb = j.stbStop || {};
+        return (
+          (j.jid || '') +
+          '|' +
+          (j.prodX != null ? j.prodX : '') +
+          '|' +
+          (j.dirTxt || '') +
+          '|' +
+          (j.date || '') +
+          '|' +
+          (stb.locX != null ? stb.locX : '') +
+          '|' +
+          (stb.dTimeS || '') +
+          '|' +
+          (stb.dTimeR || '') +
+          '|' +
+          (stb.aTimeS || '') +
+          '|' +
+          (stb.aTimeR || '')
+        );
+      })
+      .join(';');
   if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
   const sig = boardSig(data.jnyL);
   if (isArr) {
@@ -293,7 +331,12 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     state._activeStationBoardType = 'DEP';
     state._stationDepDur = 240;
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'DEP', 240);
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
+      'stationboard',
+      'A=1@L=8000@',
+      'DEP',
+      240,
+    );
   });
 
   it('re-selects the ARR board with the ARR dur when ARR tab is active', () => {
@@ -301,13 +344,23 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     state._activeStationBoardType = 'ARR';
     state._stationArrDur = 120;
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'ARR', 120);
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
+      'stationboard',
+      'A=1@L=8000@',
+      'ARR',
+      120,
+    );
   });
 
   it('defaults board type to DEP and dur to 60 when unset', () => {
     state.selectedStop = { lid: 'A=1@L=8000@' };
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('stationboard', 'A=1@L=8000@', 'DEP', 60);
+    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
+      'stationboard',
+      'A=1@L=8000@',
+      'DEP',
+      60,
+    );
   });
 
   it('does nothing when neither a journey nor a stop is selected', () => {
@@ -340,7 +393,10 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     state.vehicles = new Map();
     state.serverTimeStamp = Date.now();
     state.serverTimeMin = 720;
-    panTo = vi.fn(); setView = vi.fn(); moveendCb = null; dist = 0;
+    panTo = vi.fn();
+    setView = vi.fn();
+    moveendCb = null;
+    dist = 0;
     uiMock.updateJourneyStopDelays.mockClear();
     uiMock.drawRoute.mockClear();
     state.map = {
@@ -348,10 +404,16 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
       getZoom: () => 15,
       panTo,
       setView,
-      once: (ev, cb) => { moveendCb = cb; },
+      once: (ev, cb) => {
+        moveendCb = cb;
+      },
     };
   });
-  afterEach(() => { state.map = null; state.followBus = false; state.selectedJid = null; });
+  afterEach(() => {
+    state.map = null;
+    state.followBus = false;
+    state.selectedJid = null;
+  });
 
   it('panTo for a moderate distance and clears _followPanning on moveend', () => {
     dist = 500;
@@ -414,7 +476,7 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     state.vehicles.set('JF', {
       data: { lat: 49.4, lon: 8.6 },
       marker: { setLatLng: vi.fn() },
-      missedCycles: 3,  // off-ring grace
+      missedCycles: 3, // off-ring grace
     });
     _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
     expect(panTo).toHaveBeenCalledOnce();
@@ -427,7 +489,7 @@ describe('_followPanTo + journey-driven follow (follow bus out of the viewport)'
     state.vehicles.set('JF', {
       data: { lat: 49.34, lon: 8.66 },
       marker: { setLatLng: vi.fn() },
-      missedCycles: 0,  // in-ring: vehicles payload has the real position
+      missedCycles: 0, // in-ring: vehicles payload has the real position
     });
     _applyJourneyPayload('JF', { journey: { pos: { x: 8600000, y: 49500000 }, stopL: [] } });
     expect(panTo).not.toHaveBeenCalled();
@@ -450,14 +512,18 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
     settings.current = { posMode: 'CALC' };
     // Tiny viewport (~200 m) centered on Sandhausen, as when strongly zoomed in.
     state.map = {
-      getCenter: () => ({ lat: 49.342, lng: 8.660 }),
+      getCenter: () => ({ lat: 49.342, lng: 8.66 }),
       getBounds: () => ({
-        getSouthWest: () => ({ lat: 49.3410, lng: 8.6588 }),
-        getNorthEast: () => ({ lat: 49.3430, lng: 8.6612 }),
+        getSouthWest: () => ({ lat: 49.341, lng: 8.6588 }),
+        getNorthEast: () => ({ lat: 49.343, lng: 8.6612 }),
       }),
     };
   });
-  afterEach(() => { state.map = null; state.followBus = false; state.selectedJid = null; });
+  afterEach(() => {
+    state.map = null;
+    state.followBus = false;
+    state.selectedJid = null;
+  });
 
   it('returns null when the map is not ready', () => {
     state.map = null;
@@ -466,8 +532,8 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
 
   it('sends the exact visual bounds when not following', () => {
     const p = _viewportPayload();
-    expect(p.swLat).toBeCloseTo(49.3410, 4);
-    expect(p.neLat).toBeCloseTo(49.3430, 4);
+    expect(p.swLat).toBeCloseTo(49.341, 4);
+    expect(p.neLat).toBeCloseTo(49.343, 4);
     expect(p.swLon).toBeCloseTo(8.6588, 4);
     expect(p.neLon).toBeCloseTo(8.6612, 4);
     expect(p.posMode).toBe('CALC');
@@ -480,21 +546,21 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
     // ~2000 m ≈ 0.018° lat around center 49.342.
     expect(p.swLat).toBeLessThan(49.342 - 0.017);
     expect(p.neLat).toBeGreaterThan(49.342 + 0.017);
-    expect(p.swLon).toBeLessThan(8.660 - 0.02);
-    expect(p.neLon).toBeGreaterThan(8.660 + 0.02);
+    expect(p.swLon).toBeLessThan(8.66 - 0.02);
+    expect(p.neLon).toBeGreaterThan(8.66 + 0.02);
   });
 
   it('does not shrink a viewport already larger than the follow floor', () => {
     state.followBus = true;
     state.selectedJid = 'JF';
     state.map.getBounds = () => ({
-      getSouthWest: () => ({ lat: 49.30, lng: 8.60 }),
+      getSouthWest: () => ({ lat: 49.3, lng: 8.6 }),
       getNorthEast: () => ({ lat: 49.38, lng: 8.72 }),
     });
     const p = _viewportPayload();
-    expect(p.swLat).toBeCloseTo(49.30, 4);
+    expect(p.swLat).toBeCloseTo(49.3, 4);
     expect(p.neLat).toBeCloseTo(49.38, 4);
-    expect(p.swLon).toBeCloseTo(8.60, 4);
+    expect(p.swLon).toBeCloseTo(8.6, 4);
     expect(p.neLon).toBeCloseTo(8.72, 4);
   });
 
@@ -502,8 +568,8 @@ describe('_viewportPayload — follow widens the fetch ring so a zoomed-in bus s
     state.followBus = false;
     state.selectedJid = 'JF';
     const p = _viewportPayload();
-    expect(p.swLat).toBeCloseTo(49.3410, 4);
-    expect(p.neLat).toBeCloseTo(49.3430, 4);
+    expect(p.swLat).toBeCloseTo(49.341, 4);
+    expect(p.neLat).toBeCloseTo(49.343, 4);
   });
 });
 
@@ -516,14 +582,20 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     state._followLog = [];
     state.selectedJid = null;
     state.vehicles = new Map();
-    panTo = vi.fn(); setView = vi.fn();
+    panTo = vi.fn();
+    setView = vi.fn();
     state.map = {
       getCenter: () => ({ lat: 49.34, lng: 8.66, distanceTo: () => 800 }),
-      getZoom: () => 15, panTo, setView, once: () => {},
+      getZoom: () => 15,
+      panTo,
+      setView,
+      once: () => {},
     };
     settings.current = { posMode: 'CALC' };
   });
-  afterEach(() => { state.map = null; });
+  afterEach(() => {
+    state.map = null;
+  });
 
   it('_followPanTo logs a panTo decision with its distance', () => {
     _followPanTo(49.5, 8.6);
@@ -538,13 +610,16 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     const last = state._followLog[state._followLog.length - 1];
     expect(last.action).toBe('skip');
     expect(last.reason).toBe('panning');
-    expect(last.dist).toBe(800);  // large dist on a skip = map left behind the marker
+    expect(last.dist).toBe(800); // large dist on a skip = map left behind the marker
     expect(panTo).not.toHaveBeenCalled();
   });
 
   it('busradarDump returns parseable JSON with state, follow log, and marker-vs-center offset', () => {
     state.selectedJid = 'JD';
-    state.vehicles.set('JD', { marker: { getLatLng: () => ({ lat: 49.36, lng: 8.68 }) }, data: {} });
+    state.vehicles.set('JD', {
+      marker: { getLatLng: () => ({ lat: 49.36, lng: 8.68 }) },
+      data: {},
+    });
     state._followLog = [{ t: 1, action: 'skip', dist: 900, reason: 'panning' }];
     const d = JSON.parse(busradarDump());
     expect(d.selectedJid).toBe('JD');
@@ -560,9 +635,9 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     const prev = window.__busradarConsoleTail;
     window.__busradarConsoleTail = Array.from({ length: 400 }, (_, i) => 'line-' + i);
     const d = JSON.parse(busradarDump());
-    expect(d.consoleTail.length).toBe(400);       // no slice(-150) truncation
-    expect(d.consoleTail[0]).toBe('line-0');       // oldest retained
-    expect(d.consoleTail[399]).toBe('line-399');   // newest retained
+    expect(d.consoleTail.length).toBe(400); // no slice(-150) truncation
+    expect(d.consoleTail[0]).toBe('line-0'); // oldest retained
+    expect(d.consoleTail[399]).toBe('line-399'); // newest retained
     window.__busradarConsoleTail = prev;
   });
 });
@@ -593,27 +668,35 @@ describe('busradarDownloadDump — download the dump as a .json file', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
     // Anchor is removed again after the click (not left in the DOM).
     expect(document.querySelector('a[download]')).toBeNull();
-    expect(revokeSpy).not.toHaveBeenCalled();  // deferred
+    expect(revokeSpy).not.toHaveBeenCalled(); // deferred
     vi.advanceTimersByTime(10000);
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock');
   });
 
   it('falls back to the clipboard copy when Blob/URL is unavailable', async () => {
-    createSpy.mockImplementation(() => { throw new Error('no URL'); });
+    createSpy.mockImplementation(() => {
+      throw new Error('no URL');
+    });
     const writeText = vi.fn().mockResolvedValue(undefined);
     const origClipboard = navigator.clipboard;
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     busradarDownloadDump();
     expect(writeText).toHaveBeenCalledTimes(1);
     if (origClipboard === undefined) delete navigator.clipboard;
-    else Object.defineProperty(navigator, 'clipboard', { value: origClipboard, configurable: true });
+    else
+      Object.defineProperty(navigator, 'clipboard', { value: origClipboard, configurable: true });
   });
 });
 
 describe('debugLog — gated verbose logger', () => {
   let logSpy;
-  beforeEach(() => { logSpy = vi.spyOn(console, 'log').mockImplementation(() => {}); });
-  afterEach(() => { logSpy.mockRestore(); delete window.__busradarVerbose; });
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    delete window.__busradarVerbose;
+  });
 
   it('is a no-op when window.__busradarVerbose is off', () => {
     window.__busradarVerbose = false;

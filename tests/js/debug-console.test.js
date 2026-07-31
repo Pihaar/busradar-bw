@@ -11,9 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 describe('debug-console overlay', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    try { localStorage.clear(); } catch (e) {}
+    try {
+      localStorage.clear();
+    } catch (e) {}
     delete window.__debugMenu;
-    vi.resetModules();  // re-run the IIFE per test (fresh handles)
+    vi.resetModules(); // re-run the IIFE per test (fresh handles)
   });
 
   it('does not show the overlay until show() is called', async () => {
@@ -63,8 +65,9 @@ describe('debug-console overlay', () => {
     window.__debugConsole.show();
     console.log('x');
     const box = document.getElementById('debug-console');
-    const closeBtn = Array.prototype.slice.call(box.querySelectorAll('button'))
-      .find(b => b.textContent.indexOf('Close') !== -1);
+    const closeBtn = Array.prototype.slice
+      .call(box.querySelectorAll('button'))
+      .find((b) => b.textContent.indexOf('Close') !== -1);
     expect(closeBtn).toBeTruthy();
     closeBtn.click();
     expect(document.getElementById('debug-console')).toBeNull();
@@ -77,8 +80,9 @@ describe('debug-console overlay', () => {
     window.__debugMenu = { setTool };
     window.__debugConsole.show();
     const box = document.getElementById('debug-console');
-    const closeBtn = Array.prototype.slice.call(box.querySelectorAll('button'))
-      .find(b => b.textContent.indexOf('Close') !== -1);
+    const closeBtn = Array.prototype.slice
+      .call(box.querySelectorAll('button'))
+      .find((b) => b.textContent.indexOf('Close') !== -1);
     closeBtn.click();
     expect(setTool).toHaveBeenCalledWith('console', false);
   });
@@ -88,8 +92,9 @@ describe('debug-console overlay', () => {
     window.__debugConsole.show();
     console.log('line-one');
     const box = document.getElementById('debug-console');
-    const clearBtn = Array.prototype.slice.call(box.querySelectorAll('button'))
-      .find(b => b.textContent.indexOf('Clear') !== -1);
+    const clearBtn = Array.prototype.slice
+      .call(box.querySelectorAll('button'))
+      .find((b) => b.textContent.indexOf('Clear') !== -1);
     clearBtn.click();
     expect(document.getElementById('debug-console')).not.toBeNull();
     expect(box.textContent).not.toContain('line-one');
@@ -100,8 +105,10 @@ describe('debug-console overlay', () => {
     window.__debugConsole.show();
     console.log('survives-clear');
     const box = document.getElementById('debug-console');
-    Array.prototype.slice.call(box.querySelectorAll('button'))
-      .find(b => b.textContent.indexOf('Clear') !== -1).click();
+    Array.prototype.slice
+      .call(box.querySelectorAll('button'))
+      .find((b) => b.textContent.indexOf('Clear') !== -1)
+      .click();
     // UI cleared, but the ring (what the dump reads) keeps the line.
     expect(window.__busradarConsoleTail.join('\n')).toContain('survives-clear');
   });
@@ -110,15 +117,18 @@ describe('debug-console overlay', () => {
     await import('../../static/debug-console.js');
     for (let i = 0; i < 2001; i++) console.log('r' + i);
     expect(window.__busradarConsoleTail.length).toBe(2000);
-    expect(window.__busradarConsoleTail[window.__busradarConsoleTail.length - 1]).toContain('r2000');
+    expect(window.__busradarConsoleTail[window.__busradarConsoleTail.length - 1]).toContain(
+      'r2000',
+    );
   });
 
   it('no longer renders a Dump button in the overlay', async () => {
     await import('../../static/debug-console.js');
     window.__debugConsole.show();
     const box = document.getElementById('debug-console');
-    const dumpBtn = Array.prototype.slice.call(box.querySelectorAll('button'))
-      .find(b => b.textContent.indexOf('Dump') !== -1);
+    const dumpBtn = Array.prototype.slice
+      .call(box.querySelectorAll('button'))
+      .find((b) => b.textContent.indexOf('Dump') !== -1);
     expect(dumpBtn).toBeUndefined();
   });
 

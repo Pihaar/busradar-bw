@@ -1,0 +1,5 @@
+node_modules
+coverage
+static/vendor
+.playwright-mcp
+package-lock.json

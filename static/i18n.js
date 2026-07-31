@@ -2,7 +2,7 @@
  * Busradar BW — Internationalization (i18n) Strings
  * Loaded before app.js. Provides window.I18N with DE + EN translations.
  */
-(function() {
+(function () {
   'use strict';
 
   var de = Object.create(null);
@@ -239,8 +239,10 @@
   de.setting_reset = 'Cache & Einstellungen zurücksetzen';
   en.setting_reset = 'Reset cache & settings';
 
-  de.setting_reset_confirm = 'Lokale Daten, Cache und Einstellungen wirklich zurücksetzen? Die Seite wird danach neu geladen.';
-  en.setting_reset_confirm = 'Reset all local data, cache and settings? The page will reload afterwards.';
+  de.setting_reset_confirm =
+    'Lokale Daten, Cache und Einstellungen wirklich zurücksetzen? Die Seite wird danach neu geladen.';
+  en.setting_reset_confirm =
+    'Reset all local data, cache and settings? The page will reload afterwards.';
 
   de.setting_reset_aria = 'Lokalen Cache und Einstellungen zurücksetzen, Seite neu laden';
   en.setting_reset_aria = 'Reset local cache and settings, reload page';
@@ -325,8 +327,10 @@
   de.about_title = 'Busradar BW';
   en.about_title = 'Busradar BW';
 
-  de.about_intro = 'Live-Bustracker für Baden-Württemberg als Ersatz für die eingestellte App "DB Busradar Baden-Württemberg".';
-  en.about_intro = 'Live bus tracker for Baden-Württemberg, replacing the discontinued "DB Busradar Baden-Württemberg" app.';
+  de.about_intro =
+    'Live-Bustracker für Baden-Württemberg als Ersatz für die eingestellte App "DB Busradar Baden-Württemberg".';
+  en.about_intro =
+    'Live bus tracker for Baden-Württemberg, replacing the discontinued "DB Busradar Baden-Württemberg" app.';
 
   de.about_data_heading = 'Datenquelle';
   en.about_data_heading = 'Data source';
@@ -337,8 +341,10 @@
   de.about_data_publisher = 'Herausgeber: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';
   en.about_data_publisher = 'Publisher: DB Regio Bus Baden-Württemberg (dbregiobus-bawue.de).';
 
-  de.about_data_coverage = 'Nur Busse von DB Regio Bus (BRN, Südwestbus). Andere Betreiber wie rnv, SSB oder KVV sind nicht enthalten.';
-  en.about_data_coverage = 'Only buses operated by DB Regio Bus (BRN, Südwestbus). Other operators such as rnv, SSB, or KVV are not included.';
+  de.about_data_coverage =
+    'Nur Busse von DB Regio Bus (BRN, Südwestbus). Andere Betreiber wie rnv, SSB oder KVV sind nicht enthalten.';
+  en.about_data_coverage =
+    'Only buses operated by DB Regio Bus (BRN, Südwestbus). Other operators such as rnv, SSB, or KVV are not included.';
 
   de.about_data_map = 'Kartendaten: © OpenStreetMap-Mitwirkende, © CARTO.';
   en.about_data_map = 'Map data: © OpenStreetMap contributors, © CARTO.';
@@ -346,8 +352,10 @@
   de.about_legal_heading = 'Rechtliches';
   en.about_legal_heading = 'Legal';
 
-  de.about_legal_text = 'Privates, nicht-kommerzielles Projekt. Keine Gewähr für Vollständigkeit oder Korrektheit der angezeigten Daten.';
-  en.about_legal_text = 'Private, non-commercial project. No guarantee for completeness or accuracy of displayed data.';
+  de.about_legal_text =
+    'Privates, nicht-kommerzielles Projekt. Keine Gewähr für Vollständigkeit oder Korrektheit der angezeigten Daten.';
+  en.about_legal_text =
+    'Private, non-commercial project. No guarantee for completeness or accuracy of displayed data.';
 
   de.about_source_heading = 'Quellcode';
   en.about_source_heading = 'Source code';
@@ -361,8 +369,10 @@
   de.about_privacy_heading = 'Datenschutz';
   en.about_privacy_heading = 'Privacy';
 
-  de.about_privacy_text = 'Keine Cookies, kein Analytics, kein Cross-Site-Tracking. Der Webserver protokolliert IP, Pfad und Zeit im Zugriffslog für Betrieb und Missbrauchserkennung. Zusätzlich wird die IP kurzzeitig im Anwendungsspeicher gehalten, um die Anzahl aktiver Nutzer pro IP zu begrenzen (kein Profil, keine Persistenz, kein Export). Karten- und Schriftdaten werden direkt vom Browser bei OpenStreetMap und CARTO geladen; deren Datenschutzhinweise gelten zusätzlich. Fragen via GitHub-Issue.';
-  en.about_privacy_text = 'No cookies, no analytics, no cross-site tracking. The web server logs IP, path and time in its access log for operations and abuse detection. The IP is additionally kept briefly in application memory to cap concurrent users per IP (no profile, no persistence, no export). Map and font assets are loaded directly by the browser from OpenStreetMap and CARTO; their privacy notices apply additionally. Questions via GitHub issue.';
+  de.about_privacy_text =
+    'Keine Cookies, kein Analytics, kein Cross-Site-Tracking. Der Webserver protokolliert IP, Pfad und Zeit im Zugriffslog für Betrieb und Missbrauchserkennung. Zusätzlich wird die IP kurzzeitig im Anwendungsspeicher gehalten, um die Anzahl aktiver Nutzer pro IP zu begrenzen (kein Profil, keine Persistenz, kein Export). Karten- und Schriftdaten werden direkt vom Browser bei OpenStreetMap und CARTO geladen; deren Datenschutzhinweise gelten zusätzlich. Fragen via GitHub-Issue.';
+  en.about_privacy_text =
+    'No cookies, no analytics, no cross-site tracking. The web server logs IP, path and time in its access log for operations and abuse detection. The IP is additionally kept briefly in application memory to cap concurrent users per IP (no profile, no persistence, no export). Map and font assets are loaded directly by the browser from OpenStreetMap and CARTO; their privacy notices apply additionally. Questions via GitHub issue.';
 
   de.about_version_label = 'Version';
   en.about_version_label = 'Version';

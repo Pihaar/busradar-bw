@@ -38,7 +38,9 @@ const { state } = await import('../../static/state.js');
 // recurses via un-awaited promise chains, so a single await isn't enough).
 async function settleCascade() {
   for (let i = 0; i < 100 && state._autoExpandingDep; i++) {
-    await new Promise(function (r) { setTimeout(r, 0); });
+    await new Promise(function (r) {
+      setTimeout(r, 0);
+    });
   }
 }
 
@@ -63,7 +65,9 @@ describe('load-more departure cascade', () => {
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(function () {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('cascades across empty hours until the departure count grows', async () => {
     vi.spyOn(ui, 'renderDepartures').mockImplementation(function (data) {
@@ -74,9 +78,11 @@ describe('load-more departure cascade', () => {
     ui.loadDepartures(loc, '', 480, true);
     await settleCascade();
 
-    const durs = getStationBoard.mock.calls.map(function (c) { return c[2]; });
+    const durs = getStationBoard.mock.calls.map(function (c) {
+      return c[2];
+    });
     expect(durs[0]).toBe(480);
-    expect(Math.max.apply(null, durs)).toBe(960);  // stops once count grows
+    expect(Math.max.apply(null, durs)).toBe(960); // stops once count grows
     expect(state._stationDepCount).toBe(31);
     expect(state._autoExpandingDep).toBe(false);
   });
@@ -89,19 +95,27 @@ describe('load-more departure cascade', () => {
     ui.loadDepartures(loc, '', 60, true);
     await settleCascade();
 
-    const durs = getStationBoard.mock.calls.map(function (c) { return c[2]; });
+    const durs = getStationBoard.mock.calls.map(function (c) {
+      return c[2];
+    });
     expect(Math.max.apply(null, durs)).toBe(1440);
-    expect(durs.every(function (d) { return d <= 1440; })).toBe(true);
+    expect(
+      durs.every(function (d) {
+        return d <= 1440;
+      }),
+    ).toBe(true);
   });
 });
 
 describe('load-more button click triggers a cascade', () => {
   beforeEach(() => {
     document.body.innerHTML = '<ul id="departure-list"></ul>';
-    state._depExpandCount = 7;  // pre-consumed by the initial stop-open
+    state._depExpandCount = 7; // pre-consumed by the initial stop-open
     state._arrExpandCount = 0;
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('resets the expand counter and calls loadDepartures with autoExpand=true', () => {
     const spy = vi.spyOn(ui, 'loadDepartures').mockImplementation(() => Promise.resolve());
@@ -111,11 +125,11 @@ describe('load-more button click triggers a cascade', () => {
     expect(btn).not.toBeNull();
     btn.click();
 
-    expect(state._depExpandCount).toBe(0);  // reset → manual walk gets full budget
+    expect(state._depExpandCount).toBe(0); // reset → manual walk gets full budget
     expect(spy).toHaveBeenCalledTimes(1);
     const args = spy.mock.calls[0];
-    expect(args[2]).toBe(540);   // currentDur 480 + 60
-    expect(args[3]).toBe(true);  // autoExpand — the fix (was false)
+    expect(args[2]).toBe(540); // currentDur 480 + 60
+    expect(args[3]).toBe(true); // autoExpand — the fix (was false)
   });
 });
 
@@ -130,7 +144,9 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     state._autoExpandingDep = false;
     state.vehicles = new Map();
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   function populate(n) {
     const frag = document.createDocumentFragment();
@@ -145,7 +161,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
   it('keeps the shown departures while an expand cascade returns none', () => {
     populate(3);
     state._stationDepDur = 480;
-    state._autoExpandingDep = true;  // cascade walking a service gap
+    state._autoExpandingDep = true; // cascade walking a service gap
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(3);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
@@ -179,10 +195,13 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
   it('replaces the list with fresh departures when results arrive', () => {
     populate(1);
     state._stationDepDur = 240;
-    const data = { jnyL: [
-      { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } },
-      { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { dTimeS: '121000' } },
-    ], common: { prodL: [{ nameS: '721' }], locL: [] } };
+    const data = {
+      jnyL: [
+        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } },
+        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { dTimeS: '121000' } },
+      ],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
     ui.renderDepartures(data, loc, '', null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
@@ -199,13 +218,15 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
     state._autoExpandingArr = false;
     state.vehicles = new Map();
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   function populate(n) {
     const frag = document.createDocumentFragment();
     for (let i = 0; i < n; i++) {
       const li = document.createElement('li');
-      li.className = 'departure-item';  // arrival rows reuse this class
+      li.className = 'departure-item'; // arrival rows reuse this class
       frag.appendChild(li);
     }
     arrList.replaceChildren(frag);
@@ -241,7 +262,9 @@ describe('applyPushedStationboard — an empty SSE push clears a wide board (Bug
     state._stationDepDur = 480;
     state.vehicles = new Map();
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('clears the frozen list when the real push handler delivers an empty wide board', () => {
     const li = document.createElement('li');
@@ -261,7 +284,9 @@ describe('loadArrivals error — keeps a populated list instead of wiping it (mi
     getStationBoard.mockClear();
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('does not wipe shown arrivals when the fetch rejects', async () => {
     const li = document.createElement('li');
@@ -269,7 +294,9 @@ describe('loadArrivals error — keeps a populated list instead of wiping it (mi
     document.getElementById('arrival-list').appendChild(li);
     getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
     await ui.loadArrivals(loc, '', 300, true);
-    expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(1);
+    expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(
+      1,
+    );
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).toBeNull();
     expect(ui.addLoadMoreButton).toHaveBeenCalled();
   });
@@ -291,7 +318,9 @@ describe('loadDepartures error — keeps a populated list instead of wiping it',
     getStationBoard.mockClear();
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('does not wipe shown departures when the fetch rejects (e.g. 429)', async () => {
     const li = document.createElement('li');

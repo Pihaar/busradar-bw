@@ -11,17 +11,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 function makeMarkerMock() {
   const mock = {
-    addTo: vi.fn(function (map) { mock._map = map; return mock; }),
+    addTo: vi.fn(function (map) {
+      mock._map = map;
+      return mock;
+    }),
     remove: vi.fn(),
     setLatLng: vi.fn(),
-    _map: null,  // Leaflet-internal: set by addTo, cleared by remove/removeLayer
+    _map: null, // Leaflet-internal: set by addTo, cleared by remove/removeLayer
   };
   return mock;
 }
 
 globalThis.L = {
   marker: vi.fn(() => makeMarkerMock()),
-  layerGroup: vi.fn(() => ({ addTo: vi.fn(function () { return this; }) })),
+  layerGroup: vi.fn(() => ({
+    addTo: vi.fn(function () {
+      return this;
+    }),
+  })),
   circleMarker: vi.fn(() => makeMarkerMock()),
   divIcon: vi.fn((opts) => ({ _opts: opts })),
   latLng: (lat, lon) => ({ lat, lng: lon }),
@@ -105,7 +112,7 @@ describe('setUserLocationMarker', () => {
 describe('__gpsDebug — GPS diagnostic pill', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    window.__gpsDebug.hide();  // reset module-local _gpsDebugEnabled + element
+    window.__gpsDebug.hide(); // reset module-local _gpsDebugEnabled + element
   });
 
   it('show() creates the pill immediately with a placeholder', () => {
@@ -142,6 +149,8 @@ describe('__gpsDebug — GPS diagnostic pill', () => {
     settings.current = { showLocation: false };
     state.map = makeMapMock();
     setUserLocationMarker(49.34, 8.66);
-    expect(document.getElementById('gps-debug').textContent).toContain('setMarker skipped: showLoc=off');
+    expect(document.getElementById('gps-debug').textContent).toContain(
+      'setMarker skipped: showLoc=off',
+    );
   });
 });

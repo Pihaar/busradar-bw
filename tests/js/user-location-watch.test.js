@@ -12,7 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 function makeMarkerMock() {
   const m = {
-    addTo: vi.fn(function () { m._map = {}; return m; }),
+    addTo: vi.fn(function () {
+      m._map = {};
+      return m;
+    }),
     remove: vi.fn(),
     setLatLng: vi.fn(),
     _map: null,
@@ -22,7 +25,11 @@ function makeMarkerMock() {
 
 globalThis.L = {
   marker: vi.fn(() => makeMarkerMock()),
-  layerGroup: vi.fn(() => ({ addTo: vi.fn(function () { return this; }) })),
+  layerGroup: vi.fn(() => ({
+    addTo: vi.fn(function () {
+      return this;
+    }),
+  })),
   circleMarker: vi.fn(() => makeMarkerMock()),
   divIcon: vi.fn((opts) => ({ _opts: opts })),
   latLng: (lat, lon) => ({ lat, lng: lon }),
@@ -37,7 +44,10 @@ function makeMapMock() {
   const panes = {};
   return {
     getPane: vi.fn((n) => panes[n]),
-    createPane: vi.fn((n) => { panes[n] = { style: {} }; return panes[n]; }),
+    createPane: vi.fn((n) => {
+      panes[n] = { style: {} };
+      return panes[n];
+    }),
     addLayer: vi.fn(),
   };
 }
@@ -54,7 +64,11 @@ describe('startLocationWatch / stopLocationWatch', () => {
     clearWatch = vi.fn();
     globalThis.navigator = {
       geolocation: {
-        watchPosition: vi.fn((cb, err, opts) => { watchCb = cb; watchOpts = opts; return 42; }),
+        watchPosition: vi.fn((cb, err, opts) => {
+          watchCb = cb;
+          watchOpts = opts;
+          return 42;
+        }),
         clearWatch: clearWatch,
       },
     };

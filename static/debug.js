@@ -31,8 +31,8 @@ function _loadTools() {
   var out = { console: false, panlog: false, gps: false, verbose: false };
   try {
     var raw = localStorage.getItem('busradar_debug_tools');
-    if (!raw) return out;  // missing / empty
-    var parsed = JSON.parse(raw);  // "null" / malformed handled below + by catch
+    if (!raw) return out; // missing / empty
+    var parsed = JSON.parse(raw); // "null" / malformed handled below + by catch
     if (parsed && typeof parsed === 'object') {
       Object.keys(out).forEach(function (k) {
         if (typeof parsed[k] === 'boolean') out[k] = parsed[k];
@@ -43,7 +43,9 @@ function _loadTools() {
 }
 
 function _saveTools() {
-  try { localStorage.setItem('busradar_debug_tools', JSON.stringify(_tools)); } catch (e) {}
+  try {
+    localStorage.setItem('busradar_debug_tools', JSON.stringify(_tools));
+  } catch (e) {}
 }
 
 // Resolve the master flag: ?debug=1 sets + persists, ?debug=0 clears, otherwise
@@ -51,10 +53,22 @@ function _saveTools() {
 function _resolveMaster() {
   try {
     var q = new URLSearchParams(location.search).get('debug');
-    if (q === '1') { try { localStorage.setItem('busradar_debug', '1'); } catch (e) {} return true; }
-    if (q === '0') { try { localStorage.removeItem('busradar_debug'); } catch (e) {} return false; }
+    if (q === '1') {
+      try {
+        localStorage.setItem('busradar_debug', '1');
+      } catch (e) {}
+      return true;
+    }
+    if (q === '0') {
+      try {
+        localStorage.removeItem('busradar_debug');
+      } catch (e) {}
+      return false;
+    }
     return localStorage.getItem('busradar_debug') === '1';
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 // === Pan-log overlay ===
@@ -70,19 +84,24 @@ function _renderPanLog() {
   var log = state._followLog || [];
   var lines = log.slice(-12).map(function (e) {
     var ts = new Date(e.t).toISOString().slice(11, 19);
-    return ts + ' ' + e.action +
+    return (
+      ts +
+      ' ' +
+      e.action +
       (e.dist != null ? ' d=' + e.dist : '') +
-      (e.reason ? ' ' + e.reason : '');
+      (e.reason ? ' ' + e.reason : '')
+    );
   });
   _panLogEl.textContent = 'pan-log (' + log.length + ')\n' + lines.join('\n');
 }
 
 function _startPanLog() {
-  if (_panLogTimer) return;  // guard double-start
+  if (_panLogTimer) return; // guard double-start
   if (!_panLogEl) {
     _panLogEl = document.createElement('div');
     _panLogEl.id = 'debug-panlog';
-    _panLogEl.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:9998;' +
+    _panLogEl.style.cssText =
+      'position:fixed;bottom:8px;right:8px;z-index:9998;' +
       'background:rgba(0,0,0,0.85);color:#8f8;padding:4px 8px;' +
       'font:10px/1.3 monospace;border-radius:4px;max-width:60vw;max-height:40vh;' +
       'overflow:auto;white-space:pre-wrap;pointer-events:none;';
@@ -93,7 +112,10 @@ function _startPanLog() {
 }
 
 function _stopPanLog() {
-  if (_panLogTimer) { clearInterval(_panLogTimer); _panLogTimer = null; }
+  if (_panLogTimer) {
+    clearInterval(_panLogTimer);
+    _panLogTimer = null;
+  }
   if (_panLogEl && _panLogEl.parentNode) _panLogEl.parentNode.removeChild(_panLogEl);
   _panLogEl = null;
 }
@@ -116,7 +138,9 @@ function _driveTool(name, active) {
     if (active) _startPanLog();
     else _stopPanLog();
   } else if (name === 'verbose') {
-    try { window.__busradarVerbose = active; } catch (e) {}
+    try {
+      window.__busradarVerbose = active;
+    } catch (e) {}
   }
 }
 
@@ -179,20 +203,30 @@ function _buildMenu() {
     btn.setAttribute('aria-checked', 'false');
     btn.dataset.tool = tg.key;
     btn.textContent = tg.label;
-    btn.addEventListener('click', function () { setTool(tg.key, !_tools[tg.key]); });
+    btn.addEventListener('click', function () {
+      setTool(tg.key, !_tools[tg.key]);
+    });
     opts.appendChild(btn);
   });
   group.appendChild(opts);
 
   var actions = document.createElement('div');
   actions.className = 'settings-options';
-  actions.appendChild(_actionBtn('Dump ⬇', function () {
-    if (window.busradarDownloadDump) window.busradarDownloadDump();
-  }));
-  actions.appendChild(_actionBtn('Dump 📋', function () {
-    if (window.busradarCopyDump) window.busradarCopyDump();
-  }));
-  actions.appendChild(_actionBtn('Debug aus', function () { disableDebug(); }));
+  actions.appendChild(
+    _actionBtn('Dump ⬇', function () {
+      if (window.busradarDownloadDump) window.busradarDownloadDump();
+    }),
+  );
+  actions.appendChild(
+    _actionBtn('Dump 📋', function () {
+      if (window.busradarCopyDump) window.busradarCopyDump();
+    }),
+  );
+  actions.appendChild(
+    _actionBtn('Debug aus', function () {
+      disableDebug();
+    }),
+  );
   group.appendChild(actions);
 
   var reset = panel.querySelector('.settings-group--reset');
@@ -206,7 +240,9 @@ function _buildMenu() {
 // the persisted master flag like ?debug=0 — but note a ?debug=1 still present in
 // the URL re-enables debug on the next reload (URL wins over storage).
 function disableDebug() {
-  try { localStorage.removeItem('busradar_debug'); } catch (e) {}
+  try {
+    localStorage.removeItem('busradar_debug');
+  } catch (e) {}
   window.__busradarDebug = false;
   Object.keys(_tools).forEach(function (k) {
     _tools[k] = false;

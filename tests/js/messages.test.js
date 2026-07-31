@@ -12,14 +12,37 @@ describe('extractHafasMessages', () => {
 
   it('returns empty for null/undefined inputs', () => {
     expect(extractHafasMessages(null, null, null)).toEqual({ journeyLevel: [], perStopByLocX: {} });
-    expect(extractHafasMessages(undefined, undefined, undefined)).toEqual({ journeyLevel: [], perStopByLocX: {} });
+    expect(extractHafasMessages(undefined, undefined, undefined)).toEqual({
+      journeyLevel: [],
+      perStopByLocX: {},
+    });
     expect(extractHafasMessages({}, [], [])).toEqual({ journeyLevel: [], perStopByLocX: {} });
   });
 
   it('filters IGNORE_CODES (ae, au, az, ai, ac, ib, ic, ad, ii, ij) case-insensitive', () => {
-    var codes = ['ae', 'au', 'az', 'ai', 'ac', 'ib', 'ic', 'ad', 'ii', 'ij', 'AE', 'Au', 'IB', 'AD', 'II'];
-    var remL = codes.map(function(c) { return { code: c, txtN: 'text for ' + c }; });
-    var msgL = codes.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var codes = [
+      'ae',
+      'au',
+      'az',
+      'ai',
+      'ac',
+      'ib',
+      'ic',
+      'ad',
+      'ii',
+      'ij',
+      'AE',
+      'Au',
+      'IB',
+      'AD',
+      'II',
+    ];
+    var remL = codes.map(function (c) {
+      return { code: c, txtN: 'text for ' + c };
+    });
+    var msgL = codes.map(function (_, i) {
+      return makeMsg('REM', { remX: i });
+    });
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(0);
   });
@@ -30,9 +53,11 @@ describe('extractHafasMessages', () => {
       { code: 'xx', txtN: 'Fahrtart L' },
       { code: 'yy', txtN: 'Fahrtart X' },
       { code: 'zz', txtN: 'Fahrtart LS' },
-      { code: 'qq', txtN: 'fahrtart LM' },  // case-insensitive
+      { code: 'qq', txtN: 'fahrtart LM' }, // case-insensitive
     ];
-    var msgL = remL.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var msgL = remL.map(function (_, i) {
+      return makeMsg('REM', { remX: i });
+    });
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(0);
   });
@@ -43,7 +68,9 @@ describe('extractHafasMessages', () => {
       { code: 'yy', txtN: 'Fahrzeugbreite in mm 2500' },
       { code: 'zz', txtN: 'Fahrzeuglänge IN MM 12000' },
     ];
-    var msgL = remL.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var msgL = remL.map(function (_, i) {
+      return makeMsg('REM', { remX: i });
+    });
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(0);
   });
@@ -59,10 +86,15 @@ describe('extractHafasMessages', () => {
     var remL = [
       { code: 'BE', txtN: 'Behindertengerecht' },
       { code: 'BR', txtN: 'Rollstuhlplatz' },
-      { code: 'text.journeystop.product.or.direction.changes.journey.message', txtN: 'Linienänderung' },
+      {
+        code: 'text.journeystop.product.or.direction.changes.journey.message',
+        txtN: 'Linienänderung',
+      },
       { code: 'KB', txtN: 'Klimaanlage' },
     ];
-    var msgL = remL.map(function(_, i) { return makeMsg('REM', { remX: i }); });
+    var msgL = remL.map(function (_, i) {
+      return makeMsg('REM', { remX: i });
+    });
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(4);
     expect(result.journeyLevel[0].text).toBe('Behindertengerecht');
@@ -80,7 +112,7 @@ describe('extractHafasMessages', () => {
   it('treats fLocX < 0 as journeyLevel', () => {
     var remL = [{ code: 'BE', txtN: 'test' }];
     var msgL = [makeMsg('REM', { remX: 0, fLocX: -1, tLocX: 5 })];
-    var result = extractHafasMessages(makeCommon(remL), msgL, [{locX: 0}, {locX: 5}]);
+    var result = extractHafasMessages(makeCommon(remL), msgL, [{ locX: 0 }, { locX: 5 }]);
     expect(result.journeyLevel).toHaveLength(1);
     expect(Object.keys(result.perStopByLocX)).toHaveLength(0);
   });
@@ -88,13 +120,13 @@ describe('extractHafasMessages', () => {
   it('treats fLocX > tLocX as journeyLevel', () => {
     var remL = [{ code: 'BE', txtN: 'test' }];
     var msgL = [makeMsg('REM', { remX: 0, fLocX: 5, tLocX: 2 })];
-    var result = extractHafasMessages(makeCommon(remL), msgL, [{locX: 0}, {locX: 10}]);
+    var result = extractHafasMessages(makeCommon(remL), msgL, [{ locX: 0 }, { locX: 10 }]);
     expect(result.journeyLevel).toHaveLength(1);
   });
 
   it('Rundkurs: firstLocX === lastLocX → journeyLevel', () => {
     var remL = [{ code: 'BE', txtN: 'test' }];
-    var stopL = [{locX: 3}, {locX: 5}, {locX: 3}];
+    var stopL = [{ locX: 3 }, { locX: 5 }, { locX: 3 }];
     var msgL = [makeMsg('REM', { remX: 0, fLocX: 3, tLocX: 3 })];
     var result = extractHafasMessages(makeCommon(remL), msgL, stopL);
     expect(result.journeyLevel).toHaveLength(1);
@@ -102,7 +134,7 @@ describe('extractHafasMessages', () => {
 
   it('per-stop: scoped message placed at fLocX only', () => {
     var remL = [{ code: 'BE', txtN: 'platform change' }];
-    var stopL = [{locX: 0}, {locX: 1}, {locX: 2}, {locX: 3}];
+    var stopL = [{ locX: 0 }, { locX: 1 }, { locX: 2 }, { locX: 3 }];
     var msgL = [makeMsg('REM', { remX: 0, fLocX: 1, tLocX: 2 })];
     var result = extractHafasMessages(makeCommon(remL), msgL, stopL);
     expect(result.journeyLevel).toHaveLength(0);
@@ -112,17 +144,14 @@ describe('extractHafasMessages', () => {
 
   it('dedup by code+text for journey-level', () => {
     var remL = [{ code: 'BE', txtN: 'same text' }];
-    var msgL = [
-      makeMsg('REM', { remX: 0 }),
-      makeMsg('REM', { remX: 0 }),
-    ];
+    var msgL = [makeMsg('REM', { remX: 0 }), makeMsg('REM', { remX: 0 })];
     var result = extractHafasMessages(makeCommon(remL), msgL, []);
     expect(result.journeyLevel).toHaveLength(1);
   });
 
   it('dedup by code+text for per-stop', () => {
     var remL = [{ code: 'BE', txtN: 'same text' }];
-    var stopL = [{locX: 0}, {locX: 5}];
+    var stopL = [{ locX: 0 }, { locX: 5 }];
     var msgL = [
       makeMsg('REM', { remX: 0, fLocX: 2, tLocX: 3 }),
       makeMsg('REM', { remX: 0, fLocX: 2, tLocX: 3 }),
@@ -192,7 +221,7 @@ describe('extractHafasMessages', () => {
 
   it('journey-wide when fLocX <= firstLocX and tLocX >= lastLocX', () => {
     var remL = [{ code: 'BE', txtN: 'covers all' }];
-    var stopL = [{locX: 2}, {locX: 3}, {locX: 4}, {locX: 8}];
+    var stopL = [{ locX: 2 }, { locX: 3 }, { locX: 4 }, { locX: 8 }];
     var msgL = [makeMsg('REM', { remX: 0, fLocX: 0, tLocX: 10 })];
     var result = extractHafasMessages(makeCommon(remL), msgL, stopL);
     expect(result.journeyLevel).toHaveLength(1);
