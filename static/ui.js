@@ -423,6 +423,8 @@ export var ui = {
 
   closePanel: function () {
     this.setPanelState('hidden');
+    clearTimeout(state._stopProgressTimer);
+    state._stopProgressTimer = null;
     state.selectedJid = null;
     state.selectedJourneyData = null;
     state.selectedStop = null;
@@ -512,7 +514,7 @@ export var ui = {
       .getJourney(vehicle.jid, { userInitiated: true })
       .then(function (data) {
         state.selectedJourneyData = data;
-        ui.renderJourneyStops(data, vehicle);
+        ui.renderJourneyStops(data);
         ui.drawRoute(data, vehicle);
         announce(t('route_loaded', { line: vehicle.line }));
       })
@@ -635,7 +637,7 @@ export var ui = {
     return (state.serverTimeMin || 0) + elapsedMs / 60000;
   },
 
-  renderJourneyStops: function (data, vehicle) {
+  renderJourneyStops: function (data) {
     var journey = data.journey || {};
     var stopL = journey.stopL || [];
     var common = data.common || {};
@@ -802,11 +804,16 @@ export var ui = {
 
     state._currentStopL = stopL;
     state._renderedStopSig = ui._stopSig(stopL);
-    setTimeout(function () {
+    // Re-arm a single deferred progress paint. Store + clear the handle so a
+    // rapid re-render can't stack timers and so closePanel can cancel a pending
+    // one; the selectedJid guard is the backstop for any other teardown path.
+    clearTimeout(state._stopProgressTimer);
+    state._stopProgressTimer = setTimeout(function () {
+      state._stopProgressTimer = null;
       // Read the current stop list at fire time, not the captured `stopL`: a
       // rebuild within this 100 ms window (a front-prune tick) would otherwise
       // measure the freshly-built DOM rows against the previous stop set.
-      ui.updateStopProgress(state._currentStopL);
+      if (state.selectedJid) ui.updateStopProgress(state._currentStopL);
     }, 100);
   },
 
@@ -2218,7 +2225,7 @@ export var ui = {
               progress: null,
               stops: [],
             };
-            ui.renderJourneyStops(data, pendingVehicle);
+            ui.renderJourneyStops(data);
             ui.drawRoute(data, pendingVehicle);
             document.getElementById('journey-actions').hidden = false;
             if (
@@ -2294,7 +2301,7 @@ export var ui = {
 
         state.map.setView([lat, lon], 15);
 
-        ui.renderJourneyStops(data, vehicle);
+        ui.renderJourneyStops(data);
         ui.drawRoute(data, vehicle);
         announce(t('route_loaded', { line: vehicle.line }));
       })

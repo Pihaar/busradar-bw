@@ -1072,7 +1072,7 @@ function _handleVehiclesPayload(data) {
       const ja = document.getElementById('journey-actions');
       if (ja) ja.hidden = false;
       if (state.selectedJourneyData) {
-        ui.renderJourneyStops(state.selectedJourneyData, transVehicle.data);
+        ui.renderJourneyStops(state.selectedJourneyData);
         state._currentStopL = (state.selectedJourneyData.journey || {}).stopL || [];
       }
       announce(t('journey_started_announce', { line: transVehicle.data.line }));
@@ -1118,6 +1118,23 @@ export function _applyJourneyPayload(jid, journeyData) {
     // This journey is live — remember it so a later loss of position is
     // recognised as "ended" rather than "not started" (see the no-pos branch).
     state._selectedHadPosJid = jid;
+    // A live position means a journey we were showing as "not started" has now
+    // started. Clear that state and refresh the header here, not only in the
+    // in-BBox transition (_handleVehiclesPayload) — a journey restored from the
+    // URL that starts moving while still off-screen would otherwise keep the
+    // stale "(not started)" suffix until the bus enters the viewport.
+    if (state._notStartedJid === jid) {
+      state._notStartedJid = null;
+      state._notStartedSince = 0;
+      state._notStartedLastPoll = 0;
+      const prod = ((journeyData.common || {}).prodL || [])[journey.prodX] || {};
+      const line = prod.name || prod.nameS || '';
+      if (line) ui.detailLine.textContent = line;
+      if (journey.dirTxt) ui.detailDir.textContent = journey.dirTxt;
+      const ja = document.getElementById('journey-actions');
+      if (ja) ja.hidden = false;
+      announce(t('journey_started_announce', { line: prod.nameS || prod.name || line }));
+    }
     const sv = state.vehicles.get(jid);
     // Capture the ring status BEFORE the missedCycles reset below. In-ring
     // (missedCycles === 0, incl. off-bbox-but-in-ring) the vehicles handler

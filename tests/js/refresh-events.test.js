@@ -20,6 +20,8 @@ const uiMock = {
   updateJourneyStopDelays: vi.fn(),
   showJourneyEnded: vi.fn(),
   _showJourneyCancelled: vi.fn(),
+  detailLine: { textContent: '' },
+  detailDir: { textContent: '' },
 };
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 vi.mock('../../static/api.js', () => ({
@@ -92,6 +94,57 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     _applyJourneyPayload('J-not-in-bbox', payload);
     expect(uiMock.updateJourneyStopDelays).toHaveBeenCalledOnce();
     expect(uiMock.drawRoute).not.toHaveBeenCalled();
+  });
+
+  it('a not-started journey that gets a live position clears the suffix + reveals actions (off-map)', () => {
+    const ja = document.createElement('div');
+    ja.id = 'journey-actions';
+    ja.hidden = true;
+    document.body.appendChild(ja);
+    uiMock.detailLine.textContent = '';
+    uiMock.detailDir.textContent = 'Ziel (noch nicht gestartet)';
+    state.selectedJid = 'JS1';
+    state._notStartedJid = 'JS1';
+    // Bus is NOT in state.vehicles (off-map) → the in-BBox transition in
+    // _handleVehiclesPayload can't fire; the journey push must do it.
+    _applyJourneyPayload('JS1', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [], prodX: 0, dirTxt: 'Ziel' },
+      common: { prodL: [{ nameS: '751', name: 'Bus 751' }] },
+    });
+    expect(state._notStartedJid).toBeNull();
+    expect(uiMock.detailDir.textContent).toBe('Ziel'); // stale "(not started)" suffix gone
+    expect(uiMock.detailLine.textContent).toBe('Bus 751');
+    expect(ja.hidden).toBe(false);
+    document.body.removeChild(ja);
+  });
+
+  it('starts a not-started journey defensively when prod/dir/actions are all absent', () => {
+    const stray = document.getElementById('journey-actions');
+    if (stray) stray.remove(); // ensure the `if (ja)` guard takes its false arm
+    uiMock.detailLine.textContent = 'orig-line';
+    uiMock.detailDir.textContent = 'orig-dir';
+    state.selectedJid = 'JS2';
+    state._notStartedJid = 'JS2';
+    // no common at all → line ''; no journey.dirTxt; no #journey-actions element
+    _applyJourneyPayload('JS2', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [] },
+    });
+    expect(state._notStartedJid).toBeNull(); // still cleared
+    expect(uiMock.detailLine.textContent).toBe('orig-line'); // no line → not overwritten
+    expect(uiMock.detailDir.textContent).toBe('orig-dir'); // no dirTxt → not overwritten
+  });
+
+  it('falls back to prod.nameS for the header when prod.name is absent', () => {
+    const stray = document.getElementById('journey-actions');
+    if (stray) stray.remove();
+    uiMock.detailLine.textContent = '';
+    state.selectedJid = 'JS3';
+    state._notStartedJid = 'JS3';
+    _applyJourneyPayload('JS3', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [], prodX: 0 },
+      common: { prodL: [{ nameS: '751' }] }, // nameS only, no name
+    });
+    expect(uiMock.detailLine.textContent).toBe('751');
   });
 
   it('branch 2: no pos + last-stop time well in the past → showJourneyEnded', () => {

@@ -149,6 +149,7 @@ describe('ui.renderJourneyStops', () => {
   }
 
   it('renders one stop-item per stop and schedules the progress update', () => {
+    state.selectedJid = 'J-test'; // the deferred paint is guarded on an active selection
     const spy = vi.spyOn(ui, 'updateStopProgress').mockImplementation(() => {});
     ui.renderJourneyStops(
       jd([
@@ -159,6 +160,20 @@ describe('ui.renderJourneyStops', () => {
     expect(ui.stopList.querySelectorAll('.stop-item').length).toBe(2);
     vi.advanceTimersByTime(100);
     expect(spy).toHaveBeenCalledWith(state._currentStopL);
+  });
+
+  it('skips the deferred progress paint if the panel was closed before it fires', () => {
+    state.selectedJid = 'J-test';
+    const spy = vi.spyOn(ui, 'updateStopProgress').mockImplementation(() => {});
+    ui.renderJourneyStops(
+      jd([
+        { locX: 0, dTimeS: hhmmss(590) },
+        { locX: 1, dTimeS: hhmmss(610) },
+      ]),
+    );
+    state.selectedJid = null; // panel closed within the 100ms window
+    vi.advanceTimersByTime(100);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it('marks a past stop dot as passed and a future one as not', () => {
