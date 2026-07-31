@@ -5,7 +5,7 @@
  * dismiss a stale banner after any (re)connect; showTerminalBanner is now
  * re-showable, so its reload-button wiring must not stack handlers.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Leaflet is imported transitively via ui.js → map.js; a minimal stub keeps
 // the module graph loadable under happy-dom.
@@ -35,11 +35,18 @@ describe('ui.hideTerminalBanner', () => {
 });
 
 describe('ui.showTerminalBanner — idempotent reload wiring', () => {
+  let realLocation;
+
   beforeEach(() => {
     document.body.innerHTML = '';
+    realLocation = window.location;
   });
 
-  it('wires the reload button via onclick (single handler, not stacked) across re-shows', () => {
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
+  });
+
+  it('reload button fires exactly once per click after re-shows (no stacked handlers)', () => {
     const banner = document.createElement('div');
     banner.id = 'terminal-banner';
     banner.hidden = true;
@@ -48,17 +55,19 @@ describe('ui.showTerminalBanner — idempotent reload wiring', () => {
     banner.appendChild(reloadBtn);
     document.body.appendChild(banner);
 
-    ui.showTerminalBanner();
-    expect(banner.hidden).toBe(false);
-    const firstHandler = reloadBtn.onclick;
-    expect(typeof firstHandler).toBe('function');
+    // Stub reload so a click is observable without navigating.
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
 
-    // Hide, then show again — a stacking addEventListener would accumulate a
-    // second handler; the onclick assignment replaces it, so it stays a single
-    // function reference.
+    // Two show cycles re-run the wiring. A stacking addEventListener would leave
+    // two live handlers → one click fires reload twice; the onclick assignment
+    // replaces, so one click fires it exactly once.
+    ui.showTerminalBanner();
     ui.hideTerminalBanner();
     ui.showTerminalBanner();
     expect(banner.hidden).toBe(false);
-    expect(typeof reloadBtn.onclick).toBe('function');
+
+    reloadBtn.click();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

@@ -331,7 +331,7 @@ export function _suspendStream() {
   _lastForceReconnectAt = 0;
   // Null lastUpdate so the 1s stale-ticker and a trailing visibilitychange
   // can't read a now-ancient timestamp during the reconnect gap and fire a
-  // false force-reconnect. The subscribe handler re-seeds it (~177) on reopen.
+  // false force-reconnect. The subscribe handler re-seeds it on reopen.
   state.lastUpdate = null;
   stopLocationWatch();
   removeUserLocationMarker();
