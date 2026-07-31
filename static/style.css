@@ -555,7 +555,7 @@ html, body {
 
 .bus-marker__line {
   position: relative;
-  z-index: 2;
+  z-index: 1;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   white-space: nowrap;
@@ -594,13 +594,6 @@ html, body {
 .bus-marker--selected {
   transform: scale(calc(var(--marker-scale, 1) * 1.4));
   z-index: 10 !important;
-}
-
-/* stylelint-disable-next-line no-duplicate-selectors -- intentional later override of z-index; see .bus-marker__line above */
-.bus-marker__line {
-  position: relative;
-  z-index: 1;
-  font-variant-numeric: tabular-nums;
 }
 
 @keyframes pulse-dot {
