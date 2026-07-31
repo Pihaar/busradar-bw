@@ -471,6 +471,12 @@ export var ui = {
       state._selectedStopMarker.remove();
       state._selectedStopMarker = null;
     }
+    // Subscribe the SSE stream up front, independent of the one-shot getJourney
+    // below. If that fetch rejects (HAFAS blip / rate-limit) its .catch used to
+    // leave the journey unsubscribed, so no per-tick push ever arrived and the
+    // panel never transitioned to live/ended until a reconnect. Subscribing
+    // here lets _applyJourneyPayload recover regardless of the fetch outcome.
+    api.selectStream('journey', vehicle.jid).catch(function () {});
     markers.highlightSelected(vehicle.jid);
     if (!skipHistory) {
       var center = state.map.getCenter();
@@ -508,10 +514,6 @@ export var ui = {
         state.selectedJourneyData = data;
         ui.renderJourneyStops(data, vehicle);
         ui.drawRoute(data, vehicle);
-        // Subscribe the SSE stream to push journey updates every tick. The
-        // one-off getJourney above is still needed so the panel renders
-        // synchronously on click; SSE then drives every subsequent refresh.
-        api.selectStream('journey', vehicle.jid).catch(function () {});
         announce(t('route_loaded', { line: vehicle.line }));
       })
       .catch(function (err) {
@@ -1383,6 +1385,18 @@ export var ui = {
       .catch(function (err) {
         state._autoExpandingDep = false;
         if (err.name === 'AbortError') return;
+        // Subscribe even though the one-shot fetch failed, so the server's
+        // per-tick pushes can still recover the board (its independent,
+        // cached fetch may succeed where a rate-limited client request did
+        // not). Without this a stop opened during a HAFAS blip stayed
+        // unsubscribed until a reconnect.
+        if (
+          state.selectedStop &&
+          state.selectedStop.lid === capturedLid &&
+          state._activeStationBoardType === 'DEP'
+        ) {
+          api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
+        }
         // Don't wipe an already-shown list on a transient error / rate-limit
         // (a load-more cascade across a service gap can trip the per-IP limit).
         // Keep the departures and restore the load-more button so the user can
@@ -1451,6 +1465,15 @@ export var ui = {
       .catch(function (err) {
         state._autoExpandingArr = false;
         if (err.name === 'AbortError') return;
+        // See loadDepartures: subscribe even on fetch failure so the server's
+        // per-tick pushes can recover the board.
+        if (
+          state.selectedStop &&
+          state.selectedStop.lid === capturedLid &&
+          state._activeStationBoardType === 'ARR'
+        ) {
+          api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
+        }
         // See loadDepartures: keep an already-shown list on a transient error /
         // rate-limit and restore the load-more button; only show the error state
         // when nothing was displayed yet.
