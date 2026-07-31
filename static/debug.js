@@ -83,7 +83,10 @@ function _renderPanLog() {
   if (!_panLogEl) return;
   var log = state._followLog || [];
   var lines = log.slice(-12).map(function (e) {
-    var ts = new Date(e.t).toISOString().slice(11, 19);
+    var d = new Date(e.t);
+    // A malformed e.t yields an invalid Date whose toISOString() throws;
+    // fall back to '?' so one bad entry can't kill the 1s render tick.
+    var ts = isNaN(d.getTime()) ? '?' : d.toISOString().slice(11, 19);
     return (
       ts +
       ' ' +

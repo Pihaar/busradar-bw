@@ -458,10 +458,6 @@ export function setUserLocationMarker(lat, lon) {
     return;
   }
   var icon = _ensureUserLocationPaneAndIcon();
-  if (!icon) {
-    _gpsDebugSet('setMarker: no icon');
-    return;
-  }
   var ll = [lat, lon];
   if (state._userLocationMarker && !state._userLocationMarker._map) {
     _gpsDebugSet('setMarker: stale ref detected, recreating');
