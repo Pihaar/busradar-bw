@@ -8,6 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin>
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <title>Busradar BW</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -18,7 +19,7 @@
 <body>
   <a href="#control-panel" class="skip-link" data-i18n="skip_link">Zum Steuerfeld springen</a>
 
-  <main id="map" role="application" data-i18n-aria="aria_map" aria-label="Live-Buskarte Baden-Württemberg"></main>
+  <main id="map" data-i18n-aria="aria_map" aria-label="Live-Buskarte Baden-Württemberg"></main>
 
   <aside id="control-panel" role="complementary" data-i18n-aria="aria_controls" aria-label="Kartensteuerung">
     <div class="panel-header">

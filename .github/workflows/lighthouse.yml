@@ -1,4 +1,4 @@
-name: Lighthouse PWA Audit
+name: Lighthouse Audit
 
 # Audits the live production site against the Lighthouse categories
 # (performance, accessibility, best-practices, seo, pwa).
