@@ -141,4 +141,13 @@ describe('urlState.replace', () => {
     expect(call[2]).toContain('z=14');
     spy.mockRestore();
   });
+  it('drops keys not in URL_SCHEMA from the replaced hash', () => {
+    var spy = vi.spyOn(window.history, 'replaceState');
+    urlState.replace({ lat: '49.3', evil: 'hack' });
+    var call = spy.mock.calls[0];
+    expect(call[2]).toContain('lat=49.3');
+    expect(call[2]).not.toContain('evil');
+    expect(call[0].evil).toBeUndefined();
+    spy.mockRestore();
+  });
 });

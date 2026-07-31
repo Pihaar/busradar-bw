@@ -401,39 +401,57 @@ window.addEventListener('online', function (e) {
   refresh();
 });
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+// Auto-bootstrap + SW registration are guarded so tests can import this module
+// (transitively, via any import that reaches init.js) without kicking off a
+// real init() against an empty DOM or registering a service worker.
+//
+// Load-order contract: window.__BUSRADAR_TEST__ MUST be set BEFORE any import
+// that transitively reaches init.js — otherwise the guard has already run with
+// the flag unset. In production the flag is undefined, so !undefined === true
+// and everything below runs exactly as it does today; the flag only ever exists
+// under test.
+if (!window.__BUSRADAR_TEST__) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker
-      .register('/sw.js', { updateViaCache: 'none' })
-      .then(function (reg) {
-        // Warm PWAs (resumed from background, never navigated) don't
-        // re-run this registration, so they never check for a new SW and
-        // keep serving the old app version until a manual cache clear.
-        // Poke the browser to re-check whenever the app returns to the
-        // foreground.
-        document.addEventListener('visibilitychange', function () {
-          if (document.visibilityState === 'visible') {
-            reg.update().catch(function () {});
-          }
+  /* v8 ignore start -- SW registration is https-only: happy-dom serves the test
+     over http://localhost, so location.protocol === 'https:' is never true and
+     this whole block (incl. the nested reg.update() visibilitychange listener,
+     which only attaches on a successful registration) is unreachable under
+     test. The outer !window.__BUSRADAR_TEST__ guard itself IS covered (true arm
+     via a no-flag import, false arm via a flag-set import). */
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker
+        .register('/sw.js', { updateViaCache: 'none' })
+        .then(function (reg) {
+          // Warm PWAs (resumed from background, never navigated) don't
+          // re-run this registration, so they never check for a new SW and
+          // keep serving the old app version until a manual cache clear.
+          // Poke the browser to re-check whenever the app returns to the
+          // foreground.
+          document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+              reg.update().catch(function () {});
+            }
+          });
+        })
+        .catch(function (e) {
+          console.warn('SW registration failed:', e);
         });
-      })
-      .catch(function (e) {
-        console.warn('SW registration failed:', e);
-      });
 
-    // Deliberately NO auto-reload on controllerchange. A new SW still takes
-    // control in the background (skipWaiting + clients.claim), but reloading
-    // an already-open tab yanks the page out from under the user mid-
-    // interaction, and the timing differed per browser (Firefox reloaded
-    // eagerly, Chrome didn't). The SSE appVersion banner is the single,
-    // consistent update path: it prompts the user with a manual reload button.
-    // A freshly-opened tab still loads the current version because sw.js
-    // serves app code network-first.
-  });
+      // Deliberately NO auto-reload on controllerchange. A new SW still takes
+      // control in the background (skipWaiting + clients.claim), but reloading
+      // an already-open tab yanks the page out from under the user mid-
+      // interaction, and the timing differed per browser (Firefox reloaded
+      // eagerly, Chrome didn't). The SSE appVersion banner is the single,
+      // consistent update path: it prompts the user with a manual reload button.
+      // A freshly-opened tab still loads the current version because sw.js
+      // serves app code network-first.
+    });
+  }
+  /* v8 ignore stop */
 }

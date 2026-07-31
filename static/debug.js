@@ -80,6 +80,7 @@ var _panLogEl = null;
 var _panLogTimer = null;
 
 function _renderPanLog() {
+  /* v8 ignore next -- unreachable: only called after _panLogEl is assigned (interval cleared before it is nulled) */
   if (!_panLogEl) return;
   var log = state._followLog || [];
   var lines = log.slice(-12).map(function (e) {
@@ -100,6 +101,7 @@ function _renderPanLog() {
 
 function _startPanLog() {
   if (_panLogTimer) return; // guard double-start
+  /* v8 ignore next -- unreachable else: _panLogEl is set iff _panLogTimer is set, and the guard above returns first, so the element is never already present here */
   if (!_panLogEl) {
     _panLogEl = document.createElement('div');
     _panLogEl.id = 'debug-panlog';
@@ -140,7 +142,10 @@ function _driveTool(name, active) {
   } else if (name === 'panlog') {
     if (active) _startPanLog();
     else _stopPanLog();
-  } else if (name === 'verbose') {
+  } else {
+    // name === 'verbose'. setTool guards name ∈ {console,gps,panlog,verbose},
+    // so a plain else (rather than `else if (name === 'verbose')`) is
+    // equivalent here and avoids an unreachable no-match branch.
     try {
       window.__busradarVerbose = active;
     } catch (e) {}

@@ -190,6 +190,76 @@ describe('api.selectStream (debounced)', () => {
     expect(body.selection.dur).toBe(1440);
   });
 
+  it('rejects all queued callers on a 401 broken-session response', async () => {
+    // status 401/409 → the flush signals "broken session" as an Error so
+    // .catch handlers can diagnose; the viewport POST does the real recovery.
+    window.fetch.mockResolvedValue({ ok: false, status: 401 });
+    const p1 = api.selectStream('journey', 'J1').catch((e) => e);
+    const p2 = api.selectStream('journey', 'J1').catch((e) => e);
+    await vi.advanceTimersByTimeAsync(260);
+    const [e1, e2] = await Promise.all([p1, p2]);
+    expect(e1).toBeInstanceOf(Error);
+    expect(e1.message).toMatch(/HTTP 401 broken_session/);
+    expect(e2.message).toMatch(/HTTP 401 broken_session/);
+  });
+
+  it('rejects all queued callers on a 409 broken-session response', async () => {
+    window.fetch.mockResolvedValue({ ok: false, status: 409 });
+    const p = api.selectStream('journey', 'J1').catch((e) => e);
+    await vi.advanceTimersByTimeAsync(260);
+    const e = await p;
+    expect(e.message).toMatch(/HTTP 409 broken_session/);
+  });
+
+  it('rejects queued callers when the response body fails to parse as JSON', async () => {
+    // r.ok but json() rejects — the inner .json().catch arm rejects the waiters.
+    window.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new Error('invalid json')),
+    });
+    const p = api.selectStream('journey', 'J1').catch((e) => e);
+    await vi.advanceTimersByTimeAsync(260);
+    const e = await p;
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).toMatch(/invalid json/);
+  });
+
+  it('rejects queued callers when the fetch itself rejects (network error)', async () => {
+    // The outer .catch arm: fetch never resolves (offline / abort).
+    window.fetch.mockRejectedValue(new Error('network down'));
+    const p = api.selectStream('journey', 'J1').catch((e) => e);
+    await vi.advanceTimersByTimeAsync(260);
+    const e = await p;
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).toMatch(/network down/);
+  });
+
+  it('builds a journey selection payload for type "journey"', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('journey', 'J-abc');
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection).toEqual({ kind: 'journey', jid: 'J-abc' });
+  });
+
+  it('builds a null selection for an unknown/none type (deselect)', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('none');
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection).toBeNull();
+  });
+
+  it('defaults board_type to DEP when boardType is falsy', async () => {
+    // b8[1]: `board_type: boardType || 'DEP'` — the falsy-boardType arm.
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    api.selectStream('stationboard', 'A=1@L=1@', '', 60);
+    await vi.advanceTimersByTimeAsync(260);
+    const body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.selection.board_type).toBe('DEP');
+  });
+
   it('caps the debounce queue at 64 by rejecting the oldest pending caller', async () => {
     // A tight-loop caller (compromised extension, DevTools script) keeps
     // resetting the 250ms timer so the flush never fires. Without a cap
@@ -493,6 +563,59 @@ describe('settings', () => {
         '<div id="hint-animation-disabled" hidden></div>';
     });
 
+    it('disables the refresh group and its buttons when REPORT_ONLY', () => {
+      // b121 true-arm + b122 disable-arm: refresh group present, disable=true.
+      document.body.innerHTML +=
+        '<div id="setting-refresh">' +
+        '<button class="settings-opt" data-value="10000"></button>' +
+        '<button class="settings-opt" data-value="30000"></button>' +
+        '</div>';
+      settings._userRefreshInterval = 10000;
+      settings.current.posMode = 'REPORT_ONLY';
+      settings._applyPosModeConstraint();
+      var refreshGroup = document.getElementById('setting-refresh');
+      expect(refreshGroup.getAttribute('aria-disabled')).toBe('true');
+      expect(refreshGroup.classList.contains('settings-options--disabled')).toBe(true);
+      var btns = refreshGroup.querySelectorAll('.settings-opt');
+      expect(btns[0].getAttribute('disabled')).toBe('');
+      expect(btns[0].getAttribute('tabindex')).toBe('-1');
+      expect(settings.current.refreshInterval).toBe(30000);
+      expect(state.currentInterval).toBe(30000);
+      // The 30s option is the active one under the forced interval.
+      expect(btns[1].classList.contains('settings-opt--active')).toBe(true);
+    });
+
+    it('re-enables the refresh group and restores the user interval when CALC', () => {
+      // b122 enable-arm (per button) + the else branch restoring _userRefreshInterval.
+      document.body.innerHTML +=
+        '<div id="setting-refresh">' +
+        '<button class="settings-opt" data-value="20000" disabled tabindex="-1"></button>' +
+        '<button class="settings-opt" data-value="30000"></button>' +
+        '</div>';
+      settings._userRefreshInterval = 20000;
+      settings.current.posMode = 'CALC';
+      settings._applyPosModeConstraint();
+      var refreshGroup = document.getElementById('setting-refresh');
+      expect(refreshGroup.getAttribute('aria-disabled')).toBe('false');
+      var btns = refreshGroup.querySelectorAll('.settings-opt');
+      expect(btns[0].hasAttribute('disabled')).toBe(false);
+      expect(btns[0].hasAttribute('tabindex')).toBe(false);
+      expect(settings.current.refreshInterval).toBe(20000);
+      expect(state.currentInterval).toBe(20000);
+      expect(btns[0].classList.contains('settings-opt--active')).toBe(true);
+    });
+
+    it('does not throw when the interpolation group and hint are absent', () => {
+      // b115 + b117 else-arms: neither #setting-interpolation nor
+      // #hint-animation-disabled in the DOM. Still updates current state.
+      document.body.innerHTML = '';
+      settings.current.posMode = 'REPORT_ONLY';
+      expect(function () {
+        settings._applyPosModeConstraint();
+      }).not.toThrow();
+      expect(settings.current.interpolation).toBe(false);
+    });
+
     it('disables interpolation when posMode is REPORT_ONLY', () => {
       settings.current.posMode = 'REPORT_ONLY';
       settings._applyPosModeConstraint();
@@ -557,6 +680,36 @@ describe('settings', () => {
   });
 
   describe('applyTileLayers', () => {
+    it('removes the OSM fallback layer when it is present', () => {
+      // b108 true-arm: state.map.hasLayer(state._osmFallback) === true.
+      var removed = [];
+      var added = false;
+      var newLayer = {
+        addTo: function () {
+          added = true;
+        },
+      };
+      var oldLayer = {};
+      var fallback = {};
+      state._osmFallback = fallback;
+      state.map = {
+        hasLayer: function (l) {
+          // new layer not present (so we proceed), fallback present.
+          return l === fallback;
+        },
+        removeLayer: function (l) {
+          removed.push(l);
+        },
+      };
+      state.darkTileLayer = newLayer;
+      state.lightTileLayer = oldLayer;
+      settings.current = { theme: 'dark' };
+      settings.applyTileLayers();
+      expect(removed).toContain(fallback);
+      expect(added).toBe(true);
+      state._osmFallback = null;
+    });
+
     it('returns early when no map', () => {
       state.map = null;
       settings.current = { theme: 'dark' };

@@ -1152,6 +1152,7 @@ export var ui = {
               splitIdx = ci;
             }
           }
+          /* v8 ignore next -- unreachable: the minDist loop from lastPassedPolyIdx sets splitIdx on its first iteration (dist < Infinity), so splitIdx >= lastPassedPolyIdx always */
           if (splitIdx < lastPassedPolyIdx) splitIdx = lastPassedPolyIdx;
         }
 
@@ -1747,6 +1748,7 @@ export var ui = {
       li.appendChild(delayEl);
       frag.appendChild(li);
     });
+    /* v8 ignore next -- unreachable: data.jnyL is truthy here: an empty derived jnyL returns early above, so this `|| []` fallback is unreachable */
     if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
@@ -1929,6 +1931,7 @@ export var ui = {
       li.appendChild(delayEl);
       frag.appendChild(li);
     });
+    /* v8 ignore next -- unreachable: data.jnyL is truthy here: an empty derived jnyL returns early above, so this `|| []` fallback is unreachable */
     if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
@@ -2455,6 +2458,7 @@ export var search = {
       var textLower = text.toLowerCase();
       var count = 0;
       queryWords.forEach(function (w) {
+        /* v8 ignore next -- unreachable: matchScore only runs on names that already passed matchesQuery (every word present), so indexOf is always >= 0 */
         if (textLower.indexOf(w) >= 0) count++;
       });
       return count;
@@ -2476,6 +2480,7 @@ export var search = {
       }
     });
     localStops.sort(function (a, b) {
+      /* v8 ignore next -- unreachable: matchesQuery requires every query word present, so all localStops entries score queryWords.length; scores are always equal */
       if (b.score !== a.score) return b.score - a.score;
       var center = state.map.getCenter();
       var da = Math.abs(a.stop.lat - center.lat) + Math.abs(a.stop.lon - center.lng);

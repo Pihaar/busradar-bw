@@ -422,5 +422,83 @@ describe('debug menu (?debug)', () => {
       expect(el.textContent).toContain('pan-log (1)');
       mod.setTool('panlog', false);
     });
+
+    it('pan-log tolerates a missing state._followLog (|| [] fallback)', async () => {
+      // b7[1]: `state._followLog || []` — followLog unset/falsy renders (0).
+      vi.useFakeTimers();
+      setLocation('?debug=1');
+      const mod = await import('../../static/debug.js');
+      const { state } = await import('../../static/state.js');
+      state._followLog = null;
+      mod.setTool('panlog', true);
+      const el = document.getElementById('debug-panlog');
+      expect(el.textContent).toContain('pan-log (0)');
+      mod.setTool('panlog', false);
+      state._followLog = [];
+    });
+
+    it('pan-log renders "?" timestamp for a malformed follow-log entry time', async () => {
+      // b8[0]: invalid Date → toISOString() would throw, so the cond-expr
+      // yields '?' instead. A bad e.t must not kill the render tick.
+      vi.useFakeTimers();
+      setLocation('?debug=1');
+      const mod = await import('../../static/debug.js');
+      const { state } = await import('../../static/state.js');
+      state._followLog = [{ t: 'not-a-date', action: 'skip', dist: null, reason: 'x' }];
+      mod.setTool('panlog', true);
+      const el = document.getElementById('debug-panlog');
+      expect(el.textContent).toContain('? skip');
+      mod.setTool('panlog', false);
+      state._followLog = [];
+    });
+
+    it('pan-log overlay attaches to documentElement when body is absent', async () => {
+      // b13[1]: `(document.body || document.documentElement)` fallback.
+      vi.useFakeTimers();
+      setLocation('?debug=1');
+      const mod = await import('../../static/debug.js');
+      const { state } = await import('../../static/state.js');
+      state._followLog = [];
+      const body = document.body;
+      document.documentElement.removeChild(body);
+      try {
+        mod.setTool('panlog', true);
+        const el = document.getElementById('debug-panlog');
+        expect(el).not.toBeNull();
+        expect(el.parentNode).toBe(document.documentElement);
+      } finally {
+        mod.setTool('panlog', false);
+        document.documentElement.appendChild(body);
+        state._followLog = [];
+      }
+    });
+
+    it('Dump ⬇ is a no-op when window.busradarDownloadDump is absent', async () => {
+      // b30[1]: the guard's false-arm — handle not installed yet.
+      buildPanel();
+      setLocation('?debug=1');
+      await import('../../static/debug.js');
+      delete window.busradarDownloadDump;
+      expect(() => actionBtn('Dump ⬇').click()).not.toThrow();
+    });
+
+    it('Dump 📋 is a no-op when window.busradarCopyDump is absent', async () => {
+      // b31[1]: the guard's false-arm — handle not installed yet.
+      buildPanel();
+      setLocation('?debug=1');
+      await import('../../static/debug.js');
+      delete window.busradarCopyDump;
+      expect(() => actionBtn('Dump 📋').click()).not.toThrow();
+    });
+
+    it('disableDebug is safe when no debug-group is in the DOM', async () => {
+      // b33[1]: `if (group && group.parentNode)` false-arm — group is null.
+      setLocation('?debug=1');
+      const mod = await import('../../static/debug.js'); // no panel built → no group
+      expect(document.getElementById('debug-group')).toBeNull();
+      expect(() => mod.disableDebug()).not.toThrow();
+      expect(window.__busradarDebug).toBe(false);
+      expect(window.__debugMenu).toBeUndefined();
+    });
   });
 });

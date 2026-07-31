@@ -80,7 +80,6 @@
 
   function show() {
     OVERLAY = true;
-    /* istanbul ignore else -- jsdom always has a body; else is the pre-body early-load guard */
     if (document.body) {
       ensureUI();
     } else {
@@ -132,13 +131,14 @@
       var ts = new Date().toISOString().slice(11, 19);
       text = ts + ' [' + level + '] ' + Array.prototype.map.call(args, fmt).join(' ');
     } catch (e) {
-      /* istanbul ignore next -- defensive: Date/formatting never throws here */ return;
+      /* v8 ignore next -- defensive: Date/formatting never throws here */ return;
     }
     RING.push(text);
     while (RING.length > 10000) RING.shift(); // bounded, but generous so the dump carries the full session
     if (!OVERLAY) return;
     try {
       ensureUI();
+      /* v8 ignore next -- unreachable: ensureUI sets box+logEl together and hide() nulls both, so box truthy with logEl null cannot occur */
       if (!logEl) return; // overlay closed
       var line = document.createElement('div');
       var color = level === 'error' ? '#ff6b6b' : level === 'warn' ? '#ffd166' : '#e0e0e0';

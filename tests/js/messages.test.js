@@ -219,12 +219,37 @@ describe('extractHafasMessages', () => {
     expect(result.journeyLevel).toHaveLength(0);
   });
 
-  it('journey-wide when fLocX <= firstLocX and tLocX >= lastLocX', () => {
-    var remL = [{ code: 'BE', txtN: 'covers all' }];
-    var stopL = [{ locX: 2 }, { locX: 3 }, { locX: 4 }, { locX: 8 }];
-    var msgL = [makeMsg('REM', { remX: 0, fLocX: 0, tLocX: 10 })];
+  it('appends a second distinct scoped message to an existing per-stop bucket', () => {
+    // b82 false-arm: two DIFFERENT messages both scoped to the same fLocX.
+    // The first creates perStopByLocX[1]; the second finds it already present
+    // (dedup does not fire — distinct code+text) and pushes onto it.
+    var remL = [
+      { code: 'BE', txtN: 'platform change A' },
+      { code: 'BR', txtN: 'platform change B' },
+    ];
+    var stopL = [{ locX: 0 }, { locX: 1 }, { locX: 2 }, { locX: 3 }];
+    var msgL = [
+      makeMsg('REM', { remX: 0, fLocX: 1, tLocX: 2 }),
+      makeMsg('REM', { remX: 1, fLocX: 1, tLocX: 2 }),
+    ];
     var result = extractHafasMessages(makeCommon(remL), msgL, stopL);
-    expect(result.journeyLevel).toHaveLength(1);
-    expect(Object.keys(result.perStopByLocX)).toHaveLength(0);
+    expect(result.perStopByLocX[1]).toHaveLength(2);
+    expect(result.perStopByLocX[1][0].text).toBe('platform change A');
+    expect(result.perStopByLocX[1][1].text).toBe('platform change B');
+  });
+
+  it('non-Rundkurs, fLocX <= firstLocX but tLocX < lastLocX → per-stop (right && arm)', () => {
+    // firstLocX !== lastLocX (linear route), so the journey-wide test uses
+    // `msg.fLocX <= firstLocX && msg.tLocX >= lastLocX`. The left side is TRUE
+    // here, forcing evaluation of the right side, which is FALSE → the message
+    // is scoped to a stop rather than journey-wide.
+    var remL = [{ code: 'BE', txtN: 'partial cover' }];
+    var stopL = [{ locX: 2 }, { locX: 3 }, { locX: 4 }, { locX: 8 }];
+    // fLocX=1 <= firstLocX=2 (true) AND tLocX=5 >= lastLocX=8 (false) → scoped
+    var msgL = [makeMsg('REM', { remX: 0, fLocX: 1, tLocX: 5 })];
+    var result = extractHafasMessages(makeCommon(remL), msgL, stopL);
+    expect(result.journeyLevel).toHaveLength(0);
+    expect(result.perStopByLocX[1]).toHaveLength(1);
+    expect(result.perStopByLocX[1][0].text).toBe('partial cover');
   });
 });
