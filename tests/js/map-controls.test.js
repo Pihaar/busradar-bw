@@ -412,6 +412,7 @@ describe('mapModule.requestGPS', () => {
     state.map = makeMap();
     state.map.getZoom.mockReturnValue(15); // so loadAll passes the zoom gate
     location.hash = '';
+    vi.useFakeTimers(); // the success cb schedules 100/1000/5000ms retries; keep them fake so afterEach discards them (no post-teardown leak)
     mapModule.requestGPS();
     calls.current[0].ok({ coords: { latitude: 49.5, longitude: 8.5 } });
     expect(state.map.invalidateSize).toHaveBeenCalled();
@@ -425,6 +426,7 @@ describe('mapModule.requestGPS', () => {
     settings.current.showLocation = true;
     state.map = makeMap();
     location.hash = '#49.3/8.6/14';
+    vi.useFakeTimers(); // the success cb schedules delayed retries; keep them fake so afterEach discards them (no post-teardown leak)
     mapModule.requestGPS();
     calls.current[0].ok({ coords: { latitude: 49.5, longitude: 8.5 } });
     expect(state.map.setView).not.toHaveBeenCalled();

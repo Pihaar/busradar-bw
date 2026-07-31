@@ -27,3 +27,4 @@ androguard.db*
 Unbenannt.png
 validate.sh
 tick_logger.py
+.coverage.prepush

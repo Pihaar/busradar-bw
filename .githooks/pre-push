@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Pre-push coverage gate. Enable once per clone with:
+#   git config core.hooksPath .githooks
+#
+# Whole-suite coverage cannot be scoped to staged files, so it runs here (per
+# push) instead of pre-commit (per commit) to keep commits fast — a full vitest
+# + pytest coverage run per commit would be a categorical latency jump and would
+# train `--no-verify`, which also bypasses the pre-commit secret/lint checks.
+# Each block is skipped with a notice when its tooling is absent; a present but
+# FAILING gate blocks the push (override deliberately with `git push --no-verify`).
+set -u
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}" || exit 1
+status=0
+
+# Resolve a tool from PATH or the user-local pip bin dir.
+find_tool() {
+  if command -v "$1" >/dev/null 2>&1; then command -v "$1"; return 0; fi
+  if [[ -x "${HOME}/.local/bin/$1" ]]; then printf '%s\n' "${HOME}/.local/bin/$1"; return 0; fi
+  return 1
+}
+
+# --- JS: 100% coverage gate (vitest, thresholds in vitest.config.js) ---
+# reportsDirectory is overridden on the CLI (not in the config) so this run can
+# never share coverage/.tmp with a concurrent `npm run test:coverage` or a
+# watcher (ENOENT race). The path stays under the already-gitignored coverage/.
+if command -v npx >/dev/null 2>&1 && npx --no-install vitest --version >/dev/null 2>&1; then
+  echo "pre-push: vitest coverage (100% gate)"
+  npx --no-install vitest run --coverage --coverage.reportsDirectory=coverage/prepush || status=1
+else
+  echo "pre-push: vitest not found — skipping JS coverage gate (run: npm install)"
+fi
+
+# --- Python: 100% coverage gate (pytest --cov; fail_under=100 from pyproject) ---
+# COVERAGE_FILE is dedicated so this run cannot clobber a parallel manual
+# `pytest --cov` .coverage SQLite file. python3.12 is the hard dev floor (this
+# box's python3 is 3.12; prod runs 3.13). e2e is excluded — it runs in a uvicorn
+# subprocess and contributes ~0 coverage, so excluding it does not lower the gate.
+# --cov-branch is not passed: branch=true is already set in pyproject.
+if py="$(find_tool python3.12)"; then
+  if "${py}" -c 'import pytest_cov' >/dev/null 2>&1; then
+    echo "pre-push: pytest --cov (100% gate)"
+    COVERAGE_FILE=.coverage.prepush "${py}" -m pytest tests/ --ignore=tests/e2e --cov -q || status=1
+  else
+    echo "pre-push: pytest-cov not found — skipping Python coverage gate (pip install --user pytest-cov)"
+  fi
+else
+  echo "pre-push: python3.12 not found — skipping Python coverage gate"
+fi
+
+if [[ "${status}" -ne 0 ]]; then
+  echo "pre-push: FAILED — coverage gate not met, push blocked (override: git push --no-verify)"
+fi
+exit "${status}"
