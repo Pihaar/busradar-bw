@@ -4,6 +4,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "format": "prettier --write \"static/**/*.js\" \"tests/js/**/*.js\"",
     "stylelint": "stylelint \"static/**/*.css\""
