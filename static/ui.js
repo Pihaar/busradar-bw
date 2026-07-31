@@ -122,23 +122,19 @@ export var ui = {
     banner.hidden = false;
     var reloadBtn = banner.querySelector('.version-banner__reload');
     var dismissBtn = banner.querySelector('.version-banner__dismiss');
+    // Idempotent onclick assignment (not addEventListener): a dismissed banner
+    // can be re-shown when a further deploy arrives — more so since a bf-cache
+    // restore re-arms the prompt — and stacking listeners would fire the
+    // handler once per prior show. Reassigning replaces.
     if (reloadBtn) {
-      reloadBtn.addEventListener(
-        'click',
-        function () {
-          location.reload();
-        },
-        { once: true },
-      );
+      reloadBtn.onclick = function () {
+        location.reload();
+      };
     }
     if (dismissBtn) {
-      dismissBtn.addEventListener(
-        'click',
-        function () {
-          banner.hidden = true;
-        },
-        { once: true },
-      );
+      dismissBtn.onclick = function () {
+        banner.hidden = true;
+      };
     }
   },
 

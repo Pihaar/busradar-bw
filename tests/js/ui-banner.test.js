@@ -71,3 +71,40 @@ describe('ui.showTerminalBanner — idempotent reload wiring', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ui.showVersionUpdateBanner — idempotent button wiring', () => {
+  let realLocation;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    realLocation = window.location;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
+  });
+
+  it('reload fires once per click after a dismiss + re-show (no stacked handlers)', () => {
+    const banner = document.createElement('div');
+    banner.id = 'version-banner';
+    banner.hidden = true;
+    const reloadBtn = document.createElement('button');
+    reloadBtn.className = 'version-banner__reload';
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className = 'version-banner__dismiss';
+    banner.append(reloadBtn, dismissBtn);
+    document.body.appendChild(banner);
+
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { reload } });
+
+    ui.showVersionUpdateBanner();
+    dismissBtn.click(); // onclick sets hidden=true again
+    expect(banner.hidden).toBe(true);
+    ui.showVersionUpdateBanner(); // second wiring
+    expect(banner.hidden).toBe(false);
+
+    reloadBtn.click();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
