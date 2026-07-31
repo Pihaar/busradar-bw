@@ -780,6 +780,10 @@ html, body {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.line-filter[hidden] {
+  display: none;
+}
+
 /* === JOURNEY ACTIONS === */
 .journey-actions {
   display: flex;
