@@ -703,6 +703,36 @@ export function busradarDump() {
     ts: new Date().toISOString(),
     url: location.href,
     appVersion: state._appVersion || null,
+    // Browser/environment fingerprint — required to compare dumps across
+    // browsers (e.g. LibreWolf vs Brave). Per-field guarded because hardened
+    // browsers can make some navigator/Intl reads throw or return undefined.
+    env: (function () {
+      const g = function (fn) {
+        try {
+          return fn();
+        } catch (e) {
+          return null;
+        }
+      };
+      return {
+        userAgent: g(() => navigator.userAgent),
+        language: g(() => navigator.language),
+        languages: g(() => (navigator.languages || []).join(',')),
+        platform: g(() => navigator.platform),
+        hardwareConcurrency: g(() => navigator.hardwareConcurrency),
+        deviceMemory: g(() => navigator.deviceMemory),
+        online: g(() => navigator.onLine),
+        cookieEnabled: g(() => navigator.cookieEnabled),
+        swController: g(() => !!(navigator.serviceWorker && navigator.serviceWorker.controller)),
+        visibility: g(() => document.visibilityState),
+        timeZone: g(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+        viewportW: g(() => window.innerWidth),
+        viewportH: g(() => window.innerHeight),
+        dpr: g(() => window.devicePixelRatio),
+        screenW: g(() => window.screen.width),
+        screenH: g(() => window.screen.height),
+      };
+    })(),
     mode: (settings.current && settings.current.posMode) || null,
     follow: state.followBus,
     followPanning: state._followPanning,
@@ -720,6 +750,51 @@ export function busradarDump() {
       : null,
     selectedMarker: markerInfo,
     vehiclesCount: state.vehicles ? state.vehicles.size : 0,
+    // Full trip info — MUST be in every dump so cross-client divergence is
+    // diagnosable. Captures both the server-pushed stop data AND what the DOM
+    // actually renders, so a state-vs-DOM mismatch (misaligned delay patch) is
+    // visible directly, and two clients' dumps can be compared stop-by-stop.
+    journey: (function () {
+      try {
+        const jd = state.selectedJourneyData || {};
+        const jny = jd.journey || {};
+        const locL = (jd.common && jd.common.locL) || [];
+        const dataStops = (jny.stopL || []).map(function (s) {
+          const loc = s.locX != null && locL[s.locX] ? locL[s.locX] : {};
+          return {
+            name: loc.name || null,
+            dTimeS: s.dTimeS || null,
+            dTimeR: s.dTimeR || null,
+            aTimeS: s.aTimeS || null,
+            aTimeR: s.aTimeR || null,
+          };
+        });
+        const domStops = [];
+        const list = document.getElementById('stop-list');
+        if (list) {
+          list.querySelectorAll('.stop-item').forEach(function (li) {
+            const nm = li.querySelector('.stop-name');
+            const tm = li.querySelector('.stop-times');
+            const dot = li.querySelector('.stop-dot');
+            domStops.push({
+              name: nm ? nm.textContent : null,
+              times: tm ? tm.textContent.replace(/\s+/g, ' ').trim() : null,
+              passed: dot ? dot.classList.contains('stop-dot--passed') : null,
+            });
+          });
+        }
+        return {
+          hasPos: !!jny.pos,
+          renderedStopSig: state._renderedStopSig || null,
+          dataStopCount: dataStops.length,
+          domStopCount: domStops.length,
+          dataStops: dataStops,
+          domStops: domStops,
+        };
+      } catch (e) {
+        return { error: String(e) };
+      }
+    })(),
     followLog: (state._followLog || []).slice(-120),
     // Full console ring (always-on capture) — the dump must carry the complete
     // session output, independent of the on-screen overlay's Clear/scroll state.

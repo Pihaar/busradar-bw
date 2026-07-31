@@ -135,7 +135,7 @@
       /* istanbul ignore next -- defensive: Date/formatting never throws here */ return;
     }
     RING.push(text);
-    while (RING.length > 2000) RING.shift(); // bounded, but generous so the dump carries the full session
+    while (RING.length > 10000) RING.shift(); // bounded, but generous so the dump carries the full session
     if (!OVERLAY) return;
     try {
       ensureUI();

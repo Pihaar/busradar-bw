@@ -113,12 +113,12 @@ describe('debug-console overlay', () => {
     expect(window.__busradarConsoleTail.join('\n')).toContain('survives-clear');
   });
 
-  it('ring buffer is bounded at 2000 entries', async () => {
+  it('ring buffer is bounded at 10000 entries', async () => {
     await import('../../static/debug-console.js');
-    for (let i = 0; i < 2001; i++) console.log('r' + i);
-    expect(window.__busradarConsoleTail.length).toBe(2000);
+    for (let i = 0; i < 10001; i++) console.log('r' + i);
+    expect(window.__busradarConsoleTail.length).toBe(10000);
     expect(window.__busradarConsoleTail[window.__busradarConsoleTail.length - 1]).toContain(
-      'r2000',
+      'r10000',
     );
   });
 
