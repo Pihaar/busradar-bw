@@ -699,6 +699,18 @@ export function busradarDump() {
       };
     } catch (e) {}
   }
+  let boundsInfo = null;
+  if (m) {
+    try {
+      const b = m.getBounds();
+      boundsInfo = {
+        swLat: +b.getSouthWest().lat.toFixed(6),
+        swLon: +b.getSouthWest().lng.toFixed(6),
+        neLat: +b.getNorthEast().lat.toFixed(6),
+        neLon: +b.getNorthEast().lng.toFixed(6),
+      };
+    } catch (e) {}
+  }
   const dump = {
     ts: new Date().toISOString(),
     url: location.href,
@@ -741,15 +753,44 @@ export function busradarDump() {
     endedJid: state._endedJid || null,
     notStartedJid: state._notStartedJid || null,
     hadPosJid: state._selectedHadPosJid || null,
+    activeTab: state._activeTab || null,
+    tabMode: state._tabMode || null,
+    filters: { dep: state._depFilter || null, arr: state._arrFilter || null },
     map: m
       ? {
           centerLat: +m.getCenter().lat.toFixed(6),
           centerLon: +m.getCenter().lng.toFixed(6),
           zoom: m.getZoom(),
+          bounds: boundsInfo,
         }
       : null,
     selectedMarker: markerInfo,
     vehiclesCount: state.vehicles ? state.vehicles.size : 0,
+    // Every bus currently on the map: jid/line/position/delay plus missedCycles
+    // (how many ticks it has been off the server ring) and whether it is the
+    // selected one. Lets a dump show which buses were present and where, so a
+    // "wrong/missing marker" report is diagnosable without the live map.
+    vehicles: (function () {
+      try {
+        if (!state.vehicles) return [];
+        const out = [];
+        state.vehicles.forEach(function (v, jid) {
+          const d = v.data || {};
+          out.push({
+            jid: jid,
+            line: d.line || null,
+            lat: d.lat != null ? +d.lat.toFixed(6) : null,
+            lon: d.lon != null ? +d.lon.toFixed(6) : null,
+            delay: d.delay != null ? d.delay : null,
+            missedCycles: v.missedCycles || 0,
+            selected: jid === state.selectedJid,
+          });
+        });
+        return out;
+      } catch (e) {
+        return [{ error: String(e) }];
+      }
+    })(),
     // Full trip info — MUST be in every dump so cross-client divergence is
     // diagnosable. Captures both the server-pushed stop data AND what the DOM
     // actually renders, so a state-vs-DOM mismatch (misaligned delay patch) is
@@ -790,6 +831,36 @@ export function busradarDump() {
           domStopCount: domStops.length,
           dataStops: dataStops,
           domStops: domStops,
+        };
+      } catch (e) {
+        return { error: String(e) };
+      }
+    })(),
+    // Selected stop + the board the user actually sees. Captures the rendered
+    // DEP and ARR rows (condensed text) plus the active board type and windows,
+    // so a "wrong/stale departures" report is diagnosable from the dump alone.
+    stop: (function () {
+      try {
+        const s = state.selectedStop;
+        if (!s) return null;
+        const board = function (listId) {
+          const el = document.getElementById(listId);
+          if (!el) return null;
+          const rows = [];
+          el.querySelectorAll('.departure-item').forEach(function (li) {
+            rows.push(li.textContent.replace(/\s+/g, ' ').trim());
+          });
+          return { count: rows.length, rows: rows };
+        };
+        return {
+          lid: s.lid || null,
+          name: s.name || null,
+          extId: s.extId || null,
+          activeBoardType: state._activeStationBoardType || null,
+          depDur: state._stationDepDur || null,
+          arrDur: state._stationArrDur || null,
+          departures: board('departure-list'),
+          arrivals: board('arrival-list'),
         };
       } catch (e) {
         return { error: String(e) };

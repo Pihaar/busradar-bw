@@ -641,6 +641,64 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.consoleTail[399]).toBe('line-399'); // newest retained
     window.__busradarConsoleTail = prev;
   });
+
+  it('busradarDump captures the broader app state (vehicles, stop board, tabs, filters, bounds)', () => {
+    state.map.getBounds = () => ({
+      getSouthWest: () => ({ lat: 49.3, lng: 8.6 }),
+      getNorthEast: () => ({ lat: 49.4, lng: 8.72 }),
+    });
+    state.selectedJid = 'JV1';
+    state.vehicles.set('JV1', {
+      data: { line: '725', lat: 49.35, lon: 8.67, delay: 2 },
+      missedCycles: 0,
+      marker: { getLatLng: () => ({ lat: 49.35, lng: 8.67 }) },
+    });
+    state.vehicles.set('JV2', {
+      data: { line: '719', lat: 49.31, lon: 8.64, delay: null },
+      missedCycles: 3,
+    });
+    state.selectedStop = { lid: 'A=1@L=6003411@', name: 'Sandhausen', extId: '6003411' };
+    state._activeStationBoardType = 'DEP';
+    state._activeTab = 'departures';
+    state._depFilter = '725';
+    const depList = document.createElement('div');
+    depList.id = 'departure-list';
+    const row = document.createElement('div');
+    row.className = 'departure-item';
+    row.textContent = '725  Sandhausen  13:45  +2';
+    depList.appendChild(row);
+    document.body.appendChild(depList);
+
+    const d = JSON.parse(busradarDump());
+
+    expect(d.vehicles.length).toBe(2);
+    const v1 = d.vehicles.find((v) => v.jid === 'JV1');
+    expect(v1.line).toBe('725');
+    expect(v1.delay).toBe(2);
+    expect(v1.selected).toBe(true);
+    const v2 = d.vehicles.find((v) => v.jid === 'JV2');
+    expect(v2.missedCycles).toBe(3);
+    expect(v2.selected).toBe(false);
+
+    expect(d.stop.name).toBe('Sandhausen');
+    expect(d.stop.activeBoardType).toBe('DEP');
+    expect(d.stop.departures.count).toBe(1);
+    expect(d.stop.departures.rows[0]).toContain('725');
+
+    expect(d.activeTab).toBe('departures');
+    expect(d.filters.dep).toBe('725');
+    expect(d.map.bounds.swLat).toBeCloseTo(49.3, 5);
+    expect(d.map.bounds.neLon).toBeCloseTo(8.72, 5);
+
+    document.body.removeChild(depList);
+  });
+
+  it('busradarDump stop is null when no stop is selected', () => {
+    state.selectedStop = null;
+    const d = JSON.parse(busradarDump());
+    expect(d.stop).toBeNull();
+    expect(Array.isArray(d.vehicles)).toBe(true);
+  });
 });
 
 describe('busradarDownloadDump — download the dump as a .json file', () => {
