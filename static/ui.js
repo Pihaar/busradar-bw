@@ -148,14 +148,18 @@ export var ui = {
     banner.hidden = false;
     var reloadBtn = banner.querySelector('.version-banner__reload');
     if (reloadBtn) {
-      reloadBtn.addEventListener(
-        'click',
-        function () {
-          location.reload();
-        },
-        { once: true },
-      );
+      // Idempotent assignment: the banner is now re-showable (hideTerminalBanner
+      // dismisses it on reconnect), so a stacking addEventListener would
+      // accumulate one reload handler per show. Reassigning onclick replaces.
+      reloadBtn.onclick = function () {
+        location.reload();
+      };
     }
+  },
+
+  hideTerminalBanner: function () {
+    var b = document.getElementById('terminal-banner');
+    if (b) b.hidden = true;
   },
 
   updateSseState: function (s) {

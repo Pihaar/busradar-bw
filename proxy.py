@@ -766,11 +766,13 @@ class TemplatedAsset:
         media_type: str,
         fallback_body: str,
         extra_headers: dict[str, str] | None = None,
+        cache_control: str = "no-cache, no-store, must-revalidate",
     ):
         self.path = path
         self.media_type = media_type
         self.fallback_body = fallback_body
         self.extra_headers = extra_headers or {}
+        self.cache_control = cache_control
         try:
             self.template = path.read_text(encoding="utf-8")
         except OSError as e:
@@ -783,13 +785,16 @@ class TemplatedAsset:
     def response(self) -> Response:
         no_cache = "no-cache, no-store, must-revalidate"
         if not self.rendered:
+            # A degraded error stub must never be stored or bf-cached: it would
+            # pin the failure into the browser. The 200 path may relax caching
+            # (see self.cache_control) but the 503 fallback always stays no-store.
             return Response(
                 self.fallback_body,
                 media_type=self.media_type,
                 status_code=503,
                 headers={"Cache-Control": no_cache},
             )
-        headers = {"Cache-Control": no_cache}
+        headers = {"Cache-Control": self.cache_control}
         headers.update(self.extra_headers)
         return Response(self.rendered, media_type=self.media_type, headers=headers)
 
@@ -828,6 +833,12 @@ _index_asset = TemplatedAsset(
     version=_VERSION,
     media_type="text/html; charset=utf-8",
     fallback_body="<!doctype html><meta charset=utf-8><title>busradar</title>service unavailable\n",
+    # The app shell carries no PII/secrets, so it is intentionally
+    # storable-at-rest to unblock the browser back/forward cache. Dropping
+    # only no-store (not no-cache) still forces revalidation on every
+    # navigation. sw.js keeps the no-store default so a stale worker can
+    # never be bf-cached.
+    cache_control="no-cache, must-revalidate",
 )
 
 if _VERSION == "unknown":

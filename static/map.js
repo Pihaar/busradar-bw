@@ -512,6 +512,15 @@ export function stopLocationWatch() {
   state._geoWatchId = null;
 }
 
+// Remove the user-location dot from the map (if present) and drop the ref.
+// Shared by the location-toggle-off flow and the page-lifecycle suspend.
+export function removeUserLocationMarker() {
+  if (state._userLocationMarker) {
+    state._userLocationMarker.remove();
+    state._userLocationMarker = null;
+  }
+}
+
 // === STOPS LAYER ===
 var STOPS_CACHE_KEY = 'busradar_stops_v2';
 var STOPS_CACHE_TTL = 24 * 60 * 60 * 1000;

@@ -303,7 +303,7 @@ class TestServiceWorker:
 
         resp = await client.get("/")
         assert resp.status_code == 200
-        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+        assert resp.headers["cache-control"] == "no-cache, must-revalidate"
         body = resp.text
         assert "__APP_VERSION__" not in body, "placeholder leaked into served HTML"
         assert f"style.css?v={_VERSION}" in body or "style.css?v=" in body
@@ -314,6 +314,7 @@ class TestServiceWorker:
 
         resp = await client.get("/index.html")
         assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "no-cache, must-revalidate"
         assert "__APP_VERSION__" not in resp.text
         assert f"style.css?v={_VERSION}" in resp.text or "style.css?v=" in resp.text
 
@@ -363,6 +364,35 @@ class TestTemplatedAsset:
         assert resp.status_code == 200
         assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert resp.headers["content-type"].startswith("application/json")
+
+    def test_custom_cache_control_on_200(self, tmp_path):
+        from proxy import TemplatedAsset
+
+        f = tmp_path / "a.txt"
+        f.write_text("body")
+        asset = TemplatedAsset(
+            f, "v1.0", "text/plain", "fallback", cache_control="public, max-age=60"
+        )
+        resp = asset.response()
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "public, max-age=60"
+
+    def test_custom_cache_control_503_keeps_no_store(self, tmp_path):
+        from proxy import TemplatedAsset
+
+        # Key divergence: even with a relaxed cache_control for the 200 path,
+        # the 503 error stub must always fall back to no-store so a failure
+        # is never stored or bf-cached.
+        asset = TemplatedAsset(
+            tmp_path / "missing.txt",
+            "v1.0",
+            "text/plain",
+            "down\n",
+            cache_control="public, max-age=60",
+        )
+        resp = asset.response()
+        assert resp.status_code == 503
+        assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
     def test_response_carries_extra_headers(self, tmp_path):
         from proxy import TemplatedAsset

@@ -12,6 +12,7 @@ import {
   setUserLocationMarker,
   startLocationWatch,
   stopLocationWatch,
+  removeUserLocationMarker,
 } from './map.js';
 import { ui, search } from './ui.js';
 import { startStream, notifyViewportChange, refresh, showError, announce } from './refresh.js';
@@ -161,10 +162,7 @@ settings._bindUI = function () {
         self._updateGroup('setting-location', 'off');
         if (state._gpsControlContainer) state._gpsControlContainer.style.display = 'none';
         stopLocationWatch();
-        if (state._userLocationMarker) {
-          state._userLocationMarker.remove();
-          state._userLocationMarker = null;
-        }
+        removeUserLocationMarker();
       }
     });
   });

@@ -9,7 +9,13 @@ import {
   debugLog,
 } from './state.js';
 import { api } from './api.js';
-import { markers, stopsLayer } from './map.js';
+import {
+  markers,
+  stopsLayer,
+  startLocationWatch,
+  stopLocationWatch,
+  removeUserLocationMarker,
+} from './map.js';
 import { ui } from './ui.js';
 import {
   updateStatus,
@@ -81,6 +87,10 @@ function _setSseState(s) {
     );
   } else if (s === 'open') {
     clearPersistentError();
+    // Every successful (re)connect funnels through here, so this clears a
+    // stale terminal banner after ANY reopen path (visibilitychange, online,
+    // pageshow-restore, broken-session recovery).
+    if (ui && typeof ui.hideTerminalBanner === 'function') ui.hideTerminalBanner();
   }
 }
 
@@ -302,8 +312,62 @@ export function startStream() {
   };
 }
 
+// === Page-lifecycle orchestration ===
+// These two orchestrate the whole page lifecycle, not just the SSE stream:
+// the EventSource, the staleness clock (state.lastUpdate), and the geolocation
+// watch + dot. Closing the EventSource on pagehide is what makes the page
+// bf-cache eligible; _resumeStream rebuilds everything on a bf-restore.
+
+export function _suspendStream() {
+  if (_es) {
+    try {
+      _es.close();
+    } catch (e) {}
+    _es = null;
+  }
+  clearTimeout(_reconnectTimer);
+  clearTimeout(_viewportTimer);
+  _reconnectAttempt = 0;
+  _lastForceReconnectAt = 0;
+  // Null lastUpdate so the 1s stale-ticker and a trailing visibilitychange
+  // can't read a now-ancient timestamp during the reconnect gap and fire a
+  // false force-reconnect. The subscribe handler re-seeds it (~177) on reopen.
+  state.lastUpdate = null;
+  stopLocationWatch();
+  removeUserLocationMarker();
+  // Intentionally does NOT set any SSE error/terminal UI state — a suspend is
+  // a clean teardown for bf-cache, not a connection failure.
+}
+
+export function _resumeStream() {
+  // pagehide→_suspendStream usually reset these already; kept defensively.
+  _reconnectAttempt = 0;
+  clearTimeout(_reconnectTimer);
+  // Re-arm the version banner: the JS heap survives a bf-restore, so a later
+  // deploy must still be able to prompt. _appVersion is intentionally NOT
+  // reset — a genuine version change is detected against the value we hold.
+  state._versionUpdateBannerShown = false;
+  startStream();
+  startLocationWatch();
+}
+
+// pageshow with persisted=false/undefined is a normal load, where init.js
+// already starts the stream — no-op so we don't double-start it. Only a
+// bf-restore (persisted=true) needs the explicit resume.
+window.addEventListener('pagehide', function () {
+  _suspendStream();
+});
+window.addEventListener('pageshow', function (e) {
+  if (e.persisted) _resumeStream();
+});
+
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState !== 'visible' || !state.map) return;
+  // Resume location tracking on every visible transition, regardless of which
+  // SSE branch below runs (incl. the hidden-not-frozen case where the stream
+  // stayed open and we return early). startLocationWatch is idempotent — it
+  // no-ops if a watch is already active or showLocation is off.
+  startLocationWatch();
   // Two recovery paths:
   //   (a) Browser noticed the disconnect — readyState is CLOSED.
   //   (b) Mobile-zombie: the OS suspended the tab long enough for the
@@ -445,13 +509,19 @@ setInterval(function () {
 export function notifyViewportChange() {
   clearTimeout(_viewportTimer);
   _viewportTimer = setTimeout(function () {
-    if (!_es || _es.readyState !== 1) {
-      // Stream not OPEN yet (connecting/reconnecting). Skip the POST; the
-      // next `subscribe` handler unconditionally calls
-      // _sendCurrentViewport() so the freshest bounds reach the server
-      // once the stream comes up.
+    if (!_es) {
+      // Stream torn down (suspended for bf-cache, or terminal). Only resurrect
+      // when the user is actively looking at a VISIBLE page — a straggler
+      // moveend on a page heading into the bf-cache freeze must not reopen the
+      // EventSource and defeat eligibility. Intentionally does NOT reset
+      // _reconnectAttempt (unlike the visibilitychange/online reopens): a pan is
+      // high-frequency, and resetting per gesture would restart the full backoff
+      // each time; one-shot retry per gesture is enough (subscribe zeroes the
+      // counter on success).
+      if (document.visibilityState === 'visible') startStream();
       return;
     }
+    if (_es.readyState !== 1) return;
     _sendCurrentViewport();
   }, VIEWPORT_DEBOUNCE_MS);
 }

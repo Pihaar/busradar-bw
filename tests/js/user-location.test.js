@@ -36,7 +36,7 @@ globalThis.L = {
 
 vi.mock('../../static/ui.js', () => ({ ui: { selectJourney: vi.fn() } }));
 
-const { setUserLocationMarker } = await import('../../static/map.js');
+const { setUserLocationMarker, removeUserLocationMarker } = await import('../../static/map.js');
 const { state, settings } = await import('../../static/state.js');
 
 function makeMapMock() {
@@ -122,6 +122,26 @@ describe('setUserLocationMarker', () => {
     expect(state._userLocationMarker.addTo).toHaveBeenCalledWith(state.map);
     // ...and the stale one was NOT reused via setLatLng.
     expect(stale.setLatLng).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeUserLocationMarker', () => {
+  beforeEach(() => {
+    state._userLocationMarker = null;
+  });
+
+  it('removes the marker and drops the ref when one is present', () => {
+    const remove = vi.fn();
+    state._userLocationMarker = { remove };
+    removeUserLocationMarker();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(state._userLocationMarker).toBeNull();
+  });
+
+  it('is a no-op when no marker is present (stays null, no throw)', () => {
+    state._userLocationMarker = null;
+    expect(() => removeUserLocationMarker()).not.toThrow();
+    expect(state._userLocationMarker).toBeNull();
   });
 });
 
