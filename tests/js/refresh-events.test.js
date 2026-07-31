@@ -699,6 +699,73 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.stop).toBeNull();
     expect(Array.isArray(d.vehicles)).toBe(true);
   });
+
+  it('busradarDump env fingerprint is populated (fields present for cross-browser compare)', () => {
+    const d = JSON.parse(busradarDump());
+    expect(typeof d.env.userAgent === 'string' || d.env.userAgent === null).toBe(true);
+    expect('timeZone' in d.env).toBe(true);
+    expect('viewportW' in d.env).toBe(true);
+    expect('hardwareConcurrency' in d.env).toBe(true);
+  });
+
+  it('busradarDump env falls back to null when a navigator read throws (hardened browser)', () => {
+    const orig = Object.getOwnPropertyDescriptor(navigator, 'deviceMemory');
+    try {
+      Object.defineProperty(navigator, 'deviceMemory', {
+        configurable: true,
+        get() {
+          throw new Error('blocked');
+        },
+      });
+      const d = JSON.parse(busradarDump());
+      expect(d.env.deviceMemory).toBeNull();
+    } finally {
+      if (orig) Object.defineProperty(navigator, 'deviceMemory', orig);
+      else delete navigator.deviceMemory;
+    }
+  });
+
+  it('busradarDump journey block carries server stopL AND the rendered DOM rows', () => {
+    state.selectedJourneyData = {
+      journey: {
+        pos: { x: 8660000, y: 49340000 },
+        stopL: [
+          { locX: 0, dTimeS: '134500', dTimeR: '134700' },
+          { locX: 1, aTimeS: '135000' },
+        ],
+      },
+      common: { locL: [{ name: 'Stop A' }, { name: 'Stop B' }] },
+    };
+    state._renderedStopSig = 'sig-xyz';
+    const list = document.createElement('ol');
+    list.id = 'stop-list';
+    const li = document.createElement('li');
+    li.className = 'stop-item';
+    const nm = document.createElement('div');
+    nm.className = 'stop-name';
+    nm.textContent = 'Stop A';
+    const tm = document.createElement('div');
+    tm.className = 'stop-times';
+    tm.textContent = '13:45';
+    const dot = document.createElement('div');
+    dot.className = 'stop-dot stop-dot--passed';
+    li.append(dot, nm, tm);
+    list.appendChild(li);
+    document.body.appendChild(list);
+
+    const d = JSON.parse(busradarDump());
+    expect(d.journey.hasPos).toBe(true);
+    expect(d.journey.renderedStopSig).toBe('sig-xyz');
+    expect(d.journey.dataStopCount).toBe(2);
+    expect(d.journey.dataStops[0].name).toBe('Stop A');
+    expect(d.journey.dataStops[0].dTimeR).toBe('134700');
+    expect(d.journey.domStopCount).toBe(1);
+    expect(d.journey.domStops[0].name).toBe('Stop A');
+    expect(d.journey.domStops[0].passed).toBe(true);
+
+    document.body.removeChild(list);
+    state.selectedJourneyData = null;
+  });
 });
 
 describe('busradarDownloadDump — download the dump as a .json file', () => {
