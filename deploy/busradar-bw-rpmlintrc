@@ -1,2 +1,10 @@
 addFilter("filelist-forbidden-opt")
 addFilter("dir-or-file-outside-snapshot.*/opt/busradar")
+# /var/lib/busradar is owned by the dedicated busradar service user (created via
+# sysusers); the non-standard uid/gid on its %ghost tmpfiles dir is intentional.
+addFilter("non-standard-uid /var/lib/busradar busradar")
+addFilter("non-standard-gid /var/lib/busradar busradar")
+# Tests (pytest + vitest) run in the pre-push hook and CI, not in the network-less
+# OBS build (vitest needs npm deps offline; pytest needs extra BuildRequires). Per
+# rpmlint guidance, ignore no-%check-section when the suite cannot run in OBS.
+addFilter("no-%check-section")
