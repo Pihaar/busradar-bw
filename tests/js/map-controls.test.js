@@ -115,7 +115,10 @@ function installL() {
 
 vi.mock('../../static/refresh.js', () => ({ refresh: vi.fn() }));
 const getStops = vi.fn().mockResolvedValue({ stops: [] });
-vi.mock('../../static/api.js', () => ({ api: { getStops: (...a) => getStops(...a) } }));
+vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
+  api: { getStops: (...a) => getStops(...a) },
+}));
 vi.mock('../../static/ui.js', () => ({
   ui: {
     closePanel: vi.fn(),

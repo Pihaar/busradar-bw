@@ -25,6 +25,7 @@ const uiMock = {
 };
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: { selectStream: vi.fn(() => Promise.resolve({})) },
 }));
 vi.mock('../../static/map.js', () => ({
@@ -46,6 +47,7 @@ const {
   _resendActiveSelection,
   _followPanTo,
   _viewportPayload,
+  derivedServerNowMin,
   busradarDump,
   busradarDownloadDump,
   _copyDump,
@@ -85,6 +87,28 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
     expect(uiMock.showJourneyEnded).not.toHaveBeenCalled();
     expect(sv.missedCycles).toBe(0);
     expect(sv.marker.setLatLng).toHaveBeenCalledWith([49.342, 8.66]);
+  });
+
+  it('off-ring snap cancels an in-flight interpolation RAF before setLatLng (#194)', () => {
+    const hadCAF = typeof globalThis.cancelAnimationFrame === 'function';
+    const caf = hadCAF
+      ? vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {})
+      : ((globalThis.cancelAnimationFrame = vi.fn()), globalThis.cancelAnimationFrame);
+    const sv = {
+      data: { lat: 0, lon: 0, jid: 'JR' },
+      marker: { setLatLng: vi.fn() },
+      missedCycles: 3,
+      _animFrame: 777, // an interpolation RAF is in flight
+    };
+    state.vehicles.set('JR', sv);
+    _applyJourneyPayload('JR', {
+      journey: { pos: { x: 8660000, y: 49342000 }, stopL: [] },
+    });
+    expect(caf).toHaveBeenCalledWith(777);
+    expect(sv._animFrame).toBeNull();
+    expect(sv.marker.setLatLng).toHaveBeenCalledWith([49.342, 8.66]);
+    if (hadCAF) caf.mockRestore();
+    else delete globalThis.cancelAnimationFrame;
   });
 
   it('branch 1b: position present but vehicle not in BBox → only updateJourneyStopDelays', () => {
@@ -1042,6 +1066,334 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
       if (savedSw) Object.defineProperty(navigator, 'serviceWorker', savedSw);
       else delete navigator.serviceWorker;
     }
+  });
+});
+
+describe('derivedServerNowMin — shared server-clock helper', () => {
+  afterEach(() => {
+    state.serverTimeMin = null;
+    state.serverTimeStamp = null;
+  });
+
+  it('returns null when no server time has arrived yet', () => {
+    state.serverTimeMin = null;
+    state.serverTimeStamp = null;
+    expect(derivedServerNowMin()).toBeNull();
+  });
+
+  it('extrapolates from the stamp when serverTimeStamp is set', () => {
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = Date.now() - 120000; // 2 min ago
+    const v = derivedServerNowMin();
+    expect(v).toBeGreaterThanOrEqual(601.9);
+    expect(v).toBeLessThanOrEqual(602.5);
+  });
+
+  it('falls back to elapsed 0 when serverTimeStamp is null (the ternary false arm)', () => {
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = null;
+    expect(derivedServerNowMin()).toBe(600);
+  });
+});
+
+describe('busradarDump Runde 2 — network / SSE / time / markers / sw / geo', () => {
+  let savedSettings;
+  beforeEach(() => {
+    savedSettings = settings.current;
+    settings.current = { posMode: 'CALC', showLocation: false };
+    state.map = {
+      getCenter: () => ({ lat: 49.34, lng: 8.66, distanceTo: () => 0 }),
+      getZoom: () => 15,
+    };
+    state.selectedJid = null;
+    state.vehicles = new Map();
+    state._followLog = [];
+    state._fetchLog = [];
+    state._sseLog = [];
+    state._sseState = 'connecting';
+    state.lastUpdate = null;
+    state.consecutiveErrors = 0;
+    state._lastConnectedClients = undefined;
+    state.serverTimeMin = null;
+    state.serverTimeStamp = null;
+    state._lastViewportPayload = null;
+    state._swRegistration = null;
+    state._swCacheVersion = null;
+    state._geoWatchId = null;
+    state._geoLastFix = null;
+    state._userLocationMarker = null;
+    state._appVersion = null;
+  });
+  afterEach(() => {
+    state.map = null;
+    settings.current = savedSettings;
+    delete globalThis.L.Marker;
+  });
+
+  it('fetchLog / sseLog carry the rings when set, and fall back to [] when null', () => {
+    state._fetchLog = [{ ts: 1, method: 'GET', url: '/x', status: 200, kind: 'ok' }];
+    state._sseLog = [{ t: 1, type: 'vehicles', meta: { n: 3 } }];
+    let d = JSON.parse(busradarDump());
+    expect(d.fetchLog).toHaveLength(1);
+    expect(d.fetchLog[0].kind).toBe('ok');
+    expect(d.sseLog[0].type).toBe('vehicles');
+
+    state._fetchLog = null;
+    state._sseLog = null;
+    d = JSON.parse(busradarDump());
+    expect(d.fetchLog).toEqual([]);
+    expect(d.sseLog).toEqual([]);
+  });
+
+  it('sse block: falsy arms (no _es, no state, no lastUpdate, no clients)', () => {
+    state._sseState = null;
+    state.lastUpdate = null;
+    state._lastConnectedClients = undefined;
+    const d = JSON.parse(busradarDump());
+    expect(d.sse.state).toBeNull();
+    expect(d.sse.readyState).toBeNull(); // _es is null in this suite
+    expect(d.sse.lastUpdateAgeMs).toBeNull();
+    expect(d.sse.connectedClients).toBeNull();
+  });
+
+  it('sse block: truthy arms (state set, lastUpdate + clients present)', () => {
+    state._sseState = 'open';
+    state.lastUpdate = Date.now() - 1000;
+    state._lastConnectedClients = '7';
+    state.consecutiveErrors = 2;
+    const d = JSON.parse(busradarDump());
+    expect(d.sse.state).toBe('open');
+    expect(d.sse.consecutiveErrors).toBe(2);
+    expect(d.sse.lastUpdateAgeMs).toBeGreaterThanOrEqual(1000);
+    expect(d.sse.connectedClients).toBe('7');
+  });
+
+  it('serverTime: all null when no server tick yet', () => {
+    state.serverTimeMin = null;
+    const d = JSON.parse(busradarDump());
+    expect(d.serverTime.serverTimeMin).toBeNull();
+    expect(d.serverTime.derivedNowMin).toBeNull();
+    expect(d.serverTime.skewMin).toBeNull();
+  });
+
+  it('serverTime: populated with a near-zero skew when the clock is in sync', () => {
+    const now = new Date();
+    const localMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    state.serverTimeMin = localMin + 5;
+    state.serverTimeStamp = Date.now();
+    const d = JSON.parse(busradarDump());
+    expect(d.serverTime.serverTimeMin).toBeCloseTo(localMin + 5, 1);
+    expect(d.serverTime.skewMin).toBeGreaterThan(3);
+    expect(d.serverTime.skewMin).toBeLessThan(7);
+  });
+
+  it('serverTime: skew normalises across the midnight wrap (both directions)', () => {
+    const now = new Date();
+    const localMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    // skew > 720 → subtract 1440
+    state.serverTimeMin = localMin + 900;
+    state.serverTimeStamp = Date.now();
+    let d = JSON.parse(busradarDump());
+    expect(d.serverTime.skewMin).toBeLessThan(0); // 900 - 1440 = -540
+    // skew < -720 → add 1440
+    state.serverTimeMin = localMin - 900;
+    state.serverTimeStamp = Date.now();
+    d = JSON.parse(busradarDump());
+    expect(d.serverTime.skewMin).toBeGreaterThan(0); // -900 + 1440 = 540
+  });
+
+  it('serverTime: stampMs falls back to null when serverTimeStamp is 0/falsy', () => {
+    state.serverTimeMin = 600;
+    state.serverTimeStamp = null; // serverTimeMin set but no stamp
+    const d = JSON.parse(busradarDump());
+    expect(d.serverTime.stampMs).toBeNull();
+    expect(d.serverTime.derivedNowMin).toBe(600); // elapsed 0
+  });
+
+  it('panelHeader reads the detail header text; missing nodes fall back to null', () => {
+    const line = document.createElement('div');
+    line.id = 'detail-line';
+    line.textContent = '725';
+    document.body.appendChild(line);
+    const d = JSON.parse(busradarDump());
+    expect(d.panelHeader.line).toBe('725');
+    // dir/delay nodes absent → _dumpRead catch → null (proves never-throw)
+    expect(d.panelHeader.dir).toBeNull();
+    expect(d.panelHeader.delay).toBeNull();
+    document.body.removeChild(line);
+  });
+
+  it('lastViewport reflects the captured payload, else null', () => {
+    let d = JSON.parse(busradarDump());
+    expect(d.lastViewport).toBeNull();
+    state._lastViewportPayload = { swLat: 1, follow: true, ts: 123 };
+    d = JSON.parse(busradarDump());
+    expect(d.lastViewport.follow).toBe(true);
+  });
+
+  it('markers.markersOnMap counts only vehicles whose marker is on the map', () => {
+    state.vehicles.set('A', { marker: { _map: {} }, data: {} }); // on map
+    state.vehicles.set('B', { marker: { _map: null }, data: {} }); // marker, not on map
+    state.vehicles.set('C', { data: {} }); // no marker
+    const d = JSON.parse(busradarDump());
+    expect(d.markers.markersOnMap).toBe(1);
+  });
+
+  it('markers.mapMarkerCount is null without eachLayer, and counts L.Marker layers with the stub', () => {
+    // Default map stub has no eachLayer → guard returns null.
+    let d = JSON.parse(busradarDump());
+    expect(d.markers.mapMarkerCount).toBeNull();
+
+    // eachLayer present but no L.Marker constructor → !Lm arm → null.
+    state.map.eachLayer = (cb) => {
+      cb({});
+    };
+    d = JSON.parse(busradarDump());
+    expect(d.markers.mapMarkerCount).toBeNull();
+
+    // eachLayer + L.Marker present → explicit count, instanceof both arms.
+    globalThis.L.Marker = class {};
+    const marker = new globalThis.L.Marker();
+    state.map.eachLayer = (cb) => {
+      cb(marker); // counts
+      cb({}); // not an L.Marker → skipped
+    };
+    d = JSON.parse(busradarDump());
+    expect(d.markers.mapMarkerCount).toBe(1);
+  });
+
+  it('markers.mapMarkerCount is null when the map itself is absent (!m arm)', () => {
+    state.map = null;
+    const d = JSON.parse(busradarDump());
+    expect(d.markers.mapMarkerCount).toBeNull();
+  });
+
+  it('markers.markersOnMap is null when the vehicles read throws (_dumpRead catch)', () => {
+    state.vehicles = {
+      forEach() {
+        throw new Error('boom');
+      },
+    };
+    const d = JSON.parse(busradarDump());
+    expect(d.markers.markersOnMap).toBeNull();
+    state.vehicles = new Map();
+  });
+
+  it('sw block reflects an injected registration (waiting / installing / active url)', () => {
+    const savedSw = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    try {
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: { controller: {} },
+        configurable: true,
+      });
+      state._swRegistration = {
+        waiting: {},
+        installing: {},
+        active: { scriptURL: 'https://x/sw.js' },
+      };
+      state._swCacheVersion = 'v1,v2';
+      state._appVersion = '1.2.41';
+      const d = JSON.parse(busradarDump());
+      expect(d.sw.controller).toBe(true);
+      expect(d.sw.hasRegistration).toBe(true);
+      expect(d.sw.waiting).toBe(true);
+      expect(d.sw.installing).toBe(true);
+      expect(d.sw.activeScriptURL).toBe('https://x/sw.js');
+      expect(d.sw.cacheVersion).toBe('v1,v2');
+      expect(d.sw.appVersion).toBe('1.2.41');
+    } finally {
+      if (savedSw) Object.defineProperty(navigator, 'serviceWorker', savedSw);
+      else delete navigator.serviceWorker;
+    }
+  });
+
+  it('sw block: no registration and an active reg without scriptURL fall back to null', () => {
+    state._swRegistration = null;
+    let d = JSON.parse(busradarDump());
+    expect(d.sw.hasRegistration).toBe(false);
+    expect(d.sw.waiting).toBe(false);
+    expect(d.sw.activeScriptURL).toBeNull();
+
+    state._swRegistration = { active: {} }; // active present, scriptURL absent
+    d = JSON.parse(busradarDump());
+    expect(d.sw.activeScriptURL).toBeNull(); // scriptURL || null
+
+    state._swRegistration = { active: undefined }; // reg && reg.active false arm
+    d = JSON.parse(busradarDump());
+    expect(d.sw.activeScriptURL).toBeNull();
+  });
+
+  it('sw block yields null (not a throw) when navigator.serviceWorker access throws', () => {
+    const savedSw = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    try {
+      Object.defineProperty(navigator, 'serviceWorker', {
+        configurable: true,
+        get() {
+          throw new Error('blocked by hardened browser');
+        },
+      });
+      const d = JSON.parse(busradarDump());
+      expect(d.sw).toBeNull(); // the catch returns null, consistent with sibling blocks
+    } finally {
+      if (savedSw) Object.defineProperty(navigator, 'serviceWorker', savedSw);
+      else delete navigator.serviceWorker;
+    }
+  });
+
+  it('geo block: independent watch/fix, marker-shown flag, and lastFix age', () => {
+    state._geoWatchId = null;
+    state._geoLastFix = null;
+    state._userLocationMarker = null;
+    let d = JSON.parse(busradarDump());
+    expect(d.geo.watchActive).toBe(false);
+    expect(d.geo.markerShown).toBe(false);
+    expect(d.geo.lastFix).toBeNull();
+    expect(d.geo.lastFixAgeMs).toBeNull();
+
+    state._geoWatchId = 42;
+    state._userLocationMarker = { _map: {} };
+    state._geoLastFix = { lat: 49.34, lon: 8.66, accuracy: 12, ts: Date.now() - 2000 };
+    d = JSON.parse(busradarDump());
+    expect(d.geo.watchActive).toBe(true);
+    expect(d.geo.markerShown).toBe(true);
+    expect(d.geo.lastFix.accuracy).toBe(12);
+    expect(d.geo.lastFixAgeMs).toBeGreaterThanOrEqual(2000);
+  });
+
+  it('jsErrors mirrors the window-global error ring', () => {
+    const prev = window.__busradarErrors;
+    window.__busradarErrors = [{ ts: 1, kind: 'error', message: 'boom' }];
+    const d = JSON.parse(busradarDump());
+    expect(d.jsErrors[0].message).toBe('boom');
+    window.__busradarErrors = prev;
+  });
+
+  it('vehicles entries carry direction and onMap', () => {
+    state.selectedJid = 'V1';
+    state.vehicles.set('V1', {
+      data: { line: '725', direction: 'Sandhausen', lat: 49.34, lon: 8.66, delay: 1 },
+      missedCycles: 0,
+      marker: { _map: {} },
+    });
+    const d = JSON.parse(busradarDump());
+    const v = d.vehicles.find((x) => x.jid === 'V1');
+    expect(v.direction).toBe('Sandhausen');
+    expect(v.onMap).toBe(true);
+  });
+
+  it('journey dataStops carry per-stop delayDep / delayArr', () => {
+    state.selectedJourneyData = {
+      journey: {
+        stopL: [
+          { locX: 0, dTimeS: '134500', dTimeR: '134800', aTimeS: '134400', aTimeR: '134700' },
+        ],
+      },
+      common: { locL: [{ name: 'Stop A' }] },
+    };
+    const d = JSON.parse(busradarDump());
+    expect(d.journey.dataStops[0].delayDep).toBe(3);
+    expect(d.journey.dataStops[0].delayArr).toBe(3);
+    state.selectedJourneyData = null;
   });
 });
 

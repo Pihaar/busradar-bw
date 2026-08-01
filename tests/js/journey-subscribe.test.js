@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }), circleMarker: vi.fn() };
 
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: {
     getStationBoard: vi.fn(),
     getJourney: vi.fn(() => new Promise(() => {})), // never-resolving by default

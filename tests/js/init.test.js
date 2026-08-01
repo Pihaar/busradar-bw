@@ -101,7 +101,10 @@ const refreshMock = {
 vi.mock('../../static/refresh.js', () => refreshMock);
 
 const urlStateMock = { parse: vi.fn(() => Object.create(null)), saveMapPosition: vi.fn() };
-vi.mock('../../static/api.js', () => ({ urlState: urlStateMock }));
+vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
+  urlState: urlStateMock,
+}));
 
 const mapMock = {
   mapModule: { init: vi.fn() },

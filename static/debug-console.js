@@ -161,13 +161,33 @@
     };
   });
 
+  // Structured error/rejection ring for the debug dump. Lives on window (not a
+  // module state field) because this module is import-free — same reason the
+  // console tail (RING) is window-global. Bounded at 50; primitive fields only.
+  function recErr(kind, message, source, line, col) {
+    try {
+      var ring = window.__busradarErrors || (window.__busradarErrors = []);
+      ring.push({
+        ts: Date.now(),
+        kind: kind,
+        message: message == null ? null : String(message),
+        source: source == null ? null : String(source),
+        line: line == null ? null : line,
+        col: col == null ? null : col,
+      });
+      while (ring.length > 50) ring.shift();
+    } catch (e) {}
+  }
+
   window.addEventListener('error', function (e) {
+    recErr('error', e && e.message, e && e.filename, e && e.lineno, e && e.colno);
     record('error', [
       (e && e.message) + ' @ ' + ((e && e.filename) || '') + ':' + ((e && e.lineno) || ''),
     ]);
   });
   window.addEventListener('unhandledrejection', function (e) {
     var r = e && e.reason;
+    recErr('rejection', fmt(r), null, null, null);
     record('error', ['unhandledrejection: ' + fmt(r)]);
   });
 })();

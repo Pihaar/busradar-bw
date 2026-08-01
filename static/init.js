@@ -428,6 +428,20 @@ if (!window.__BUSRADAR_TEST__) {
       navigator.serviceWorker
         .register('/sw.js', { updateViaCache: 'none' })
         .then(function (reg) {
+          // Expose the registration for the debug dump (sw block). https-only,
+          // so it stays null on http/dev/tests.
+          state._swRegistration = reg;
+          // One-shot: capture a cache-storage version tag for the dump so a
+          // stale-cache report shows which SW cache the tab is serving from.
+          // Best-effort, never awaited by the dump.
+          if (typeof caches !== 'undefined' && caches.keys) {
+            caches
+              .keys()
+              .then(function (keys) {
+                state._swCacheVersion = (keys || []).join(',') || null;
+              })
+              .catch(function () {});
+          }
           // Warm PWAs (resumed from background, never navigated) don't
           // re-run this registration, so they never check for a new SW and
           // keep serving the old app version until a manual cache clear.

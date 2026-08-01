@@ -6,9 +6,10 @@ import {
   getDelayClass,
   getDelayText,
   parseHafasTimeToMin,
+  calcDelay,
   debugLog,
 } from './state.js';
-import { api } from './api.js';
+import { api, trackedFetch } from './api.js';
 import {
   markers,
   stopsLayer,
@@ -171,6 +172,7 @@ export function startStream() {
   _es.addEventListener('subscribe', function (ev) {
     _reconnectAttempt = 0;
     _setSseState('open');
+    _sselog('subscribe');
     if (window.__busradarVerbose) debugLog('sse subscribe (stream open)');
     // Start the staleness clock at connect time. The stale-stream guard
     // (1s ticker + visibilitychange) keys off state.lastUpdate, which was
@@ -223,6 +225,7 @@ export function startStream() {
   _es.addEventListener('connected', function (ev) {
     try {
       const d = JSON.parse(ev.data);
+      _sselog('connected', { n: typeof d.count === 'number' ? d.count : null });
       if (typeof d.count === 'number') {
         state._lastConnectedClients = _formatConnectedCount(d.count);
       }
@@ -236,6 +239,7 @@ export function startStream() {
     } catch (e) {
       return;
     }
+    _sselog('vehicles', { n: (data.vehicles || []).length });
     if (window.__busradarVerbose) debugLog('sse vehicles', { count: (data.vehicles || []).length });
     _handleVehiclesPayload(data);
   });
@@ -251,6 +255,10 @@ export function startStream() {
     } catch (e) {
       return;
     }
+    _sselog('journey', {
+      jid: data && data.jid ? String(data.jid) : null,
+      hasPos: !!(data && data.journey && data.journey.pos),
+    });
     if (!data || !data.jid) return;
     if (state.selectedJid !== data.jid) return;
     const journeyData = data.journey;
@@ -270,6 +278,10 @@ export function startStream() {
     } catch (e) {
       return;
     }
+    _sselog('stationboard', {
+      lid: data && data.lid ? String(data.lid) : null,
+      bt: data && data.boardType ? String(data.boardType) : null,
+    });
     if (!data || !data.lid) return;
     if (!state.selectedStop || state.selectedStop.lid !== data.lid) return;
     try {
@@ -292,6 +304,10 @@ export function startStream() {
     // those land on _es.onerror below.
     try {
       const d = JSON.parse(ev.data || '{}');
+      _sselog('error', {
+        stale: !!(d && d.stale),
+        sel: d && d.selection ? String(d.selection) : null,
+      });
       if (!d) return;
       if (d.stale) {
         showPersistentError(t('connection_stale'));
@@ -307,6 +323,7 @@ export function startStream() {
   });
 
   _es.onerror = function () {
+    _sselog('onerror', { readyState: _es ? _es.readyState : null });
     if (!_es || _es.readyState !== 2 /* CLOSED */) return;
     _scheduleReconnect();
   };
@@ -602,14 +619,19 @@ function _sendCurrentViewport() {
     return;
   }
   const payload = _viewportPayload();
+  // Snapshot the payload actually POSTed (carries the follow-widened bbox) for
+  // the debug dump; see busradarDump.lastViewport.
+  state._lastViewportPayload = Object.assign({}, payload, {
+    follow: !!(state.followBus && state.selectedJid),
+    ts: Date.now(),
+  });
   if (window.__busradarVerbose) debugLog('viewport POST', payload);
-  window
-    .fetch(CONFIG.apiBase + '/stream/viewport', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      credentials: 'same-origin',
-    })
+  trackedFetch(CONFIG.apiBase + '/stream/viewport', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'same-origin',
+  })
     .then(function (resp) {
       _recoverIfBrokenSession(resp);
     })
@@ -633,6 +655,32 @@ function _flog(action, dist, reason) {
     log.push({ t: Date.now(), action: action, dist: dist, reason: reason || null });
     if (log.length > 120) log.shift();
   } catch (e) {}
+}
+
+// Ring-buffered SSE-event log for the debug dump — a purely LOCAL, in-memory
+// counterpart to _flog. It records that an SSE event of a given type arrived,
+// with primitive-only meta (never the parsed payload object, which would pin
+// large arrays in the ring). Nothing is transmitted anywhere; the ring is read
+// only by busradarDump when the user asks for a dump. Bounded at 120 entries.
+// Callers MUST invoke this AFTER JSON.parse so `meta` reads defined fields.
+function _sselog(type, meta) {
+  try {
+    var log = state._sseLog || (state._sseLog = []);
+    log.push({ t: Date.now(), type: type, meta: meta || null });
+    if (log.length > 120) log.shift();
+  } catch (e) {}
+}
+
+// Server clock extrapolated to "now" from the last serverTime tick. Returns
+// null when no server time has arrived yet (the dump then shows null rather
+// than NaN); callers that need a number default it to 0. serverTimeMin and
+// serverTimeStamp are set together, so a null serverTimeMin implies elMs 0 and
+// the old `(serverTimeMin || 0) + elMs/60000` also yielded 0 — behaviour kept.
+// Shared by _applyJourneyPayload and the debug dump's serverTime block.
+export function derivedServerNowMin() {
+  if (state.serverTimeMin == null) return null;
+  const elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
+  return state.serverTimeMin + elMs / 60000;
 }
 
 // Pan the map to keep the followed bus centered. Shared by the vehicles
@@ -687,6 +735,18 @@ export function _followPanTo(lat, lon) {
 // Ctrl+Shift+D copies it to the clipboard. Includes the follow-pan log (above),
 // the current marker-vs-map-center offset (the divergence magnitude), the
 // selection/follow state, and the captured console tail (debug-console.js).
+// Safe-read helper for the debug dump: returns fn()'s value, or null if it
+// throws. Shared by the scalar/DOM fields below so a missing DOM node or state
+// field yields null instead of aborting the whole dump. One catch, so a single
+// throw-test in the dump suite covers it for every call site.
+function _dumpRead(fn) {
+  try {
+    return fn();
+  } catch (e) {
+    return null;
+  }
+}
+
 export function busradarDump() {
   const m = state.map;
   const sel = state.selectedJid && state.vehicles && state.vehicles.get(state.selectedJid);
@@ -782,11 +842,13 @@ export function busradarDump() {
           out.push({
             jid: jid,
             line: d.line || null,
+            direction: d.direction || null,
             lat: d.lat != null ? +d.lat.toFixed(6) : null,
             lon: d.lon != null ? +d.lon.toFixed(6) : null,
             delay: d.delay != null ? d.delay : null,
             missedCycles: v.missedCycles || 0,
             selected: jid === state.selectedJid,
+            onMap: !!(v.marker && v.marker._map),
           });
         });
         return out;
@@ -811,6 +873,8 @@ export function busradarDump() {
             dTimeR: s.dTimeR || null,
             aTimeS: s.aTimeS || null,
             aTimeR: s.aTimeR || null,
+            delayDep: calcDelay(s.dTimeS, s.dTimeR),
+            delayArr: calcDelay(s.aTimeS, s.aTimeR),
           };
         });
         const domStops = [];
@@ -870,6 +934,124 @@ export function busradarDump() {
       }
     })(),
     followLog: (state._followLog || []).slice(-120),
+    // Rolling full network log (also captures a request that failed silently in
+    // a caller's own .catch, e.g. a viewport/select 401/409) — the burst-503 at
+    // empty stops came over the network layer, not the console. Bounded ring.
+    fetchLog: (state._fetchLog || []).slice(-60),
+    // SSE connection snapshot + rolling event log. Together they reconstruct the
+    // stream lifecycle (state transitions, reconnects, per-event arrival) that a
+    // ghost-marker / stale-stream report needs and the console never showed.
+    sse: {
+      state: state._sseState || null,
+      readyState: _es ? _es.readyState : null,
+      reconnectAttempt: _reconnectAttempt,
+      consecutiveErrors: state.consecutiveErrors || 0,
+      lastUpdateAgeMs: state.lastUpdate ? Date.now() - state.lastUpdate : null,
+      connectedClients: state._lastConnectedClients != null ? state._lastConnectedClients : null,
+    },
+    sseLog: (state._sseLog || []).slice(-120),
+    // Server clock vs local clock. The midnight delay bugs turned on time; skew
+    // (normalised across the midnight wrap) reveals a client/server clock gap.
+    // Null-safe: no server tick yet → all derived fields null, never NaN.
+    serverTime: (function () {
+      const stm = state.serverTimeMin;
+      if (stm == null) {
+        return {
+          serverTimeMin: null,
+          stampMs: null,
+          derivedNowMin: null,
+          localNowMin: null,
+          skewMin: null,
+        };
+      }
+      const now = new Date();
+      const localNowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+      const dnm = derivedServerNowMin();
+      let skew = dnm - localNowMin;
+      if (skew < -720) skew += 1440;
+      else if (skew > 720) skew -= 1440;
+      return {
+        serverTimeMin: +stm.toFixed(3),
+        stampMs: state.serverTimeStamp || null,
+        derivedNowMin: +dnm.toFixed(3),
+        localNowMin: +localNowMin.toFixed(3),
+        skewMin: +skew.toFixed(3),
+      };
+    })(),
+    // What the detail-panel header actually renders (state-vs-DOM mismatch).
+    // Read via _dumpRead so a closed/absent panel yields null, never a throw.
+    panelHeader: {
+      line: _dumpRead(function () {
+        return document.getElementById('detail-line').textContent;
+      }),
+      dir: _dumpRead(function () {
+        return document.getElementById('detail-direction').textContent;
+      }),
+      delay: _dumpRead(function () {
+        return document.getElementById('detail-delay').textContent;
+      }),
+    },
+    // The viewport payload actually POSTed last (follow-widened bbox), so a
+    // "follow lost the bus" report shows the ring the server was asked for.
+    lastViewport: state._lastViewportPayload || null,
+    // Marker inventory. Stop markers are L.circleMarker (NOT an L.Marker
+    // subclass) so they are not counted; bus markers and the user-location dot
+    // (both L.marker) are. mapMarkerCount ≈ markersOnMap + 1 (the location dot);
+    // a larger excess means an orphaned bus marker left on the map — the #192
+    // blind spot. Both counters use an explicit accumulator because eachLayer
+    // returns the map and ignores the callback's return.
+    markers: {
+      markersOnMap: _dumpRead(function () {
+        var n = 0;
+        state.vehicles.forEach(function (v) {
+          if (v.marker && v.marker._map) n++;
+        });
+        return n;
+      }),
+      mapMarkerCount: _dumpRead(function () {
+        var Lm = globalThis.L && globalThis.L.Marker;
+        if (!m || typeof m.eachLayer !== 'function' || !Lm) return null;
+        var n = 0;
+        m.eachLayer(function (l) {
+          if (l instanceof Lm) n++;
+        });
+        return n;
+      }),
+    },
+    // Service-worker + cache state (null on http/dev/tests where no SW registers).
+    sw: (function () {
+      try {
+        const reg = state._swRegistration;
+        const swc = navigator.serviceWorker;
+        return {
+          controller: !!(swc && swc.controller),
+          hasRegistration: !!reg,
+          waiting: !!(reg && reg.waiting),
+          installing: !!(reg && reg.installing),
+          activeScriptURL: reg && reg.active ? reg.active.scriptURL || null : null,
+          cacheVersion: state._swCacheVersion || null,
+          appVersion: state._appVersion || null,
+        };
+      } catch (e) {
+        // A hardened browser can make navigator.serviceWorker access throw;
+        // yield null like every sibling block (never abort the whole dump).
+        return null;
+      }
+    })(),
+    // The user's OWN last GPS fix at full precision — needed to compare the
+    // location dot against markers metre-for-metre when diagnosing a dot-offset
+    // bug. Local, user-initiated, own-session data (DPP-362 transparency).
+    // watchActive and lastFix are independent: stopLocationWatch does not null
+    // the last fix, so lastFixAgeMs surfaces a stale fix.
+    geo: {
+      watchActive: state._geoWatchId != null,
+      showLocation: !!(settings.current && settings.current.showLocation),
+      markerShown: !!(state._userLocationMarker && state._userLocationMarker._map),
+      lastFix: state._geoLastFix || null,
+      lastFixAgeMs: state._geoLastFix ? Date.now() - state._geoLastFix.ts : null,
+    },
+    // Captured JS error/rejection ring (window-global, fed by debug-console.js).
+    jsErrors: (window.__busradarErrors || []).slice(),
     // Full console ring (always-on capture) — the dump must carry the complete
     // session output, independent of the on-screen overlay's Clear/scroll state.
     consoleTail: (window.__busradarConsoleTail || []).slice(),
@@ -1146,6 +1328,15 @@ export function _applyJourneyPayload(jid, journeyData) {
       if (sv.missedCycles > 0) {
         sv.data.lat = jLat;
         sv.data.lon = jLon;
+        // Cancel any in-flight interpolation RAF before snapping to the journey
+        // position. Off-ring the bus was last animated toward a now-stale target;
+        // leaving that RAF running lets its per-frame setLatLng fight this one for
+        // up to a full interval, so the followed marker briefly wobbles against the
+        // pan. Clearing _animFrame makes the journey position authoritative.
+        if (sv._animFrame) {
+          cancelAnimationFrame(sv._animFrame);
+          sv._animFrame = null;
+        }
         sv.marker.setLatLng([jLat, jLon]);
         sv.missedCycles = 0;
       }
@@ -1179,8 +1370,8 @@ export function _applyJourneyPayload(jid, journeyData) {
     : '';
   let lastMin = lastTime ? parseHafasTimeToMin(lastTime) : 0;
   if (lastMin === null) lastMin = 0;
-  const elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-  const nowM = (state.serverTimeMin || 0) + elMs / 60000;
+  const dnm = derivedServerNowMin();
+  const nowM = dnm == null ? 0 : dnm;
   if (nowM > 1080 && lastMin < 360) lastMin += 1440;
   if (nowM < 360 && lastMin > 1080) lastMin -= 1440;
 

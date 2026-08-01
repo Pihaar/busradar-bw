@@ -13,6 +13,7 @@ globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
 
 const buildShareHash = vi.fn(() => '#jid=J');
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: { selectStream: vi.fn(() => Promise.resolve()) },
   urlState: { push: vi.fn(), replace: vi.fn(), buildShareHash: (...a) => buildShareHash(...a) },
 }));

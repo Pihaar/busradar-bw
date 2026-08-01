@@ -40,6 +40,7 @@ globalThis.L = {
 
 const getJourney = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: {
     getStationBoard: vi.fn(),
     getJourney: (...a) => getJourney(...a),

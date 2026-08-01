@@ -98,6 +98,21 @@ describe('startLocationWatch / stopLocationWatch', () => {
     expect(state._userLocationMarker.setLatLng).toHaveBeenCalledWith([49.35, 8.67]);
   });
 
+  it('records _geoLastFix with accuracy on each callback (accuracy present arm)', () => {
+    startLocationWatch();
+    watchCb({ coords: { latitude: 49.34, longitude: 8.66, accuracy: 12 } });
+    expect(state._geoLastFix.lat).toBe(49.34);
+    expect(state._geoLastFix.lon).toBe(8.66);
+    expect(state._geoLastFix.accuracy).toBe(12);
+    expect(typeof state._geoLastFix.ts).toBe('number');
+  });
+
+  it('records _geoLastFix with null accuracy when the fix omits it (accuracy null arm)', () => {
+    startLocationWatch();
+    watchCb({ coords: { latitude: 49.34, longitude: 8.66 } });
+    expect(state._geoLastFix.accuracy).toBeNull();
+  });
+
   it('swallows a watch error callback without side effects', () => {
     startLocationWatch();
     expect(() => watchErr({ code: 3 })).not.toThrow();

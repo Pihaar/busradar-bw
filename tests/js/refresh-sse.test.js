@@ -44,7 +44,10 @@ const uiMock = {
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 
 const apiMock = { selectStream: vi.fn(() => Promise.resolve({})) };
-vi.mock('../../static/api.js', () => ({ api: apiMock }));
+vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
+  api: apiMock,
+}));
 
 const markersMock = { updateAll: vi.fn(), _lastVisibleCount: null };
 const stopsLayerMock = { update: vi.fn() };
@@ -70,7 +73,8 @@ const statusMock = {
 };
 vi.mock('../../static/status.js', () => statusMock);
 
-const { startStream, refresh, _suspendStream } = await import('../../static/refresh.js');
+const { startStream, refresh, _suspendStream, busradarDump } =
+  await import('../../static/refresh.js');
 const { state, settings } = await import('../../static/state.js');
 
 const instances = [];
@@ -818,5 +822,54 @@ describe('_sendCurrentViewport fetch rejection (the trailing .catch)', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(instances.length).toBe(1); // no recovery reopen; error was swallowed
+  });
+});
+
+describe('Runde 2 dump/log paths that need a live _es', () => {
+  it('busradarDump.sse.readyState reflects the live EventSource readyState', () => {
+    state.map = makeMap();
+    startStream();
+    instances[0].readyState = 1;
+    const d = JSON.parse(busradarDump());
+    expect(d.sse.readyState).toBe(1); // the `_es ? _es.readyState : null` truthy arm
+  });
+
+  it('the onerror _sselog reads null readyState after the stream was torn down', () => {
+    startStream();
+    const es = instances[0];
+    _suspendStream(); // nulls the module-private _es
+    // The stub still holds the assigned onerror closure; firing it now exercises
+    // the `_es ? _es.readyState : null` FALSE arm (module _es is null).
+    expect(() => es.onerror()).not.toThrow();
+  });
+
+  it('_sendCurrentViewport captures the follow-widened lastViewport payload', () => {
+    state.map = makeMap();
+    state.followBus = true;
+    state.selectedJid = 'JFOLLOW';
+    window.fetch = vi.fn(() => Promise.resolve({ status: 200 }));
+    startStream();
+    instances[0].readyState = 1;
+    instances[0].fire('subscribe', '{}');
+    expect(state._lastViewportPayload).toBeTruthy();
+    expect(state._lastViewportPayload.follow).toBe(true); // the `followBus && selectedJid` truthy arm
+    expect(typeof state._lastViewportPayload.ts).toBe('number');
+  });
+
+  it('_sselog re-initialises the ring when state._sseLog is null (the assignment arm)', () => {
+    state._sseLog = null;
+    startStream();
+    instances[0].fire('vehicles', JSON.stringify({ vehicles: [] }));
+    expect(Array.isArray(state._sseLog)).toBe(true);
+    expect(state._sseLog[state._sseLog.length - 1].type).toBe('vehicles');
+  });
+
+  it('_sselog caps the ring at 120 entries (oldest evicted)', () => {
+    state._sseLog = Array.from({ length: 120 }, (_, i) => ({ t: i, type: 'seed', meta: null }));
+    startStream();
+    instances[0].fire('vehicles', JSON.stringify({ vehicles: [] }));
+    expect(state._sseLog).toHaveLength(120);
+    expect(state._sseLog[state._sseLog.length - 1].type).toBe('vehicles'); // newest kept
+    expect(state._sseLog[0].t).toBe(1); // entry t=0 shifted out
   });
 });

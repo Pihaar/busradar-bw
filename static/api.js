@@ -1,6 +1,45 @@
 import { CONFIG } from './config.js';
 import { state } from './state.js';
 
+// === TRACKED FETCH ===
+// Transparent wrapper around window.fetch for the debug dump: returns the
+// ORIGINAL promise and records {ts, method, url, status, kind} into the bounded
+// state._fetchLog ring via a SEPARATE two-arg observer. It must not change the
+// caller-visible settle — never `.then().catch()` (would swallow rejections and
+// break the selectStream 401/409 recovery + AbortController de-dup) and never a
+// one-arg `.then` (would leave a dangling rejected promise → unhandledrejection
+// that the jsErrors ring then captures). It reads only r.status/r.ok and does
+// NOT consume the single-use body. Recording is itself try-guarded so a ring
+// write can never turn a successful fetch into a rejection.
+var _FETCH_LOG_CAP = 60;
+function _recFetch(opts, url, status, kind) {
+  try {
+    state._fetchLog.push({
+      ts: Date.now(),
+      method: (opts && opts.method) || 'GET',
+      url: String(url),
+      status: status,
+      kind: kind,
+    });
+    while (state._fetchLog.length > _FETCH_LOG_CAP) state._fetchLog.shift();
+  } catch (e) {
+    /* diagnostics must never break a fetch */
+  }
+}
+
+export function trackedFetch(url, opts) {
+  var p = window.fetch(url, opts);
+  p.then(
+    function (r) {
+      _recFetch(opts, url, r.status, r.ok ? 'ok' : 'http-error');
+    },
+    function (e) {
+      _recFetch(opts, url, 0, e && e.name === 'AbortError' ? 'abort' : 'network');
+    },
+  );
+  return p;
+}
+
 // === SELECTSTREAM DEBOUNCE ===
 // Rapid load-more clicks would fire one POST /api/stream/select per
 // click; the server-side per-subscriber rate-limit (burst 3, refill 1/s)
@@ -34,13 +73,12 @@ function _selectStreamFlush() {
   _selectStreamPending = null;
   _selectStreamResolvers = [];
   _selectStreamRejecters = [];
-  window
-    .fetch(CONFIG.apiBase + '/stream/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ selection: pending }),
-      credentials: 'same-origin',
-    })
+  trackedFetch(CONFIG.apiBase + '/stream/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selection: pending }),
+    credentials: 'same-origin',
+  })
     .then(function (r) {
       if (r.status === 401 || r.status === 409) {
         // Broken session — caller should treat as "EventSource will reconnect".
@@ -137,7 +175,7 @@ export var api = {
       lon: lon.toFixed(5),
       radius: String(radius),
     });
-    return window.fetch(CONFIG.apiBase + '/stops?' + params.toString()).then(function (r) {
+    return trackedFetch(CONFIG.apiBase + '/stops?' + params.toString()).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
@@ -155,7 +193,7 @@ export var api = {
       body: JSON.stringify({ jid: jid }),
     };
     if (userInitiated) fetchOpts.signal = api._journeyUserAbort.signal;
-    return window.fetch(CONFIG.apiBase + '/journey', fetchOpts).then(function (r) {
+    return trackedFetch(CONFIG.apiBase + '/journey', fetchOpts).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
@@ -165,28 +203,26 @@ export var api = {
     var abortKey = type === 'ARR' ? '_stationArrAbort' : '_stationDepAbort';
     if (api[abortKey]) api[abortKey].abort();
     api[abortKey] = new AbortController();
-    return window
-      .fetch(CONFIG.apiBase + '/stationboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // auto_expand lets the server widen the window internally (one request
-        // instead of the old client-side 60→1440 cascade). min_results = the
-        // count the client already shows (expand until MORE appears); ext_id
-        // scopes the emptiness check to the opened platform.
-        body: JSON.stringify({
-          lid: lid,
-          type: type || 'DEP',
-          dur: dur || 60,
-          auto_expand: !!autoExpand,
-          min_results: minResults || 0,
-          ext_id: extId || null,
-        }),
-        signal: api[abortKey].signal,
-      })
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      });
+    return trackedFetch(CONFIG.apiBase + '/stationboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // auto_expand lets the server widen the window internally (one request
+      // instead of the old client-side 60→1440 cascade). min_results = the
+      // count the client already shows (expand until MORE appears); ext_id
+      // scopes the emptiness check to the opened platform.
+      body: JSON.stringify({
+        lid: lid,
+        type: type || 'DEP',
+        dur: dur || 60,
+        auto_expand: !!autoExpand,
+        min_results: minResults || 0,
+        ext_id: extId || null,
+      }),
+      signal: api[abortKey].signal,
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
   },
 
   // Tag the SSE subscriber with a current journey or stationboard. The server

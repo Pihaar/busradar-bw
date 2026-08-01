@@ -170,6 +170,57 @@ describe('debug-console overlay', () => {
     expect(box.textContent).toContain('unhandledrejection: Error: nope');
   });
 
+  it('feeds window.__busradarErrors with a structured error entry (all fields)', async () => {
+    window.__busradarErrors = [];
+    await import('../../static/debug-console.js');
+    const ev = new ErrorEvent('error', { message: 'boom', filename: 'x.js', lineno: 7 });
+    Object.defineProperty(ev, 'colno', { value: 9, configurable: true });
+    window.dispatchEvent(ev);
+    const e = window.__busradarErrors[window.__busradarErrors.length - 1];
+    expect(e.kind).toBe('error');
+    expect(e.message).toBe('boom');
+    expect(e.source).toBe('x.js');
+    expect(e.line).toBe(7);
+    expect(e.col).toBe(9);
+    expect(typeof e.ts).toBe('number');
+  });
+
+  it('feeds a rejection entry (kind=rejection, null source/line/col)', async () => {
+    window.__busradarErrors = [];
+    await import('../../static/debug-console.js');
+    const ev = new Event('unhandledrejection');
+    ev.reason = new Error('nope');
+    window.dispatchEvent(ev);
+    const e = window.__busradarErrors[window.__busradarErrors.length - 1];
+    expect(e.kind).toBe('rejection');
+    expect(e.message).toBe('Error: nope'); // fmt(reason)
+    expect(e.source).toBeNull();
+    expect(e.line).toBeNull();
+    expect(e.col).toBeNull();
+  });
+
+  it('null-fills the error entry fields when the event carries none', async () => {
+    window.__busradarErrors = [];
+    await import('../../static/debug-console.js');
+    // A plain Event has no message/filename/lineno/colno, so `e && e.field`
+    // yields undefined and every `field == null ? null : …` null arm is hit.
+    window.dispatchEvent(new Event('error'));
+    const e = window.__busradarErrors[window.__busradarErrors.length - 1];
+    expect(e.kind).toBe('error');
+    expect(e.message).toBeNull();
+    expect(e.source).toBeNull();
+    expect(e.line).toBeNull();
+    expect(e.col).toBeNull();
+  });
+
+  it('caps the __busradarErrors ring at 50 entries', async () => {
+    window.__busradarErrors = Array.from({ length: 50 }, (_, i) => ({ ts: i, kind: 'seed' }));
+    await import('../../static/debug-console.js');
+    window.dispatchEvent(new ErrorEvent('error', { message: 'over', filename: 'y.js', lineno: 1 }));
+    expect(window.__busradarErrors).toHaveLength(50);
+    expect(window.__busradarErrors[window.__busradarErrors.length - 1].kind).toBe('error');
+  });
+
   it('formats a plain object without name/message via JSON.stringify', async () => {
     await import('../../static/debug-console.js');
     window.__debugConsole.show();

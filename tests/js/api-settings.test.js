@@ -11,7 +11,7 @@ import {
   extractHafasMessages,
   formatTime,
 } from '../../static/state.js';
-import { api, urlState } from '../../static/api.js';
+import { api, urlState, trackedFetch } from '../../static/api.js';
 
 describe('api.getStops', () => {
   var originalFetch;
@@ -1182,3 +1182,78 @@ describe('settings', () => {
 // The X-Client-Id header was an artefact of the UUID-keyed connected-clients
 // counter; both are gone since the polling-to-SSE switch. Counter is now
 // derived from len(SubscriberRegistry) server-side.
+
+// === trackedFetch — transparent window.fetch wrapper for the debug dump ===
+describe('trackedFetch', () => {
+  let originalFetch;
+  beforeEach(() => {
+    originalFetch = window.fetch;
+    window.fetch = vi.fn();
+    state._fetchLog = [];
+  });
+  afterEach(() => {
+    window.fetch = originalFetch;
+    state._fetchLog = [];
+  });
+
+  it('records an "ok" entry and settles identically to window.fetch (2xx)', async () => {
+    const resp = { ok: true, status: 200 };
+    window.fetch.mockResolvedValue(resp);
+    const p = trackedFetch('/api/x', { method: 'POST' });
+    await expect(p).resolves.toBe(resp); // caller sees the ORIGINAL response
+    const e = state._fetchLog[state._fetchLog.length - 1];
+    expect(e.kind).toBe('ok');
+    expect(e.status).toBe(200);
+    expect(e.method).toBe('POST');
+    expect(e.url).toBe('/api/x');
+  });
+
+  it('records an "http-error" entry for a non-ok response', async () => {
+    window.fetch.mockResolvedValue({ ok: false, status: 503 });
+    await trackedFetch('/api/y');
+    const e = state._fetchLog[state._fetchLog.length - 1];
+    expect(e.kind).toBe('http-error');
+    expect(e.status).toBe(503);
+    expect(e.method).toBe('GET'); // no opts → method defaults to GET
+  });
+
+  it('records an "abort" entry and re-rejects with the ORIGINAL error', async () => {
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    window.fetch.mockRejectedValue(err);
+    await expect(trackedFetch('/api/z')).rejects.toBe(err);
+    const e = state._fetchLog[state._fetchLog.length - 1];
+    expect(e.kind).toBe('abort');
+    expect(e.status).toBe(0);
+  });
+
+  it('records a "network" entry for a generic rejection', async () => {
+    window.fetch.mockRejectedValue(new Error('offline'));
+    await expect(trackedFetch('/api/n')).rejects.toThrow('offline');
+    const e = state._fetchLog[state._fetchLog.length - 1];
+    expect(e.kind).toBe('network');
+  });
+
+  it('treats a falsy rejection reason as "network" (the e && ... false arm)', async () => {
+    window.fetch.mockRejectedValue(null);
+    await expect(trackedFetch('/api/null')).rejects.toBeNull();
+    const e = state._fetchLog[state._fetchLog.length - 1];
+    expect(e.kind).toBe('network');
+  });
+
+  it('caps the fetch-log ring at 60 entries', async () => {
+    window.fetch.mockResolvedValue({ ok: true, status: 200 });
+    state._fetchLog = Array.from({ length: 60 }, (_, i) => ({ ts: i, url: 'seed' }));
+    await trackedFetch('/api/cap');
+    expect(state._fetchLog).toHaveLength(60);
+    expect(state._fetchLog[state._fetchLog.length - 1].url).toBe('/api/cap');
+    expect(state._fetchLog[0].ts).toBe(1); // oldest seed shifted out
+  });
+
+  it('never turns a successful fetch into a rejection if the ring write throws', async () => {
+    const resp = { ok: true, status: 200 };
+    window.fetch.mockResolvedValue(resp);
+    state._fetchLog = null; // .push throws → _recFetch swallows it
+    await expect(trackedFetch('/api/guard')).resolves.toBe(resp);
+  });
+});

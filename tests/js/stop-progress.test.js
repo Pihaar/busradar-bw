@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
 
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: { getStationBoard: vi.fn(), selectStream: vi.fn(() => Promise.resolve({})) },
   urlState: { push: vi.fn(), replace: vi.fn() },
 }));

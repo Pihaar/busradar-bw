@@ -47,7 +47,10 @@ globalThis.L = {
 };
 
 const getStops = vi.fn();
-vi.mock('../../static/api.js', () => ({ api: { getStops: (...a) => getStops(...a) } }));
+vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
+  api: { getStops: (...a) => getStops(...a) },
+}));
 vi.mock('../../static/ui.js', () => ({ ui: { showStationBoard: vi.fn() } }));
 
 const { stopsLayer } = await import('../../static/map.js');

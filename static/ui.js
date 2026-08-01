@@ -12,7 +12,7 @@ import {
   getDelayText,
   extractHafasMessages,
 } from './state.js';
-import { api, urlState } from './api.js';
+import { api, urlState, trackedFetch } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { announce } from './status.js';
 
@@ -2492,8 +2492,7 @@ export var search = {
     var isLineQuery = /^[a-z0-9]{1,6}$/i.test(query.trim());
 
     if (isLineQuery && localLines.length === 0) {
-      window
-        .fetch(CONFIG.apiBase + '/line_search?q=' + encodeURIComponent(query.trim()))
+      trackedFetch(CONFIG.apiBase + '/line_search?q=' + encodeURIComponent(query.trim()))
         .then(function (r) {
           return r.ok ? r.json() : null;
         })
@@ -2507,16 +2506,15 @@ export var search = {
         .catch(function () {});
     }
 
-    window
-      .fetch(
-        CONFIG.apiBase +
-          '/search?q=' +
-          encodeURIComponent(query) +
-          '&lat=' +
-          center.lat.toFixed(5) +
-          '&lon=' +
-          center.lng.toFixed(5),
-      )
+    trackedFetch(
+      CONFIG.apiBase +
+        '/search?q=' +
+        encodeURIComponent(query) +
+        '&lat=' +
+        center.lat.toFixed(5) +
+        '&lon=' +
+        center.lng.toFixed(5),
+    )
       .then(function (r) {
         return r.ok ? r.json() : null;
       })

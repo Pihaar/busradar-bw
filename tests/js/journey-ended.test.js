@@ -14,6 +14,7 @@ globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
 globalThis.cancelAnimationFrame = vi.fn();
 
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: { getStationBoard: vi.fn(), selectStream: vi.fn(() => Promise.resolve({})) },
   urlState: { push: vi.fn(), replace: vi.fn() },
 }));

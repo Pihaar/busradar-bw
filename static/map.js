@@ -1,6 +1,6 @@
 import { CONFIG } from './config.js';
 import { state, settings, t, getDelayClass, getDelayText } from './state.js';
-import { api } from './api.js';
+import { api, trackedFetch } from './api.js';
 import { ui } from './ui.js';
 import * as refresh from './refresh.js';
 
@@ -194,8 +194,10 @@ export var mapModule = {
                       ctrl.abort();
                     }, 10000)
                   : null;
-                state._appVersionFetch = window
-                  .fetch(CONFIG.apiBase + '/health', ctrl ? { signal: ctrl.signal } : undefined)
+                state._appVersionFetch = trackedFetch(
+                  CONFIG.apiBase + '/health',
+                  ctrl ? { signal: ctrl.signal } : undefined,
+                )
                   .then(function (r) {
                     return r.ok ? r.json() : null;
                   })
@@ -498,6 +500,14 @@ export function startLocationWatch() {
   if (state._geoWatchId != null) return; // already watching
   state._geoWatchId = navigator.geolocation.watchPosition(
     function (pos) {
+      // Record the fix for the debug dump (age surfaces staleness); coords at
+      // full precision so a dot-offset bug can be compared metre-for-metre.
+      state._geoLastFix = {
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        accuracy: pos.coords.accuracy != null ? pos.coords.accuracy : null,
+        ts: Date.now(),
+      };
       setUserLocationMarker(pos.coords.latitude, pos.coords.longitude);
     },
     function () {},

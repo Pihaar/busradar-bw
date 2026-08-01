@@ -16,6 +16,7 @@ globalThis.L = {
 
 const selectStream = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: {
     getStationBoard: vi.fn(() => new Promise(() => {})),
     getJourney: vi.fn(() => new Promise(() => {})),

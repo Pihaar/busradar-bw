@@ -42,6 +42,10 @@ export var state = {
   // geolocation watchPosition id for the live user-location dot; null when
   // no watch is active. Replaces the old per-tick getCurrentPosition poll.
   _geoWatchId: null,
+  // Last geolocation fix {lat, lon, accuracy, ts}, set in the watchPosition
+  // success callback (map.js). NOT cleared by stopLocationWatch — the debug
+  // dump surfaces its age so a stale fix is visible.
+  _geoLastFix: null,
   _stopProgressTimer: null,
   _pendingRestore: null,
   _restoreInProgress: false,
@@ -52,6 +56,18 @@ export var state = {
   _appVersion: null,
   _appVersionFetch: null,
   _lastConnectedClients: undefined,
+  // Debug-dump ring buffers (bounded, mirror the _followLog pattern). Only read
+  // by busradarDump; the JS-error ring lives on window.__busradarErrors instead
+  // because debug-console.js is import-free and must not import state.
+  _fetchLog: [],
+  _sseLog: [],
+  // Last viewport payload actually POSTed to /stream/viewport (carries the
+  // follow-widened bbox); captured in _sendCurrentViewport.
+  _lastViewportPayload: null,
+  // Service-worker registration + cached-version, captured in init.js (prod https
+  // only, so null in dev/http/tests).
+  _swRegistration: null,
+  _swCacheVersion: null,
   // SSE connection state. 'connecting' | 'open' | 'reconnecting' | 'failed-terminal'.
   _sseState: 'connecting',
   // One-shot latch for the version-update banner. Once set, stays set for the

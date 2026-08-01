@@ -18,6 +18,7 @@ globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
 const getStationBoard = vi.fn((...a) => Promise.resolve({ jnyL: [], common: {} }));
 const selectStream = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: {
     getStationBoard: (...a) => getStationBoard(...a),
     selectStream: (...a) => selectStream(...a),

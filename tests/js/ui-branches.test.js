@@ -23,6 +23,7 @@ globalThis.L = {
 const getJourney = vi.fn(() => new Promise(() => {}));
 const getStationBoard = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
+  trackedFetch: (...a) => window.fetch(...a),
   api: {
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
