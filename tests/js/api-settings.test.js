@@ -861,13 +861,14 @@ describe('settings', () => {
       expect(getDelayClass(undefined)).toBe('nodata');
     });
 
-    it('returns early for delay <= -3', () => {
+    it('returns early for delay <= -2', () => {
+      expect(getDelayClass(-2)).toBe('early');
       expect(getDelayClass(-3)).toBe('early');
       expect(getDelayClass(-10)).toBe('early');
     });
 
-    it('returns ontime for delay between -2 and 2', () => {
-      expect(getDelayClass(-2)).toBe('ontime');
+    it('returns ontime for delay between -1 and 2', () => {
+      expect(getDelayClass(-1)).toBe('ontime');
       expect(getDelayClass(0)).toBe('ontime');
       expect(getDelayClass(2)).toBe('ontime');
     });

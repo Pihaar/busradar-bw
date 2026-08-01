@@ -944,7 +944,8 @@ html, body {
 }
 .stop-delay--ontime { background: rgb(0 245 212 / 10%); color: var(--color-ontime); }
 .stop-delay--delayed { background: rgb(251 191 36 / 10%); color: var(--color-delayed); }
-.stop-delay--major { background: rgb(255 87 87 / 10%); color: var(--color-major-delay); }
+.stop-delay--major-delay { background: rgb(255 87 87 / 10%); color: var(--color-major-delay); }
+.stop-delay--early { background: rgb(255 255 255 / 10%); color: var(--color-early); }
 
 /* === DEPARTURE LIST === */
 .departure-list {

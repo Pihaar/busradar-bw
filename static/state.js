@@ -296,7 +296,7 @@ export function _pushHorizonLog(entry) {
 
 export function getDelayClass(delay) {
   if (delay === null || delay === undefined) return 'nodata';
-  if (delay <= -3) return 'early';
+  if (delay <= -2) return 'early';
   if (delay <= 2) return 'ontime';
   if (delay <= 5) return 'delayed';
   return 'major-delay';

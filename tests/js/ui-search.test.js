@@ -353,7 +353,7 @@ describe('search.renderResults', () => {
     expect(foc).toHaveBeenCalledWith('R', { nameS: '9', name: 'Bus 9' });
   });
 
-  it('renders the delay colours for delayed and major-delay lines', () => {
+  it('renders the delay colours for early, delayed and major-delay lines', () => {
     search.renderResults([
       {
         type: 'line',
@@ -363,10 +363,15 @@ describe('search.renderResults', () => {
         type: 'line',
         vehicle: { line: '2', direction: 'B', delay: 9, stops: [], jid: 'B', lat: 1, lon: 1 },
       },
+      {
+        type: 'line',
+        vehicle: { line: '3', direction: 'C', delay: -3, stops: [], jid: 'C', lat: 1, lon: 1 },
+      },
     ]);
     const badges = search.results.querySelectorAll('.search-result-delay');
     expect(badges[0].style.color).toContain('delayed');
     expect(badges[1].style.color).toContain('major-delay');
+    expect(badges[2].style.color).toContain('early');
   });
 
   it('renders a stop row and opens its station board on click', () => {

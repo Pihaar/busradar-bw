@@ -872,8 +872,7 @@ export var ui = {
 
     if (delay !== null && delay !== undefined && delay !== 0) {
       var badge = document.createElement('span');
-      badge.className =
-        'stop-delay stop-delay--' + (delay > 5 ? 'major' : delay > 2 ? 'delayed' : 'ontime');
+      badge.className = 'stop-delay stop-delay--' + getDelayClass(delay);
       badge.textContent = getDelayText(delay);
       row.appendChild(badge);
     }
@@ -1959,6 +1958,7 @@ export var ui = {
       if (delayCls === 'ontime') delayEl.style.color = 'var(--color-ontime)';
       else if (delayCls === 'delayed') delayEl.style.color = 'var(--color-delayed)';
       else if (delayCls === 'major-delay') delayEl.style.color = 'var(--color-major-delay)';
+      else if (delayCls === 'early') delayEl.style.color = 'var(--color-early)';
       else delayEl.style.color = 'var(--text-secondary)';
       delayEl.textContent = delay !== null ? getDelayText(delay) : '';
 
@@ -2144,6 +2144,7 @@ export var ui = {
       if (delayCls === 'ontime') delayEl.style.color = 'var(--color-ontime)';
       else if (delayCls === 'delayed') delayEl.style.color = 'var(--color-delayed)';
       else if (delayCls === 'major-delay') delayEl.style.color = 'var(--color-major-delay)';
+      else if (delayCls === 'early') delayEl.style.color = 'var(--color-early)';
       else delayEl.style.color = 'var(--text-secondary)';
       delayEl.textContent = delay !== null ? getDelayText(delay) : '';
 
@@ -2864,6 +2865,7 @@ export var search = {
           if (cls === 'ontime') delay.style.color = 'var(--color-ontime)';
           else if (cls === 'delayed') delay.style.color = 'var(--color-delayed)';
           else if (cls === 'major-delay') delay.style.color = 'var(--color-major-delay)';
+          else if (cls === 'early') delay.style.color = 'var(--color-early)';
           delay.textContent = getDelayText(v.delay);
           item.appendChild(delay);
         }

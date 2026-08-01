@@ -74,9 +74,14 @@ describe('ui._buildStopTimeRow', () => {
     expect(row.querySelector('.stop-time-label').textContent).toBe('Ab');
   });
 
-  it('major delay badge (> 5) gets the major class', () => {
+  it('major delay badge (> 5) gets the major-delay class', () => {
     const row = ui._buildStopTimeRow('100000', '100800', 8, null);
-    expect(row.querySelector('.stop-delay--major')).not.toBeNull();
+    expect(row.querySelector('.stop-delay--major-delay')).not.toBeNull();
+  });
+
+  it('early badge (<= -2) gets the early class', () => {
+    const row = ui._buildStopTimeRow('100000', '095800', -2, null);
+    expect(row.querySelector('.stop-delay--early')).not.toBeNull();
   });
 
   it('delayed badge (> 2, <= 5) gets the delayed class', () => {

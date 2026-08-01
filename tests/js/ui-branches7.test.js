@@ -136,6 +136,39 @@ describe('renderDepartures / renderArrivals — ontime delay colour', () => {
       document.getElementById('arrival-list').querySelector('.departure-delay').style.color,
     ).toContain('ontime');
   });
+
+  it('renderDepartures colours an early departure as early', () => {
+    state.vehicles = new Map();
+    ui.renderDepartures(
+      {
+        jnyL: [
+          { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000', dTimeR: '115700' } },
+        ],
+        common: { prodL: [{ nameS: '721' }], locL: [] },
+      },
+      { name: 'S' },
+      '',
+      null,
+    );
+    expect(ui.departureList.querySelector('.departure-delay').style.color).toContain('early');
+  });
+
+  it('renderArrivals colours an early arrival as early', () => {
+    ui.renderArrivals(
+      {
+        jnyL: [
+          { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { aTimeS: '120000', aTimeR: '115700' } },
+        ],
+        common: { prodL: [{ nameS: '721' }], locL: [] },
+      },
+      { name: 'S' },
+      '',
+      null,
+    );
+    expect(
+      document.getElementById('arrival-list').querySelector('.departure-delay').style.color,
+    ).toContain('early');
+  });
 });
 
 describe('renderJourneyStops — proximity match sub-conditions + platform swap', () => {
