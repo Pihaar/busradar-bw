@@ -201,6 +201,19 @@ class TestHafasCallViaApp:
         assert hafas.breaker.failures == 1
 
     @pytest.mark.asyncio
+    async def test_pool_timeout_does_not_trip_breaker(self, caplog):
+        # PoolTimeout is a LOCAL capacity signal (all pooled connections busy),
+        # a subclass of TimeoutException. Its handler must precede the generic
+        # timeout branch and return pool_exhausted WITHOUT touching the breaker,
+        # so transient local contention can't cause a global outage.
+        app = _mock_app(exc=httpx.PoolTimeout("pool"))
+        with caplog.at_level("WARNING", logger="busradar"):
+            out = await _hafas_call_via_app(app, "JourneyGeoPos", {})
+        assert out["error"] == "pool_exhausted"
+        assert hafas.breaker.failures == 0
+        assert any("pool_exhausted" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_unexpected_exception_does_not_trip_breaker(self, caplog):
         # A non-httpx exception (e.g. JSON decode / internal bug) → internal_error,
         # breaker untouched.

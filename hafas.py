@@ -137,6 +137,14 @@ async def _hafas_call_via_app(app: FastAPI, method: str, req: dict[str, Any]) ->
         breaker.record_success()
         return cast("dict[str, Any]", svc_res.get("res", {}))
 
+    except httpx.PoolTimeout:
+        # Pool exhaustion is a LOCAL capacity signal (all connections busy), not an
+        # upstream-health signal — do NOT trip the breaker, or transient local
+        # contention would cause a global outage. Must precede the TimeoutException
+        # handler (PoolTimeout is a subclass). Real HAFAS slowness surfaces as
+        # Read/ConnectTimeout below and still trips the breaker.
+        log.warning("[hafas] pool_exhausted method=%s", method)
+        return {"error": "pool_exhausted", "detail": "Connection pool exhausted"}
     except httpx.TimeoutException:
         breaker.record_failure()
         log.warning("[hafas] timeout method=%s", method)

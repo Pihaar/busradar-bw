@@ -93,6 +93,25 @@ describe('api.getStationBoard', () => {
     expect(body.dur).toBe(120);
   });
 
+  it('forwards auto_expand, min_results and ext_id when all are truthy', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    await api.getStationBoard('A=1@L=6003411@', 'DEP', 120, true, 25, '6003411');
+    var body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.auto_expand).toBe(true);
+    expect(body.min_results).toBe(25); // truthy arm of `minResults || 0`
+    expect(body.ext_id).toBe('6003411'); // truthy arm of `extId || null`
+  });
+
+  it('coerces falsy min_results/ext_id and auto_expand to their defaults', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    // autoExpand omitted → !!undefined = false; minResults=0 → 0; extId='' → null
+    await api.getStationBoard('A=1@L=1@', 'DEP', 60, undefined, 0, '');
+    var body = JSON.parse(window.fetch.mock.calls[0][1].body);
+    expect(body.auto_expand).toBe(false); // !!undefined
+    expect(body.min_results).toBe(0); // falsy arm of `minResults || 0`
+    expect(body.ext_id).toBeNull(); // falsy arm of `extId || null`
+  });
+
   it('aborts previous DEP request on new DEP call', async () => {
     window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
     await api.getStationBoard('lid1', 'DEP', 60);

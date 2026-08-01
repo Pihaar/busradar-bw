@@ -309,7 +309,7 @@ describe('showStationBoard / applyPushedStationboard — no-lid + bad-lid arms',
   });
 });
 
-describe('load* manual (autoExpand=false) counter ": 0" arm', () => {
+describe('load* manual (isInitial=false) — renders without announcing', () => {
   const loc = { lid: 'A=1@L=1@', name: 'S' };
   beforeEach(() => {
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
@@ -318,24 +318,22 @@ describe('load* manual (autoExpand=false) counter ": 0" arm', () => {
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
   });
 
-  it('loadDepartures with autoExpand=false does not increment the expand counter', async () => {
+  it('loadDepartures with isInitial=false renders and updates the count', async () => {
     vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}]);
     state.selectedStop = loc;
     state._activeStationBoardType = 'DEP';
-    state._depExpandCount = 3;
     await ui.loadDepartures(loc, '', 60, false);
     await settle();
-    expect(state._depExpandCount).toBe(3); // + (false ? 1 : 0)
+    expect(state._stationDepCount).toBe(1);
   });
 
-  it('loadArrivals with autoExpand=false does not increment the expand counter', async () => {
+  it('loadArrivals with isInitial=false renders and updates the count', async () => {
     vi.spyOn(ui, 'renderArrivals').mockReturnValue([{}]);
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
-    state._arrExpandCount = 2;
     await ui.loadArrivals(loc, '', 60, false);
     await settle();
-    expect(state._arrExpandCount).toBe(2);
+    expect(state._stationArrCount).toBe(1);
   });
 });
 

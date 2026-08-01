@@ -239,7 +239,7 @@ describe('loadDepartures/loadArrivals — selectStream .catch no-op arms', () =>
   });
 });
 
-describe('loadArrivals — real expand cascade recursion', () => {
+describe('loadArrivals — single request adopts the server-settled window', () => {
   const loc = { lid: 'A=1@L=1@', name: 'S' };
   beforeEach(() => {
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
@@ -248,22 +248,16 @@ describe('loadArrivals — real expand cascade recursion', () => {
     state._activeStationBoardType = 'ARR';
   });
 
-  it('widens the window until the arrival count grows', async () => {
+  it('fires one request and adopts settledDur from the response', async () => {
     state.selectedStop = loc;
     state._stationArrCount = 2;
-    state._arrExpandCount = 0;
-    // flat 2 until dur >= 180, then 5
-    vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {
-      const dur = getStationBoard.mock.calls[getStationBoard.mock.calls.length - 1][2];
-      return new Array(dur >= 180 ? 5 : 2).fill({});
-    });
-    getStationBoard.mockImplementation((lid, type, dur) =>
-      Promise.resolve({ dur, jnyL: [], common: {} }),
-    );
-    ui.loadArrivals(loc, '', 60, true);
-    for (let i = 0; i < 50 && state._autoExpandingArr; i++) await settle();
-    const durs = getStationBoard.mock.calls.map((c) => c[2]);
-    expect(Math.max(...durs)).toBe(180);
+    vi.spyOn(ui, 'renderArrivals').mockReturnValue(new Array(5).fill({}));
+    // Server widened internally to 180 and reports it back as settledDur.
+    getStationBoard.mockResolvedValue({ jnyL: [], common: {}, settledDur: 180 });
+    await ui.loadArrivals(loc, '', 60, true);
+    await settle();
+    expect(getStationBoard).toHaveBeenCalledTimes(1);
+    expect(state._stationArrDur).toBe(180);
     expect(state._stationArrCount).toBe(5);
   });
 });

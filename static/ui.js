@@ -1329,20 +1329,16 @@ export var ui = {
     state._lastArrSig = null;
     state._stationDepCount = 0;
     state._stationArrCount = 0;
-    state._depExpandCount = 0;
-    state._arrExpandCount = 0;
 
-    // Serialise the two auto-expand cascades. Both can walk up to
-    // maxExpandIterations steps on a quiet stop; firing in parallel
-    // doubles the peak POST rate and burns through the per-IP rate-limit
-    // burst on stops with no service in the next 60 min. DEP loads first
-    // (visible tab on stop-open), ARR follows once DEP settles. Most
-    // users never see ARR, so the latency cost only kicks in if they
-    // switch tabs before ARR has settled — the SSE stationboard push
-    // (applyPushedStationboard) covers that case on the next tick.
+    // DEP loads first (the visible tab on stop-open); ARR follows once DEP
+    // settles so the two one-shot stationboard requests don't fire at once.
+    // Most users never see ARR, so the latency cost only kicks in if they switch
+    // tabs before ARR loaded — the SSE stationboard push (applyPushedStationboard)
+    // covers that on the next tick. The window-widening itself now happens
+    // server-side (one request per board), so there is no client-side cascade.
     ui.loadDepartures(loc, stopExtId, 60, true).finally(function () {
       if (state.selectedStop && state.selectedStop.lid === loc.lid) {
-        ui.loadArrivals(loc, stopExtId, 60, true);
+        ui.loadArrivals(loc, stopExtId, 60);
       }
     });
     if (loc && loc.lid) {
@@ -1350,63 +1346,51 @@ export var ui = {
     }
   },
 
-  loadDepartures: function (loc, stopExtId, dur, autoExpand) {
-    if (autoExpand) state._autoExpandingDep = true;
+  loadDepartures: function (loc, stopExtId, dur, isInitial) {
+    // Guard applyPushedStationboard from clobbering the list while this one-shot
+    // fetch renders; cleared only after the render/filter/button block below.
+    state._autoExpandingDep = true;
     var capturedLid = loc.lid;
     return api
-      .getStationBoard(loc.lid, 'DEP', dur)
+      .getStationBoard(loc.lid, 'DEP', dur, true, state._stationDepCount || 0, stopExtId)
       .then(function (data) {
         if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
           state._autoExpandingDep = false;
           return;
         }
+        // The server widened the window internally and returns the window it
+        // settled on; fall back to the requested dur if it's absent (legacy /
+        // error paths).
+        var settledDur = data.settledDur || dur;
         state._stationDepData = data;
-        state._stationDepDur = dur;
+        state._stationDepDur = settledDur;
         var filterLine = state._depFilter || null;
         var displayedJnyL = ui.renderDepartures(data, loc, stopExtId, filterLine);
         ui.discoverPlatforms(data);
-
-        var prevCount = state._stationDepCount || 0;
         state._stationDepCount = displayedJnyL.length;
-        var hasNewResults = displayedJnyL.length > prevCount;
-        state._depExpandCount = (state._depExpandCount || 0) + (autoExpand ? 1 : 0);
 
-        if (
-          !hasNewResults &&
-          autoExpand &&
-          dur < 1440 &&
-          state._depExpandCount < CONFIG.maxExpandIterations
-        ) {
-          if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-            state._autoExpandingDep = false;
-            return;
-          }
-          var newDur = Math.min(dur + 60, 1440);
-          ui.loadDepartures(loc, stopExtId, newDur, true);
-        } else {
-          state._autoExpandingDep = false;
-          if (state._activeTab === 'departures' || !state._activeTab)
-            ui.buildLineFilter(data, displayedJnyL);
-          ui.addLoadMoreButton('departure-list', loc, stopExtId, dur, 'DEP');
-          if (autoExpand && dur === 60) {
-            announce(t('departures_loaded', { name: loc.name || t('stop_fallback', { idx: '' }) }));
-          }
-          // The SSE stationboard push must match the final window we just
-          // rendered, or the next tick replaces the expanded list with the
-          // narrower default and midnight-wrap entries disappear.
-          if (state._activeStationBoardType === 'DEP') {
-            api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
-          }
+        if (state._activeTab === 'departures' || !state._activeTab)
+          ui.buildLineFilter(data, displayedJnyL);
+        ui.addLoadMoreButton('departure-list', loc, stopExtId, settledDur, 'DEP');
+        if (isInitial) {
+          announce(t('departures_loaded', { name: loc.name || t('stop_fallback', { idx: '' }) }));
         }
+        // The SSE stationboard push must match the window the server settled on,
+        // or the next tick replaces the expanded list with the narrower default
+        // and midnight-wrap entries disappear.
+        if (state._activeStationBoardType === 'DEP') {
+          api.selectStream('stationboard', loc.lid, 'DEP', settledDur).catch(function () {});
+        }
+        state._autoExpandingDep = false;
       })
       .catch(function (err) {
         state._autoExpandingDep = false;
         if (err.name === 'AbortError') return;
         // Subscribe even though the one-shot fetch failed, so the server's
-        // per-tick pushes can still recover the board (its independent,
-        // cached fetch may succeed where a rate-limited client request did
-        // not). Without this a stop opened during a HAFAS blip stayed
-        // unsubscribed until a reconnect.
+        // per-tick pushes can still recover the board (its independent, cached
+        // fetch may succeed where a rate-limited client request did not). Without
+        // this a stop opened during a HAFAS blip stayed unsubscribed until a
+        // reconnect. Subscribe at the requested dur (settledDur is absent here).
         if (
           state.selectedStop &&
           state.selectedStop.lid === capturedLid &&
@@ -1414,8 +1398,7 @@ export var ui = {
         ) {
           api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
         }
-        // Don't wipe an already-shown list on a transient error / rate-limit
-        // (a load-more cascade across a service gap can trip the per-IP limit).
+        // Don't wipe an already-shown list on a transient error / rate-limit.
         // Keep the departures and restore the load-more button so the user can
         // retry; only show the error state when nothing was displayed yet.
         if (ui.departureList.querySelector('.departure-item')) {
@@ -1434,56 +1417,38 @@ export var ui = {
       });
   },
 
-  loadArrivals: function (loc, stopExtId, dur, autoExpand) {
-    if (autoExpand) state._autoExpandingArr = true;
+  loadArrivals: function (loc, stopExtId, dur) {
+    state._autoExpandingArr = true;
     var capturedLid = loc.lid;
     return api
-      .getStationBoard(loc.lid, 'ARR', dur)
+      .getStationBoard(loc.lid, 'ARR', dur, true, state._stationArrCount || 0, stopExtId)
       .then(function (data) {
         if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
           state._autoExpandingArr = false;
           return;
         }
+        var settledDur = data.settledDur || dur;
         state._stationArrData = data;
-        state._stationArrDur = dur;
+        state._stationArrDur = settledDur;
         var filterLine = state._arrFilter || null;
         var filteredArr = ui.renderArrivals(data, loc, stopExtId, filterLine);
         ui.discoverPlatforms(data);
+        state._stationArrCount = filteredArr.length;
 
-        var prevCount = state._stationArrCount || 0;
-        var arrCount = filteredArr ? filteredArr.length : 0;
-        state._stationArrCount = arrCount;
-        var hasNewResults = arrCount > prevCount;
-        state._arrExpandCount = (state._arrExpandCount || 0) + (autoExpand ? 1 : 0);
-
-        if (
-          !hasNewResults &&
-          autoExpand &&
-          dur < 1440 &&
-          state._arrExpandCount < CONFIG.maxExpandIterations
-        ) {
-          if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-            state._autoExpandingArr = false;
-            return;
-          }
-          var newDur = Math.min(dur + 60, 1440);
-          ui.loadArrivals(loc, stopExtId, newDur, true);
-        } else {
-          state._autoExpandingArr = false;
-          if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
-          ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
-          // Same dur-must-match story as DEP — keep the SSE push aligned with
-          // the actually-rendered window.
-          if (state._activeStationBoardType === 'ARR') {
-            api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
-          }
+        if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
+        ui.addLoadMoreButton('arrival-list', loc, stopExtId, settledDur, 'ARR');
+        // Same dur-must-match story as DEP — keep the SSE push aligned with the
+        // window the server settled on.
+        if (state._activeStationBoardType === 'ARR') {
+          api.selectStream('stationboard', loc.lid, 'ARR', settledDur).catch(function () {});
         }
+        state._autoExpandingArr = false;
       })
       .catch(function (err) {
         state._autoExpandingArr = false;
         if (err.name === 'AbortError') return;
         // See loadDepartures: subscribe even on fetch failure so the server's
-        // per-tick pushes can recover the board.
+        // per-tick pushes can recover the board. Subscribe at the requested dur.
         if (
           state.selectedStop &&
           state.selectedStop.lid === capturedLid &&
@@ -1491,9 +1456,9 @@ export var ui = {
         ) {
           api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
         }
-        // See loadDepartures: keep an already-shown list on a transient error /
-        // rate-limit and restore the load-more button; only show the error state
-        // when nothing was displayed yet.
+        // See loadDepartures: keep an already-shown list on a transient error and
+        // restore the load-more button; only show the error state when nothing
+        // was displayed yet.
         var arrEl = document.getElementById('arrival-list');
         if (arrEl.querySelector('.departure-item')) {
           ui.addLoadMoreButton('arrival-list', loc, stopExtId, state._stationArrDur || dur, 'ARR');
@@ -1530,20 +1495,14 @@ export var ui = {
       var newDur = Math.min(currentDur + 60, 1440);
       btn.textContent = t('loading');
       btn.disabled = true;
-      // Cascade like the initial stop-open expand: keep widening the
-      // window until new departures actually appear or we hit 1440.
-      // HAFAS `dur` is cumulative-from-now, so a single +60 step over an
-      // empty hour re-renders the identical list — the click looked like
-      // it did nothing and the user had to click once per empty hour to
-      // step past a service gap. Resetting the per-cascade counter gives
-      // the manual walk the same budget as the initial auto-expand; the
-      // per-IP rate-limit still bounds the burst.
+      // Advance past the current window; the server widens geometrically from
+      // here until MORE entries than currently shown (min_results =
+      // state._station*Count) appear, so one click always makes progress even
+      // across a service gap — the old client-side per-click cascade is gone.
       if (type === 'ARR') {
-        state._arrExpandCount = 0;
-        ui.loadArrivals(loc, stopExtId, newDur, true);
+        ui.loadArrivals(loc, stopExtId, newDur);
       } else {
-        state._depExpandCount = 0;
-        ui.loadDepartures(loc, stopExtId, newDur, true);
+        ui.loadDepartures(loc, stopExtId, newDur, false);
       }
     });
     li.appendChild(btn);
@@ -1633,6 +1592,9 @@ export var ui = {
         if (hasOtherWithSameName) shouldFilter = true;
       }
       if (hasPlatform || shouldFilter) {
+        // Kept in sync with proxy.py _extid_scoped_count, which mirrors this
+        // extId filter server-side so the auto-expand cascade widens on the same
+        // (platform-scoped) count the user sees here. Change both together.
         jnyL = jnyL.filter(function (jny) {
           var stb = jny.stbStop || {};
           var locIdx = stb.locX != null ? stb.locX : -1;
@@ -1805,6 +1767,9 @@ export var ui = {
         if (hasOtherWithSameName) shouldFilter = true;
       }
       if (hasPlatform || shouldFilter) {
+        // Kept in sync with proxy.py _extid_scoped_count, which mirrors this
+        // extId filter server-side so the auto-expand cascade widens on the same
+        // (platform-scoped) count the user sees here. Change both together.
         jnyL = jnyL.filter(function (jny) {
           var stb = jny.stbStop || {};
           var locIdx = stb.locX != null ? stb.locX : -1;

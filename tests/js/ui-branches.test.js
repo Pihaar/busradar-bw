@@ -237,18 +237,17 @@ describe('bottom-sheet onMove content-scroll + onCancel guards', () => {
 });
 
 describe('load-more ARR button click', () => {
-  it('resets the arr expand counter and cascades loadArrivals', () => {
+  it('calls loadArrivals once with the next window and isInitial=false semantics', () => {
     document.body.innerHTML = '<ul id="al"></ul>';
-    state._arrExpandCount = 5;
     const spy = vi.spyOn(ui, 'loadArrivals').mockImplementation(() => {});
     ui.addLoadMoreButton('al', { lid: 'A' }, '1', 480, 'ARR');
     document.querySelector('.load-more-btn').click();
-    expect(state._arrExpandCount).toBe(0);
-    expect(spy).toHaveBeenCalledWith({ lid: 'A' }, '1', 540, true);
+    // ARR load-more is a three-arg call (no isInitial): loc, stopExtId, newDur.
+    expect(spy).toHaveBeenCalledWith({ lid: 'A' }, '1', 540);
   });
 });
 
-describe('cascade deselect mid-expand', () => {
+describe('deselect during render — no re-render, single fetch', () => {
   const loc = { lid: 'A=1@L=1@', name: 'S' };
   beforeEach(() => {
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
@@ -257,12 +256,12 @@ describe('cascade deselect mid-expand', () => {
     state._activeStationBoardType = 'DEP';
   });
 
-  it('loadDepartures bails inside the expand branch when the stop is deselected during render', async () => {
+  it('loadDepartures issues one fetch and settles the flag when deselected during render', async () => {
     state.selectedStop = loc;
     state._stationDepCount = 0;
-    state._depExpandCount = 0;
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
-    // renderDepartures flips the selection so the expand-branch re-check bails
+    // renderDepartures flips the selection; there is no client-side recursion,
+    // so this must not spawn a second fetch.
     vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {
       state.selectedStop = { lid: 'OTHER' };
       return [];
@@ -270,15 +269,14 @@ describe('cascade deselect mid-expand', () => {
     await ui.loadDepartures(loc, '', 60, true);
     await settle();
     expect(state._autoExpandingDep).toBe(false);
-    // exactly one fetch: the cascade did not recurse
+    // exactly one fetch: no cascade
     expect(getStationBoard).toHaveBeenCalledTimes(1);
   });
 
-  it('loadArrivals bails inside the expand branch when the stop is deselected during render', async () => {
+  it('loadArrivals issues one fetch and settles the flag when deselected during render', async () => {
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
     state._stationArrCount = 0;
-    state._arrExpandCount = 0;
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
     vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {
       state.selectedStop = { lid: 'OTHER' };

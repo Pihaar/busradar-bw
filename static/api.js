@@ -161,7 +161,7 @@ export var api = {
     });
   },
 
-  getStationBoard: function (lid, type, dur) {
+  getStationBoard: function (lid, type, dur, autoExpand, minResults, extId) {
     var abortKey = type === 'ARR' ? '_stationArrAbort' : '_stationDepAbort';
     if (api[abortKey]) api[abortKey].abort();
     api[abortKey] = new AbortController();
@@ -169,7 +169,18 @@ export var api = {
       .fetch(CONFIG.apiBase + '/stationboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lid: lid, type: type || 'DEP', dur: dur || 60 }),
+        // auto_expand lets the server widen the window internally (one request
+        // instead of the old client-side 60→1440 cascade). min_results = the
+        // count the client already shows (expand until MORE appears); ext_id
+        // scopes the emptiness check to the opened platform.
+        body: JSON.stringify({
+          lid: lid,
+          type: type || 'DEP',
+          dur: dur || 60,
+          auto_expand: !!autoExpand,
+          min_results: minResults || 0,
+          ext_id: extId || null,
+        }),
         signal: api[abortKey].signal,
       })
       .then(function (r) {
@@ -189,9 +200,10 @@ export var api = {
   //   selectStream('stationboard', lid, 'ARR', 300)    → {"selection":{"kind":"stationboard","lid":...,"board_type":"ARR","dur":300}}
   //   selectStream('none')                             → {"selection":null}
   //
-  // The `dur` value must match the window the client is currently rendering
-  // (auto-expand walks 60→120→…→1440 until results appear). Pushing the
-  // wrong dur shrinks the displayed list on every tick.
+  // The `dur` value must match the window the server settled on for the current
+  // board (getStationBoard returns it as `settledDur`; the server widens the
+  // window internally). Pushing the wrong dur shrinks the displayed list on
+  // every tick.
   //
   // Debounced 250ms trailing: rapid load-more clicks fired one POST per
   // click and hit the per-subscriber burst=3 rate-limit on /api/stream/

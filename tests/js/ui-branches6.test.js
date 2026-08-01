@@ -220,17 +220,16 @@ describe('renderDepartures — stbStop/locX/prodX default arms under filter', ()
   });
 });
 
-describe('loadArrivals — filteredArr falsy → arrCount 0 arm', () => {
-  it('treats a null render result as arrCount 0 (cond-expr false arm)', async () => {
+describe('loadArrivals — arrCount tracks the rendered array length', () => {
+  it('sets arrCount to 0 when renderArrivals returns an empty array', async () => {
     const loc = { lid: 'A=1@L=1@', name: 'S' };
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    vi.spyOn(ui, 'renderArrivals').mockReturnValue(null); // filteredArr falsy
+    vi.spyOn(ui, 'renderArrivals').mockReturnValue([]); // empty board
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
-    state._arrExpandCount = 24; // at cap → no cascade even though count flat
     await ui.loadArrivals(loc, '', 60, true);
     await settle();
     expect(state._stationArrCount).toBe(0);

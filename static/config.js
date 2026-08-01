@@ -12,5 +12,4 @@ export var CONFIG = {
   apiBase: '/api',
   graceperiodCycles: 2,
   hafasStationboardLimit: 50,
-  maxExpandIterations: 24,
 };

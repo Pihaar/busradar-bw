@@ -491,18 +491,17 @@ describe('loadDepartures / loadArrivals — cascade edge + abort', () => {
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
   });
 
-  it('loadDepartures aborts the cascade when the stop is deselected mid-walk', async () => {
-    // count stays flat → wants to expand, but selectedStop changed before newDur
+  it('loadDepartures bails when the stop is deselected before the response', async () => {
+    // selectedStop changes before the response is consumed → the stop-changed
+    // guard returns early and clears the in-flight flag.
     vi.spyOn(ui, 'renderDepartures').mockReturnValue([]);
     state.selectedStop = loc;
     state._stationDepCount = 0;
-    state._depExpandCount = 0;
     getStationBoard.mockImplementation(() => {
-      // deselect right as the response is consumed
       return Promise.resolve({ jnyL: [], common: {} });
     });
     const p = ui.loadDepartures(loc, '', 60, true);
-    // flip selection so the re-check inside the expand branch bails
+    // flip selection so the guard inside the .then bails
     state.selectedStop = { lid: 'OTHER' };
     await p;
     await settle();
@@ -517,11 +516,10 @@ describe('loadDepartures / loadArrivals — cascade edge + abort', () => {
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
   });
 
-  it('loadArrivals aborts the cascade when the stop is deselected mid-walk', async () => {
+  it('loadArrivals bails when the stop is deselected before the response', async () => {
     vi.spyOn(ui, 'renderArrivals').mockReturnValue([]);
     state.selectedStop = loc;
     state._stationArrCount = 0;
-    state._arrExpandCount = 0;
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
     const p = ui.loadArrivals(loc, '', 60, true);
     state.selectedStop = { lid: 'OTHER' };
