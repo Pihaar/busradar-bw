@@ -99,7 +99,7 @@ Die alte App ist genau daran gescheitert — der Checksum-Salt wurde serverseiti
 **Journey-Objekt (jnyL[]):**
 ```json
 {
-  "jid": "1|12345|0|80|15052026",  // Journey-ID
+  "jid": "1|12345|0|80|15052026",  // Journey-ID (Beispiel; das reale db-regio-jid ist hash-strukturiert mit '#'-Separatoren)
   "date": "20260515",
   "prodX": 0,           // Index in prodL → Linienname
   "dirTxt": "St. Ilgen, Bf West",  // Fahrtziel
@@ -259,46 +259,33 @@ praktisch risikolos.
 
 ---
 
-## Technische Architektur (Vorschlag)
+## Technische Architektur (umgesetzt)
 
-### Option A: Statische HTML-Datei (einfachste Lösung)
+Realisiert als vollständige Web-App, aber mit FastAPI + Server-Sent Events statt
+Flask/Polling und ohne Docker. Aktuelle Dateiliste und Endpunkte stehen im README.
 
-```
-busradar-bw/
-├── index.html          # Leaflet-Karte + JS für API-Calls
-├── proxy.py            # Kleiner Python CORS-Proxy (3 Zeilen Flask)
-└── README.md
-```
+- **Backend:** `proxy.py` (FastAPI + uvicorn + httpx) baut die HAFAS-Payloads
+  selbst und liefert die Antworten cached, tick-aware und per Singleflight aus;
+  ergänzt um `fanout.py` (Subscriber-Registry), `tick.py` (HAFAS-Tick-Erkennung),
+  `sse_handler.py` (SSE-Stream) und `stops_builder.py` (BW-weiter Stops-Cache).
+- **Frontend:** Vanilla JS + Leaflet + OSM als PWA (Service Worker + Manifest).
+  Kein Polling: der Server pusht Vehicles/journey/stationboard über eine
+  persistente SSE-Connection, Viewport- und Auswahlwechsel fließen als kleine
+  POSTs zurück.
+- **CORS:** Der HAFAS-Endpunkt sendet keine CORS-Header, daher der eigene Proxy
+  (direkter Browser-Fetch scheitert).
 
-**Problem:** CORS. Der HAFAS-Endpunkt sendet keine CORS-Header.
-**Lösung:** Kleiner lokaler Proxy oder Nutzung über Server-Side.
+### Verspätungs-Farbcodierung (`getDelayClass` in `state.js`)
 
-### Option B: Vollständige Web-App
+Eine Quelle für Marker, Abfahrtstafel, Routenliste und Suche:
 
-```
-busradar-bw/
-├── index.html          # Frontend (Leaflet + OSM)
-├── api/
-│   └── hafas.py        # Backend-Proxy (Flask/FastAPI)
-├── docker-compose.yml  # Optional: Containerisierung
-└── README.md
-```
-
-### Frontend-Features (Minimum Viable)
-
-1. OpenStreetMap-Karte zentriert auf Sandhausen
-2. Bus-Marker mit Liniennummer
-3. Auto-Refresh alle 15-30 Sekunden
-4. Farbcodierung: grün=pünktlich, gelb=1-3min, rot=>3min Verspätung
-5. Klick auf Bus zeigt: Linie, Richtung, Delay, nächste Halte
-
-### Frontend-Features (Nice-to-have)
-
-- Filter nach Linien (725, 719, alle)
-- Haltestellennamen einblenden
-- Fahrtrichtungspfeil
-- Offline-Erkennung
-- PWA für Handy-Homescreen
+| Delay | Klasse | Farbe |
+|---|---|---|
+| ≤ -2 min (verfrüht) | `early` | weiß (dark) / blau (light) |
+| -1 bis +2 min | `ontime` | grün |
+| +3 bis +5 min | `delayed` | gelb |
+| > +5 min | `major-delay` | rot |
+| keine Echtzeit | `nodata` | grau |
 
 ---
 
