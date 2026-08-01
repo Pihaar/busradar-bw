@@ -951,6 +951,72 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     }
   });
 
+  it('busradarDump env: an undefined navigator read becomes null, not a dropped key', () => {
+    // Regression: g() must coerce undefined to null. navigator.deviceMemory is
+    // undefined in Firefox (returns undefined WITHOUT throwing); without the
+    // coercion JSON.stringify drops the key entirely, so the dump could not tell
+    // "browser unsupported" (null) from "extractor forgot it" (key absent).
+    const orig = Object.getOwnPropertyDescriptor(navigator, 'deviceMemory');
+    try {
+      Object.defineProperty(navigator, 'deviceMemory', {
+        configurable: true,
+        value: undefined,
+      });
+      const d = JSON.parse(busradarDump());
+      expect('deviceMemory' in d.env).toBe(true);
+      expect(d.env.deviceMemory).toBeNull();
+    } finally {
+      if (orig) Object.defineProperty(navigator, 'deviceMemory', orig);
+      else delete navigator.deviceMemory;
+    }
+  });
+
+  it('busradarDump panelHeader: an undefined DOM read becomes null, not a dropped key', () => {
+    // Regression for the shared _dumpRead helper: a read that yields undefined
+    // (rather than throwing) must serialise as null so the key survives
+    // JSON.stringify. Forces detail-line.textContent to undefined.
+    const el = document.createElement('div');
+    el.id = 'detail-line';
+    Object.defineProperty(el, 'textContent', {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+    });
+    document.body.appendChild(el);
+    try {
+      const d = JSON.parse(busradarDump());
+      expect('line' in d.panelHeader).toBe(true);
+      expect(d.panelHeader.line).toBeNull();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('busradarDump: legitimate falsy reads pass through unchanged (guards against a r || null regression)', () => {
+    // Only strict === undefined may become null. A refactor to `r || null` would
+    // still pass the undefined tests above yet wrongly collapse 0/"" to null;
+    // these assertions pin both helpers (env g and _dumpRead) against that.
+    const orig = Object.getOwnPropertyDescriptor(navigator, 'deviceMemory');
+    const el = document.createElement('div');
+    el.id = 'detail-line';
+    el.textContent = ''; // empty string: a valid _dumpRead result, not undefined
+    document.body.appendChild(el);
+    try {
+      Object.defineProperty(navigator, 'deviceMemory', {
+        configurable: true,
+        value: 0, // 0 is a valid reading the env g() wrapper must not null out
+      });
+      const d = JSON.parse(busradarDump());
+      expect(d.env.deviceMemory).toBe(0);
+      expect(d.panelHeader.line).toBe('');
+    } finally {
+      if (orig) Object.defineProperty(navigator, 'deviceMemory', orig);
+      else delete navigator.deviceMemory;
+      el.remove();
+    }
+  });
+
   it('busradarDump journey block carries server stopL AND the rendered DOM rows', () => {
     state.selectedJourneyData = {
       journey: {

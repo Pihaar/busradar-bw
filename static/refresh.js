@@ -770,10 +770,14 @@ export function _followPanTo(lat, lon) {
 // Safe-read helper for the debug dump: returns fn()'s value, or null if it
 // throws. Shared by the scalar/DOM fields below so a missing DOM node or state
 // field yields null instead of aborting the whole dump. One catch, so a single
-// throw-test in the dump suite covers it for every call site.
+// throw-test in the dump suite covers it for every call site. An undefined
+// result is coerced to null: JSON.stringify drops keys whose value is
+// undefined, so a read that yields undefined (e.g. an unsupported navigator.*
+// field) would vanish silently from the dump instead of showing as null.
 function _dumpRead(fn) {
   try {
-    return fn();
+    const r = fn();
+    return r === undefined ? null : r;
   } catch (e) {
     return null;
   }
@@ -816,7 +820,11 @@ export function busradarDump() {
     env: (function () {
       const g = function (fn) {
         try {
-          return fn();
+          const r = fn();
+          // Coerce undefined to null: an unsupported navigator field (e.g.
+          // deviceMemory in Firefox) returns undefined without throwing, and
+          // JSON.stringify would drop the key entirely, hiding it from the dump.
+          return r === undefined ? null : r;
         } catch (e) {
           return null;
         }
