@@ -15,9 +15,11 @@ globalThis.L = {
 };
 
 const selectStream = vi.fn(() => Promise.resolve({}));
+const subscribeBoard = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: (...a) => subscribeBoard(...a),
     getStationBoard: vi.fn(() => new Promise(() => {})),
     getJourney: vi.fn(() => new Promise(() => {})),
     selectStream: (...a) => selectStream(...a),
@@ -236,17 +238,17 @@ describe('ui.switchTab', () => {
   it('switching DEP↔ARR of a selected stop re-subscribes the board SSE', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
     state._activeStationBoardType = 'DEP';
-    state._stationArrDur = 120;
+    state._stationArrData = { jnyL: [], common: {} }; // already loaded → no lazy fetch
     ui.switchTab('arrivals');
     expect(state._activeStationBoardType).toBe('ARR');
-    expect(selectStream).toHaveBeenCalledWith('stationboard', 'A=1@L=1@', 'ARR', 120);
+    expect(subscribeBoard).toHaveBeenCalledWith('A=1@L=1@', 'ARR');
   });
 
   it('does not re-subscribe when the board type is unchanged', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
     state._activeStationBoardType = 'DEP';
     ui.switchTab('departures');
-    expect(selectStream).not.toHaveBeenCalled();
+    expect(subscribeBoard).not.toHaveBeenCalled();
   });
 });
 
@@ -329,7 +331,7 @@ describe('ui.hideLineFilter / buildLineFilter / applyLineFilter', () => {
     expect(state._depFilter).toBe('721');
     expect(chip.classList.contains('filter-chip--active')).toBe(true);
     expect(renderSpy).toHaveBeenCalled();
-    expect(lmSpy).toHaveBeenCalledWith('departure-list', { lid: 'A' }, '1', 60, 'DEP');
+    expect(lmSpy).toHaveBeenCalledWith('departure-list', { lid: 'A' }, '1', 'DEP');
   });
 
   it('applyLineFilter(arr) sets _arrFilter and re-renders arrivals', () => {
@@ -347,8 +349,22 @@ describe('ui.hideLineFilter / buildLineFilter / applyLineFilter', () => {
 });
 
 describe('ui.addLoadMoreButton', () => {
+  // The button vs. max-timeframe-hint decision is data-driven: a button appears
+  // only when a cached departure lies beyond the current paging horizon. The
+  // signature is 4-arg (listId, loc, stopExtId, type) — no dur.
   beforeEach(() => {
     document.body.innerHTML = '<ul id="dl"></ul>';
+    // A DEP board with a 13:00 departure, horizon at 12:00 → one beyond it.
+    state._stationDepData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '130000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationArrData = {
+      jnyL: [{ jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { aTimeS: '130000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationDepHorizon = 720;
+    state._stationArrHorizon = 720;
   });
 
   it('removes an existing load-more item before re-adding', () => {
@@ -356,7 +372,7 @@ describe('ui.addLoadMoreButton', () => {
     const old = document.createElement('li');
     old.className = 'load-more-item';
     list.appendChild(old);
-    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 120, 'DEP');
+    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
     expect(list.querySelectorAll('.load-more-item').length).toBe(1);
     expect(list.querySelector('.load-more-btn')).not.toBeNull();
   });
@@ -366,7 +382,7 @@ describe('ui.addLoadMoreButton', () => {
     const hint = document.createElement('li');
     hint.className = 'hafas-hint';
     list.appendChild(hint);
-    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 120, 'DEP');
+    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
     expect(list.querySelector('.load-more-btn')).toBeNull();
   });
 
@@ -375,19 +391,20 @@ describe('ui.addLoadMoreButton', () => {
     const es = document.createElement('li');
     es.className = 'empty-state';
     list.appendChild(es);
-    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 120, 'DEP');
+    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
     expect(list.querySelector('.load-more-btn')).toBeNull();
   });
 
-  it('renders the max-timeframe hint at dur >= 1440 instead of a button', () => {
-    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 1440, 'DEP');
+  it('renders the max-timeframe hint (no button) when nothing lies beyond the horizon', () => {
+    state._stationDepData = null; // no cache → nothing beyond → hint
+    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
     const list = document.getElementById('dl');
     expect(list.querySelector('.load-more-btn')).toBeNull();
     expect(list.querySelector('.load-more-item.empty-state')).not.toBeNull();
   });
 
   it('ARR button uses the arrivals label', () => {
-    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 120, 'ARR');
+    ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'ARR');
     const btn = document.getElementById('dl').querySelector('.load-more-btn');
     expect(btn.textContent.length).toBeGreaterThan(0);
   });

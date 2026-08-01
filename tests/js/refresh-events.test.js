@@ -26,7 +26,10 @@ const uiMock = {
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { selectStream: vi.fn(() => Promise.resolve({})) },
+  api: {
+    subscribeBoard: vi.fn(() => Promise.resolve({})),
+    selectStream: vi.fn(() => Promise.resolve({})),
+  },
 }));
 vi.mock('../../static/map.js', () => ({
   markers: { updateAll: vi.fn() },
@@ -335,7 +338,7 @@ describe('_applyJourneyPayload — journey SSE event helper', () => {
 // What we test here is the de-dup signature + DEP/ARR dispatch + auto-expand
 // guard — all decisions are in pure-JS that doesn't depend on the DOM.
 function applyPushedStationboard(loc, data, boardType, sink) {
-  if (state._autoExpandingDep || state._autoExpandingArr) return;
+  if (state._stationDepFetching || state._stationArrFetching) return;
   const capturedLid = loc.lid;
   const isArr = boardType === 'ARR';
   const boardSig = (jnyL) =>
@@ -386,8 +389,8 @@ describe('applyPushedStationboard — stationboard SSE event helper', () => {
     state._lastArrSig = null;
     state._stationDepData = null;
     state._stationArrData = null;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     sink = { renderDepartures: vi.fn(), renderArrivals: vi.fn() };
   });
 
@@ -428,11 +431,11 @@ describe('applyPushedStationboard — stationboard SSE event helper', () => {
   });
 
   it('auto-expand guards suppress both DEP and ARR rendering', () => {
-    state._autoExpandingDep = true;
+    state._stationDepFetching = true;
     applyPushedStationboard(state.selectedStop, { jnyL: [{ jid: 'X' }] }, 'DEP', sink);
     expect(sink.renderDepartures).not.toHaveBeenCalled();
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = true;
+    state._stationDepFetching = false;
+    state._stationArrFetching = true;
     applyPushedStationboard(state.selectedStop, { jnyL: [{ jid: 'Y' }] }, 'ARR', sink);
     expect(sink.renderArrivals).not.toHaveBeenCalled();
   });
@@ -441,6 +444,7 @@ describe('applyPushedStationboard — stationboard SSE event helper', () => {
 describe('_resendActiveSelection — restores selection after SSE reconnect', () => {
   beforeEach(() => {
     api.selectStream.mockClear();
+    api.subscribeBoard.mockClear();
     state.selectedJid = null;
     state.selectedStop = null;
     state._activeStationBoardType = null;
@@ -454,46 +458,34 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('journey', 'J1');
   });
 
-  it('re-selects the DEP board with the current expanded dur when a stop is selected', () => {
+  it('re-subscribes the DEP board at the fixed 2h SSE window when a stop is selected', () => {
+    // The reconnect resend goes through subscribeBoard (fixed 2h realtime
+    // window), never the 1440 fetch dur — so a reconnect can't push a 24h board.
     state.selectedStop = { lid: 'A=1@L=8000@' };
     state._activeStationBoardType = 'DEP';
     state._stationDepDur = 240;
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
-      'stationboard',
-      'A=1@L=8000@',
-      'DEP',
-      240,
-    );
+    expect(api.subscribeBoard).toHaveBeenCalledExactlyOnceWith('A=1@L=8000@', 'DEP');
+    expect(api.selectStream).not.toHaveBeenCalled();
   });
 
-  it('re-selects the ARR board with the ARR dur when ARR tab is active', () => {
+  it('re-subscribes the ARR board when the ARR tab is active', () => {
     state.selectedStop = { lid: 'A=1@L=8000@' };
     state._activeStationBoardType = 'ARR';
-    state._stationArrDur = 120;
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
-      'stationboard',
-      'A=1@L=8000@',
-      'ARR',
-      120,
-    );
+    expect(api.subscribeBoard).toHaveBeenCalledExactlyOnceWith('A=1@L=8000@', 'ARR');
   });
 
-  it('defaults board type to DEP and dur to 60 when unset', () => {
+  it('defaults the board type to DEP when unset', () => {
     state.selectedStop = { lid: 'A=1@L=8000@' };
     _resendActiveSelection();
-    expect(api.selectStream).toHaveBeenCalledExactlyOnceWith(
-      'stationboard',
-      'A=1@L=8000@',
-      'DEP',
-      60,
-    );
+    expect(api.subscribeBoard).toHaveBeenCalledExactlyOnceWith('A=1@L=8000@', 'DEP');
   });
 
   it('does nothing when neither a journey nor a stop is selected', () => {
     _resendActiveSelection();
     expect(api.selectStream).not.toHaveBeenCalled();
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 
   it('prefers the journey selection over a stop when both are set', () => {
@@ -501,12 +493,14 @@ describe('_resendActiveSelection — restores selection after SSE reconnect', ()
     state.selectedStop = { lid: 'A=1@L=8000@' };
     _resendActiveSelection();
     expect(api.selectStream).toHaveBeenCalledExactlyOnceWith('journey', 'J9');
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 
   it('does nothing for a stop object that has no lid (defensive)', () => {
     state.selectedStop = { name: 'no-lid-stop' };
     _resendActiveSelection();
     expect(api.selectStream).not.toHaveBeenCalled();
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 });
 
@@ -835,6 +829,22 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     state._activeStationBoardType = 'DEP';
     state._activeTab = 'departures';
     state._depFilter = '725';
+    // New stationboard diagnostics (populated arms): dep cache with jnyL, arr
+    // cache WITHOUT jnyL (→ 0), a finite dep horizon, an Infinity arr horizon
+    // (serialised as "Infinity"), a dep fetch age + in-flight + pending backoff,
+    // and a dep dedup sig; arr side left null/0/false to cover the other arms.
+    state._stationDepData = { jnyL: [{}, {}, {}] };
+    state._stationArrData = {}; // no jnyL key → cacheCount 0
+    state._stationDepHorizon = 800;
+    state._stationArrHorizon = Infinity;
+    state._stationDepFetchedAt = Date.now() - 5000;
+    state._stationArrFetchedAt = null;
+    state._stationDepFetching = true;
+    state._stationArrFetching = false;
+    state._stationDepRetryAt = Date.now() + 30000;
+    state._stationArrRetryAt = 0;
+    state._lastDepSig = 'A|0|X|20260601|134500';
+    state._lastArrSig = null;
     const depList = document.createElement('div');
     depList.id = 'departure-list';
     const row = document.createElement('div');
@@ -858,6 +868,21 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.stop.activeBoardType).toBe('DEP');
     expect(d.stop.departures.count).toBe(1);
     expect(d.stop.departures.rows[0]).toContain('725');
+    // New board diagnostics — populated arms.
+    expect(d.stop.extId).toBe('6003411');
+    expect(d.stop.filterExtId).toBeNull(); // _stationExtId unset here
+    expect(d.stop.depCacheCount).toBe(3);
+    expect(d.stop.arrCacheCount).toBe(0); // {} has no jnyL
+    expect(d.stop.depHorizon).toBe(800);
+    expect(d.stop.arrHorizon).toBe('Infinity'); // non-finite serialised as string
+    expect(d.stop.depFetchedAgeMs).toBeGreaterThanOrEqual(5000);
+    expect(d.stop.arrFetchedAgeMs).toBeNull();
+    expect(d.stop.depFetching).toBe(true);
+    expect(d.stop.arrFetching).toBe(false);
+    expect(d.stop.depRetryInMs).toBeGreaterThan(0);
+    expect(d.stop.arrRetryInMs).toBeNull();
+    expect(d.stop.depLastSig).toBe('A|0|X|20260601|134500');
+    expect(d.stop.arrLastSig).toBeNull();
 
     expect(d.activeTab).toBe('departures');
     expect(d.filters.dep).toBe('725');
@@ -872,6 +897,33 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     const d = JSON.parse(busradarDump());
     expect(d.stop).toBeNull();
     expect(Array.isArray(d.vehicles)).toBe(true);
+  });
+
+  it('busradarDump stop diagnostics — not-loaded arms (null cache/horizon, filterExtId set)', () => {
+    state.selectedStop = { lid: 'A=1@L=9@' }; // no name, no extId
+    state._stationExtId = '9';
+    state._activeStationBoardType = 'DEP';
+    state._stationDepData = null;
+    state._stationArrData = null;
+    state._stationDepHorizon = null;
+    state._stationArrHorizon = null;
+    state._stationDepFetchedAt = null;
+    state._stationArrFetchedAt = null;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
+    state._stationDepRetryAt = 0;
+    state._stationArrRetryAt = 0;
+    state._lastDepSig = null;
+    state._lastArrSig = null;
+    const d = JSON.parse(busradarDump());
+    expect(d.stop.name).toBeNull(); // s.name absent
+    expect(d.stop.extId).toBeNull(); // s.extId absent
+    expect(d.stop.filterExtId).toBe('9'); // state._stationExtId truthy arm
+    expect(d.stop.depCacheCount).toBeNull();
+    expect(d.stop.arrCacheCount).toBeNull();
+    expect(d.stop.depHorizon).toBeNull();
+    expect(d.stop.depFetchedAgeMs).toBeNull();
+    expect(d.stop.depRetryInMs).toBeNull();
   });
 
   it('busradarDump env fingerprint is populated (fields present for cross-browser compare)', () => {

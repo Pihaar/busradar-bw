@@ -6,7 +6,7 @@
  * — it does NOT mock api.js — so a re-introduced client loop would show up as
  * extra fetches and fail here.
  *
- *   ui.loadDepartures(loc, extId, 60, true)  → 1 stationboard fetch
+ *   ui.loadDepartures(loc, extId, true)  → 1 stationboard fetch
  *   ui.showStationBoard(loc)                  → 2 (DEP + ARR)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -53,8 +53,8 @@ describe('stationboard opens with a single request per board', () => {
     state.selectedStop = loc;
     state._depFilter = null;
     state._arrFilter = null;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._stationDepCount = 0;
     state._stationArrCount = 0;
     state._activeStationBoardType = 'DEP';
@@ -72,21 +72,31 @@ describe('stationboard opens with a single request per board', () => {
   });
 
   it('loadDepartures fires exactly one /stationboard fetch (no client cascade)', async () => {
-    await ui.loadDepartures(loc, '9999999', 60, true);
+    await ui.loadDepartures(loc, '9999999', true);
     await settle();
     expect(stationboardCalls().length).toBe(1);
   });
 
-  it('showStationBoard fires exactly two /stationboard fetches (DEP + ARR)', async () => {
+  it('showStationBoard fires exactly one /stationboard fetch (DEP only; ARR is lazy)', async () => {
     ui.showStationBoard(loc, true);
-    // DEP resolves, then its .finally chains the ARR load.
+    // Only DEP is fetched on open; the arrivals board loads lazily on the first
+    // switch to the arrivals tab, so opening a stop is a single fetch.
     for (let i = 0; i < 5; i++) await settle();
-    expect(stationboardCalls().length).toBe(2);
+    expect(stationboardCalls().length).toBe(1);
+  });
+
+  it('switching to the arrivals tab lazily fires the ARR fetch (second board)', async () => {
+    ui.showStationBoard(loc, true);
+    for (let i = 0; i < 5; i++) await settle();
+    expect(stationboardCalls().length).toBe(1); // DEP only so far
+    ui.switchTab('arrivals');
+    for (let i = 0; i < 5; i++) await settle();
+    expect(stationboardCalls().length).toBe(2); // + ARR
   });
 
   it('an active line filter on first load still triggers only one request', async () => {
     state._depFilter = '721'; // a filter set before the stop opened
-    await ui.loadDepartures(loc, '9999999', 60, true);
+    await ui.loadDepartures(loc, '9999999', true);
     await settle();
     expect(stationboardCalls().length).toBe(1);
   });

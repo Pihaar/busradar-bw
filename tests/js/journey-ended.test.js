@@ -15,7 +15,11 @@ globalThis.cancelAnimationFrame = vi.fn();
 
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { getStationBoard: vi.fn(), selectStream: vi.fn(() => Promise.resolve({})) },
+  api: {
+    subscribeBoard: () => Promise.resolve({}),
+    getStationBoard: vi.fn(),
+    selectStream: vi.fn(() => Promise.resolve({})),
+  },
   urlState: { push: vi.fn(), replace: vi.fn() },
 }));
 vi.mock('../../static/map.js', () => ({

@@ -25,6 +25,7 @@ const getStationBoard = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: vi.fn(() => Promise.resolve()),
@@ -237,14 +238,20 @@ describe('bottom-sheet onMove content-scroll + onCancel guards', () => {
   });
 });
 
-describe('load-more ARR button click', () => {
-  it('calls loadArrivals once with the next window and isInitial=false semantics', () => {
+describe('load-more ARR button click — pure client pagination', () => {
+  it('extends the ARR horizon and re-renders without a fetch', () => {
     document.body.innerHTML = '<ul id="al"></ul>';
-    const spy = vi.spyOn(ui, 'loadArrivals').mockImplementation(() => {});
-    ui.addLoadMoreButton('al', { lid: 'A' }, '1', 480, 'ARR');
+    state._stationArrData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { aTimeS: '130000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationArrHorizon = 720;
+    const renderSpy = vi.spyOn(ui, '_renderBoard').mockImplementation(() => {});
+    ui.addLoadMoreButton('al', { lid: 'A' }, '1', 'ARR');
     document.querySelector('.load-more-btn').click();
-    // ARR load-more is a three-arg call (no isInitial): loc, stopExtId, newDur.
-    expect(spy).toHaveBeenCalledWith({ lid: 'A' }, '1', 540);
+    expect(state._stationArrHorizon).toBeGreaterThan(720);
+    expect(renderSpy).toHaveBeenCalledWith('ARR', { lid: 'A' }, '1');
+    expect(getStationBoard).not.toHaveBeenCalled();
   });
 });
 
@@ -267,9 +274,9 @@ describe('deselect during render — no re-render, single fetch', () => {
       state.selectedStop = { lid: 'OTHER' };
       return [];
     });
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     await settle();
-    expect(state._autoExpandingDep).toBe(false);
+    expect(state._stationDepFetching).toBe(false);
     // exactly one fetch: no cascade
     expect(getStationBoard).toHaveBeenCalledTimes(1);
   });
@@ -283,9 +290,9 @@ describe('deselect during render — no re-render, single fetch', () => {
       state.selectedStop = { lid: 'OTHER' };
       return [];
     });
-    await ui.loadArrivals(loc, '', 60, true);
+    await ui.loadArrivals(loc, '');
     await settle();
-    expect(state._autoExpandingArr).toBe(false);
+    expect(state._stationArrFetching).toBe(false);
     expect(getStationBoard).toHaveBeenCalledTimes(1);
   });
 });
@@ -294,7 +301,7 @@ describe('renderArrivals — dedup + out-of-range + nodata colour', () => {
   const arrList = () => document.getElementById('arrival-list');
   beforeEach(() => {
     state._stationArrDur = 60;
-    state._autoExpandingArr = false;
+    state._stationArrFetching = false;
   });
 
   it('dedups identical arrival rows and drops out-of-range under platform filter', () => {

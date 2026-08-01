@@ -34,6 +34,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -102,8 +103,8 @@ beforeEach(() => {
   state.routeStopMarkers = [];
   state._stationDepDur = 60;
   state._stationArrDur = 60;
-  state._autoExpandingDep = false;
-  state._autoExpandingArr = false;
+  state._stationDepFetching = false;
+  state._stationArrFetching = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -293,21 +294,6 @@ describe('showStationBoard / applyPushedStationboard — no-lid + bad-lid arms',
     ui.showStationBoard({ name: 'S' }, true); // no extId, no lid → else-if(loc.lid) false
     expect(state._stationExtId).toBe('');
   });
-
-  it('applyPushedStationboard leaves extId empty for a loc with no extId and a non-matching lid', () => {
-    state.selectedStop = { lid: 'no-at-L', name: 'S' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
-    state._lastDepSig = null;
-    const render = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    ui.applyPushedStationboard(
-      { lid: 'no-at-L' },
-      { jnyL: [{ jid: 'A', stbStop: {} }], common: {} },
-      'DEP',
-    );
-    expect(render).toHaveBeenCalledWith(expect.anything(), expect.anything(), '', null);
-  });
 });
 
 describe('load* manual (isInitial=false) — renders without announcing', () => {
@@ -319,22 +305,22 @@ describe('load* manual (isInitial=false) — renders without announcing', () => 
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
   });
 
-  it('loadDepartures with isInitial=false renders and updates the count', async () => {
-    vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}]);
+  it('loadDepartures with isInitial=false renders without announcing', async () => {
+    const renderSpy = vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}]);
     state.selectedStop = loc;
     state._activeStationBoardType = 'DEP';
-    await ui.loadDepartures(loc, '', 60, false);
+    await ui.loadDepartures(loc, '', false);
     await settle();
-    expect(state._stationDepCount).toBe(1);
+    expect(renderSpy).toHaveBeenCalled();
   });
 
-  it('loadArrivals with isInitial=false renders and updates the count', async () => {
-    vi.spyOn(ui, 'renderArrivals').mockReturnValue([{}]);
+  it('loadArrivals with isInitial=false renders without announcing', async () => {
+    const renderSpy = vi.spyOn(ui, 'renderArrivals').mockReturnValue([{}]);
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
-    await ui.loadArrivals(loc, '', 60, false);
+    await ui.loadArrivals(loc, '');
     await settle();
-    expect(state._stationArrCount).toBe(1);
+    expect(renderSpy).toHaveBeenCalled();
   });
 });
 
@@ -435,23 +421,28 @@ describe('switchTab — stops chain arm + DEP dur ternary; setTabMode unknown mo
   });
 });
 
-describe('applyPushedStationboard — ARR dur fallback + locX-present sig arm', () => {
-  it('uses the ARR dur (isArr true) and includes stbStop.locX in the signature', () => {
+describe('applyPushedStationboard — ARR push reconciles and re-renders', () => {
+  it('renders an ARR push and adds the (4-arg) arrivals load-more button', () => {
     state.selectedStop = { lid: 'A=1@L=1@', extId: 'E1' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastArrSig = null;
-    state._stationArrDur = 300;
+    state._stationExtId = 'E1';
+    state._activeTab = 'arrivals';
+    state._stationArrData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     const render = vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(
       { lid: 'A=1@L=1@', extId: 'E1' },
-      { jnyL: [{ jid: 'A', stbStop: { locX: 2, aTimeS: '120000' } }], common: {} }, // locX present → sig true arm
+      { jnyL: [{ jid: 'A', stbStop: { locX: 2, aTimeS: '120000' } }], common: {} },
       'ARR',
     );
     expect(render).toHaveBeenCalled();
-    expect(lm).toHaveBeenCalledWith('arrival-list', expect.anything(), 'E1', 300, 'ARR');
-    expect(state._lastArrSig).toContain('|2|'); // locX 2 in the signature
+    expect(lm).toHaveBeenCalledWith('arrival-list', expect.anything(), 'E1', 'ARR');
+    expect(state._lastArrSig).toContain('A|'); // jid A in the signature
   });
 });
 

@@ -22,7 +22,7 @@ globalThis.L = {
 const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { selectStream: (...a) => selectStream(...a) },
+  api: { subscribeBoard: () => Promise.resolve({}), selectStream: (...a) => selectStream(...a) },
   urlState: { push: vi.fn(), replace: vi.fn() },
 }));
 vi.mock('../../static/map.js', () => ({
@@ -40,30 +40,6 @@ function settle() {
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe('applyPushedStationboard — DEP dur || 60 fallback (ternary false side)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    document.body.innerHTML = '<ol id="departure-list"></ol><ol id="arrival-list"></ol>';
-    ui.departureList = document.getElementById('departure-list');
-    state.selectedStop = { lid: 'A=1@L=1@', extId: 'E1' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
-    state._lastDepSig = null;
-  });
-
-  it('uses 60 when _stationDepDur is falsy on a DEP push', () => {
-    state._stationDepDur = 0; // falsy → || 60, on the isArr-false side of the ternary
-    vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
-    const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    ui.applyPushedStationboard(
-      { lid: 'A=1@L=1@', extId: 'E1' },
-      { jnyL: [{ jid: 'A', stbStop: {} }], common: {} },
-      'DEP',
-    );
-    expect(lm).toHaveBeenCalledWith('departure-list', expect.anything(), 'E1', 60, 'DEP');
-  });
 });
 
 describe('doSearch remote-stop dedup — if (r.stop) false arm', () => {

@@ -8,13 +8,202 @@ import {
   getDayOffset,
   parseHafasTimeToMin,
   calcDelay,
+  derivedServerNowMin,
   getDelayClass,
   getDelayText,
   extractHafasMessages,
+  SSE_BOARD_DUR,
 } from './state.js';
 import { api, urlState, trackedFetch } from './api.js';
 import { markers, stopsLayer } from './map.js';
 import { announce } from './status.js';
+
+// === STATIONBOARD RECONCILE + PAGINATION (pure helpers) ===
+// The full-day board is fetched once and paginated client-side; the 2h SSE push
+// is merged into it here. These are pure (no DOM) so they unit-test directly.
+
+// Effective (realtime-aware, offset-aware) minute — Ist over Soll. Used for the
+// display sort and the pagination horizon (what the user sees).
+export function boardEntryEff(jny) {
+  var stb = (jny && jny.stbStop) || {};
+  var r = parseHafasTimeToMin(stb.dTimeR || stb.aTimeR || '');
+  if (r != null) return r;
+  return parseHafasTimeToMin(stb.dTimeS || stb.aTimeS || '');
+}
+
+// Scheduled (Soll) minute — HAFAS `dur` filters the board by Soll, so the SSE
+// push authoritatively covers exactly Soll ≤ now+dur. Used for the reconcile
+// window membership (which cache entries the push is allowed to remove).
+function _boardEntrySoll(jny) {
+  var stb = (jny && jny.stbStop) || {};
+  return parseHafasTimeToMin(stb.dTimeS || stb.aTimeS || '');
+}
+
+// Stable per-entry merge key: day-distinct (date + offset-prefixed times) and
+// line/direction-distinct, so a 24h board never collides two entries.
+export function boardEntryKey(jny) {
+  var stb = (jny && jny.stbStop) || {};
+  return (
+    (jny.jid || '') +
+    '|' +
+    (jny.prodX != null ? jny.prodX : '') +
+    '|' +
+    (jny.dirTxt || '') +
+    '|' +
+    (jny.date || '') +
+    '|' +
+    (stb.dTimeS || stb.aTimeS || '')
+  );
+}
+
+// Push change-detection signature: identity key PLUS realtime fields, so a
+// delay-only change still triggers a re-render (unlike the identity-only key).
+function _boardPushSig(jnyL) {
+  return (jnyL || [])
+    .map(function (j) {
+      var stb = j.stbStop || {};
+      return boardEntryKey(j) + '|' + (stb.dTimeR || '') + '|' + (stb.aTimeR || '');
+    })
+    .join(';');
+}
+
+function _findOrAppend(list, item, key) {
+  for (var i = 0; i < list.length; i++) {
+    if (_entityKey(list[i]) === key) return i;
+  }
+  list.push(item);
+  return list.length - 1;
+}
+// loc keyed by extId (falls back to name/lid); prod keyed by its display fields.
+// Good enough to dedupe the small locL/prodL when adopting a push entry.
+function _entityKey(e) {
+  if (!e) return '';
+  if ('extId' in e || 'lid' in e) return 'L:' + (e.extId || e.name || e.lid || '');
+  return 'P:' + ((e.name || '') + '|' + (e.nameS || '') + '|' + (e.cls != null ? e.cls : ''));
+}
+
+// Remap a push entry's stbStop.locX / prodX into the cache board's index space
+// (find-or-append), since the two boards have independent locL/prodL. Only these
+// two indices are read by the render path (extId filter + line label), so only
+// they need remapping.
+function _adoptEntry(jny, srcLocL, srcProdL, dstLocL, dstProdL) {
+  var out = Object.assign({}, jny);
+  /* v8 ignore next -- the `|| {}` arm is unreachable: reconcileBoard only adopts entries whose _boardEntrySoll is non-null, which requires a truthy stbStop with a Soll time */
+  var stb = jny.stbStop || {};
+  if (stb.locX != null && stb.locX >= 0 && stb.locX < srcLocL.length) {
+    var loc = srcLocL[stb.locX];
+    out.stbStop = Object.assign({}, stb, {
+      locX: _findOrAppend(dstLocL, loc, _entityKey(loc)),
+    });
+  }
+  if (jny.prodX != null && jny.prodX >= 0 && jny.prodX < srcProdL.length) {
+    var prod = srcProdL[jny.prodX];
+    out.prodX = _findOrAppend(dstProdL, prod, _entityKey(prod));
+  }
+  return out;
+}
+
+// Merge a 2h SSE push into the cached full-day board. Window (Soll-based, cap-
+// aware): winTop = min(now+120, max Soll in push). In-window (Soll ≤ winTop) the
+// push is authoritative — its entries (remapped into the cache index space)
+// replace the cache's in-window entries; a cache entry absent from the push is
+// dropped (HAFAS removed it = departed). The tail (Soll > winTop) is kept as-is.
+// Merged list re-sorted by effective time. Returns a NEW board (pure).
+export function reconcileBoard(cache, push, nowMin) {
+  if (!cache || nowMin == null) return cache;
+  var pushJny = (push && push.jnyL) || [];
+  var pushLocL = (push && push.common && push.common.locL) || [];
+  var pushProdL = (push && push.common && push.common.prodL) || [];
+
+  // Window top = min(now + the 2h SSE realtime window, max Soll the push
+  // covers). SSE_BOARD_DUR is the SAME constant api.subscribeBoard uses, so the
+  // reconcile's authoritative zone can never desync from what the server pushes.
+  var winTop = nowMin + SSE_BOARD_DUR;
+  var maxPushSoll = null;
+  for (var i = 0; i < pushJny.length; i++) {
+    var ps = _boardEntrySoll(pushJny[i]);
+    if (ps != null && (maxPushSoll == null || ps > maxPushSoll)) maxPushSoll = ps;
+  }
+  if (maxPushSoll != null && maxPushSoll < winTop) winTop = maxPushSoll;
+
+  var newLocL = ((cache.common && cache.common.locL) || []).slice();
+  var newProdL = ((cache.common && cache.common.prodL) || []).slice();
+
+  var adopted = [];
+  for (var j = 0; j < pushJny.length; j++) {
+    var soll = _boardEntrySoll(pushJny[j]);
+    if (soll == null || soll > winTop) continue; // only the authoritative zone
+    adopted.push(_adoptEntry(pushJny[j], pushLocL, pushProdL, newLocL, newProdL));
+  }
+
+  var kept = [];
+  var cacheJny = cache.jnyL || [];
+  for (var k = 0; k < cacheJny.length; k++) {
+    var cs = _boardEntrySoll(cacheJny[k]);
+    if (cs == null || cs > winTop) kept.push(cacheJny[k]); // tail: untouched
+    // in-window cache entries are dropped; `adopted` re-adds the ones still present
+  }
+
+  var merged = kept.concat(adopted);
+  merged.sort(function (a, b) {
+    var ea = boardEntryEff(a);
+    var eb = boardEntryEff(b);
+    if (ea == null) return eb == null ? 0 : 1;
+    if (eb == null) return -1;
+    return ea - eb;
+  });
+  return Object.assign({}, cache, {
+    jnyL: merged,
+    common: Object.assign({}, cache.common, { locL: newLocL, prodL: newProdL }),
+  });
+}
+
+// Initial horizon: ~next hour, but at least the next upcoming departure so a
+// sparse board never renders an empty slice while it has departures to show.
+export function computeInitialHorizon(jnyL, nowMin) {
+  var h = nowMin + 60;
+  var next = null;
+  for (var i = 0; i < (jnyL || []).length; i++) {
+    var e = boardEntryEff(jnyL[i]);
+    if (e != null && e >= nowMin && (next == null || e < next)) next = e;
+  }
+  if (next != null && next > h) h = next;
+  return h;
+}
+
+// Extend by 60 min, or jump to the next departure beyond the horizon if +60
+// would reveal nothing new.
+export function extendHorizon(jnyL, horizonMin) {
+  var h = horizonMin + 60;
+  var next = null;
+  for (var i = 0; i < (jnyL || []).length; i++) {
+    var e = boardEntryEff(jnyL[i]);
+    if (e != null && e > horizonMin && (next == null || e < next)) next = e;
+  }
+  if (next != null && next > h) h = next;
+  return h;
+}
+
+// Any cached departure beyond the horizon? Drives the data-driven load-more end.
+export function hasBeyondHorizon(jnyL, horizonMin) {
+  for (var i = 0; i < (jnyL || []).length; i++) {
+    var e = boardEntryEff(jnyL[i]);
+    if (e != null && e > horizonMin) return true;
+  }
+  return false;
+}
+
+// Shallow-copy the board with jnyL sliced to eff ≤ horizon (renderDepartures
+// stays unchanged — it just receives the paginated slice).
+export function sliceToHorizon(board, horizonMin) {
+  var jnyL = (board && board.jnyL) || [];
+  return Object.assign({}, board, {
+    jnyL: jnyL.filter(function (j) {
+      var e = boardEntryEff(j);
+      return e != null && e <= horizonMin;
+    }),
+  });
+}
 
 // === UI MODULE ===
 
@@ -433,6 +622,19 @@ export var ui = {
     state._notStartedLastPoll = 0;
     state._selectedHadPosJid = null;
     state._endedJid = null;
+    // Tear down the stationboard cache so the TTL ticker can't refetch a closed
+    // panel (its guard requires _stationDepData/selectedStop) and a late fetch
+    // .then discards via the capturedLid guard. data=null resets the "loaded" flag.
+    state._stationDepData = null;
+    state._stationArrData = null;
+    state._stationDepFetchedAt = null;
+    state._stationArrFetchedAt = null;
+    state._stationDepRetryAt = 0;
+    state._stationArrRetryAt = 0;
+    state._stationDepHorizon = 0;
+    state._stationArrHorizon = 0;
+    state._lastDepSig = null;
+    state._lastArrSig = null;
     // Tell the SSE stream we no longer have a selection, so the
     // server stops shipping journey/stationboard events for this subscriber.
     api.selectStream('none').catch(function () {});
@@ -886,22 +1088,10 @@ export var ui = {
 
     if (state._activeTab === 'arrivals' && state._stationArrData) {
       ui.renderArrivals(state._stationArrData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton(
-        'arrival-list',
-        state._stationLoc,
-        state._stationExtId,
-        state._stationArrDur || 60,
-        'ARR',
-      );
+      ui.addLoadMoreButton('arrival-list', state._stationLoc, state._stationExtId, 'ARR');
     } else if (state._stationDepData) {
       ui.renderDepartures(state._stationDepData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton(
-        'departure-list',
-        state._stationLoc,
-        state._stationExtId,
-        state._stationDepDur || 60,
-        'DEP',
-      );
+      ui.addLoadMoreButton('departure-list', state._stationLoc, state._stationExtId, 'DEP');
     }
   },
 
@@ -1262,8 +1452,6 @@ export var ui = {
     state.selectedJid = null;
     state.selectedJourneyData = null;
     state.selectedStop = loc;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
     if (state._selectedStopMarker) {
       state._selectedStopMarker.remove();
       state._selectedStopMarker = null;
@@ -1323,161 +1511,177 @@ export var ui = {
 
     state._stationLoc = loc;
     state._stationExtId = stopExtId;
-    state._stationDepDur = 60;
-    state._stationArrDur = 60;
+    // Reset per-board state on open. data=null is the "not loaded" flag; a
+    // successful fetch sets it. Horizon=0 → the first load sets the initial one.
+    state._stationDepData = null;
+    state._stationArrData = null;
+    state._stationDepFetchedAt = null;
+    state._stationArrFetchedAt = null;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
+    state._stationDepRetryAt = 0;
+    state._stationArrRetryAt = 0;
+    state._stationDepHorizon = 0;
+    state._stationArrHorizon = 0;
+    state._stationDepDur = 1440;
+    state._stationArrDur = 1440;
     state._lastDepSig = null;
     state._lastArrSig = null;
-    state._stationDepCount = 0;
-    state._stationArrCount = 0;
 
-    // DEP loads first (the visible tab on stop-open); ARR follows once DEP
-    // settles so the two one-shot stationboard requests don't fire at once.
-    // Most users never see ARR, so the latency cost only kicks in if they switch
-    // tabs before ARR loaded — the SSE stationboard push (applyPushedStationboard)
-    // covers that on the next tick. The window-widening itself now happens
-    // server-side (one request per board), so there is no client-side cascade.
-    ui.loadDepartures(loc, stopExtId, 60, true).finally(function () {
-      if (state.selectedStop && state.selectedStop.lid === loc.lid) {
-        ui.loadArrivals(loc, stopExtId, 60);
-      }
-    });
+    // Only DEP is fetched on open; ARR is lazy (loaded on the first switch to
+    // the arrivals tab). Each board is one plain full-window fetch, paginated
+    // client-side — no cascade.
+    ui.loadDepartures(loc, stopExtId, true);
     if (loc && loc.lid) {
       state._activeStationBoardType = 'DEP';
     }
   },
 
-  loadDepartures: function (loc, stopExtId, dur, isInitial) {
-    // Guard applyPushedStationboard from clobbering the list while this one-shot
-    // fetch renders; cleared only after the render/filter/button block below.
-    state._autoExpandingDep = true;
+  // Shared board loader: ONE plain full-window fetch (dur=1440, HAFAS-capped at
+  // 50), cached + paginated client-side; the 2h SSE reconcile keeps it fresh.
+  // Owns the per-board flag lifecycle so the 1s TTL ticker (refresh.js) can gate
+  // on it. isInitial=true (or a first load, horizon===0) sets the paging horizon;
+  // a TTL refetch preserves whatever the user has paged to.
+  _loadBoard: function (type, loc, stopExtId, isInitial) {
+    var isArr = type === 'ARR';
     var capturedLid = loc.lid;
+    if (isArr) {
+      state._stationArrFetching = true;
+    } else {
+      state._stationDepFetching = true;
+    }
     return api
-      .getStationBoard(loc.lid, 'DEP', dur, true, state._stationDepCount || 0, stopExtId)
+      .getStationBoard(loc.lid, type, 1440)
       .then(function (data) {
-        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-          state._autoExpandingDep = false;
-          return;
+        // Null-safe guard: discard a late result if the panel closed or the
+        // selected stop changed (mirrors the existing capturedLid pattern).
+        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+        if (isArr) {
+          state._stationArrData = data;
+          state._stationArrFetchedAt = Date.now();
+          state._stationArrRetryAt = 0;
+          state._stationArrDur = 1440; // renderArrivals empty-label → honest "24h"
+          // Fresh full board → let the first (possibly byte-identical) push
+          // reconcile onto it instead of being dropped as a stale duplicate.
+          state._lastArrSig = null;
+        } else {
+          state._stationDepData = data;
+          state._stationDepFetchedAt = Date.now();
+          state._stationDepRetryAt = 0;
+          state._stationDepDur = 1440;
+          state._lastDepSig = null;
         }
-        // The server widened the window internally and returns the window it
-        // settled on; fall back to the requested dur if it's absent (legacy /
-        // error paths).
-        var settledDur = data.settledDur || dur;
-        state._stationDepData = data;
-        state._stationDepDur = settledDur;
-        var filterLine = state._depFilter || null;
-        var displayedJnyL = ui.renderDepartures(data, loc, stopExtId, filterLine);
         ui.discoverPlatforms(data);
-        state._stationDepCount = displayedJnyL.length;
-
-        if (state._activeTab === 'departures' || !state._activeTab)
-          ui.buildLineFilter(data, displayedJnyL);
-        ui.addLoadMoreButton('departure-list', loc, stopExtId, settledDur, 'DEP');
-        if (isInitial) {
+        var nowMin = derivedServerNowMin();
+        var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+        if (isInitial || curH === 0) {
+          // No server clock yet → Infinity shows everything until the next tick
+          // narrows it (avoids a blank board on a cold open).
+          var h = nowMin == null ? Infinity : computeInitialHorizon(data.jnyL || [], nowMin);
+          if (isArr) state._stationArrHorizon = h;
+          else state._stationDepHorizon = h;
+        }
+        ui._renderBoard(type, loc, stopExtId);
+        // Subscribe the SSE realtime window ONLY for the active board.
+        if (state._activeStationBoardType === type) {
+          api.subscribeBoard(loc.lid, type).catch(function () {});
+        }
+        if (isInitial && !isArr) {
           announce(t('departures_loaded', { name: loc.name || t('stop_fallback', { idx: '' }) }));
         }
-        // The SSE stationboard push must match the window the server settled on,
-        // or the next tick replaces the expanded list with the narrower default
-        // and midnight-wrap entries disappear.
-        if (state._activeStationBoardType === 'DEP') {
-          api.selectStream('stationboard', loc.lid, 'DEP', settledDur).catch(function () {});
-        }
-        state._autoExpandingDep = false;
       })
       .catch(function (err) {
-        state._autoExpandingDep = false;
-        if (err.name === 'AbortError') return;
-        // Subscribe even though the one-shot fetch failed, so the server's
-        // per-tick pushes can still recover the board (its independent, cached
-        // fetch may succeed where a rate-limited client request did not). Without
-        // this a stop opened during a HAFAS blip stayed unsubscribed until a
-        // reconnect. Subscribe at the requested dur (settledDur is absent here).
-        if (
-          state.selectedStop &&
-          state.selectedStop.lid === capturedLid &&
-          state._activeStationBoardType === 'DEP'
-        ) {
-          api.selectStream('stationboard', loc.lid, 'DEP', dur).catch(function () {});
+        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+        if (err && err.name === 'AbortError') return;
+        // Backoff so the 1s TTL ticker can't hammer a failing HAFAS every second
+        // (also gates the initial-fetch retry so a cold failure isn't permanent).
+        var retryAt = Date.now() + 30000;
+        if (isArr) state._stationArrRetryAt = retryAt;
+        else state._stationDepRetryAt = retryAt;
+        // Subscribe anyway so the server's cached per-tick push can recover the board.
+        if (state._activeStationBoardType === type) {
+          api.subscribeBoard(loc.lid, type).catch(function () {});
         }
-        // Don't wipe an already-shown list on a transient error / rate-limit.
-        // Keep the departures and restore the load-more button so the user can
-        // retry; only show the error state when nothing was displayed yet.
-        if (ui.departureList.querySelector('.departure-item')) {
-          ui.addLoadMoreButton(
-            'departure-list',
-            loc,
-            stopExtId,
-            state._stationDepDur || dur,
-            'DEP',
+        // Keep an already-shown list on a transient error; only show the empty
+        // state when nothing was displayed yet.
+        var listEl = document.getElementById(isArr ? 'arrival-list' : 'departure-list');
+        if (listEl && listEl.querySelector('.departure-item')) return;
+        if (listEl) {
+          listEl.replaceChildren(
+            _createStateItem(
+              'empty-state',
+              t(isArr ? 'arrivals_unavailable' : 'departures_unavailable'),
+            ),
           );
-          return;
         }
-        ui.departureList.replaceChildren(
-          _createStateItem('empty-state', t('departures_unavailable')),
-        );
-      });
-  },
-
-  loadArrivals: function (loc, stopExtId, dur) {
-    state._autoExpandingArr = true;
-    var capturedLid = loc.lid;
-    return api
-      .getStationBoard(loc.lid, 'ARR', dur, true, state._stationArrCount || 0, stopExtId)
-      .then(function (data) {
-        if (!state.selectedStop || state.selectedStop.lid !== capturedLid) {
-          state._autoExpandingArr = false;
-          return;
-        }
-        var settledDur = data.settledDur || dur;
-        state._stationArrData = data;
-        state._stationArrDur = settledDur;
-        var filterLine = state._arrFilter || null;
-        var filteredArr = ui.renderArrivals(data, loc, stopExtId, filterLine);
-        ui.discoverPlatforms(data);
-        state._stationArrCount = filteredArr.length;
-
-        if (state._activeTab === 'arrivals') ui.buildLineFilter(data, null);
-        ui.addLoadMoreButton('arrival-list', loc, stopExtId, settledDur, 'ARR');
-        // Same dur-must-match story as DEP — keep the SSE push aligned with the
-        // window the server settled on.
-        if (state._activeStationBoardType === 'ARR') {
-          api.selectStream('stationboard', loc.lid, 'ARR', settledDur).catch(function () {});
-        }
-        state._autoExpandingArr = false;
       })
-      .catch(function (err) {
-        state._autoExpandingArr = false;
-        if (err.name === 'AbortError') return;
-        // See loadDepartures: subscribe even on fetch failure so the server's
-        // per-tick pushes can recover the board. Subscribe at the requested dur.
-        if (
-          state.selectedStop &&
-          state.selectedStop.lid === capturedLid &&
-          state._activeStationBoardType === 'ARR'
-        ) {
-          api.selectStream('stationboard', loc.lid, 'ARR', dur).catch(function () {});
+      .finally(function () {
+        // Unconditional: even a discarded (guard-failed) result must clear the
+        // in-flight flag, or the board sticks in-flight and the TTL never refetches.
+        if (isArr) {
+          state._stationArrFetching = false;
+        } else {
+          state._stationDepFetching = false;
         }
-        // See loadDepartures: keep an already-shown list on a transient error and
-        // restore the load-more button; only show the error state when nothing
-        // was displayed yet.
-        var arrEl = document.getElementById('arrival-list');
-        if (arrEl.querySelector('.departure-item')) {
-          ui.addLoadMoreButton('arrival-list', loc, stopExtId, state._stationArrDur || dur, 'ARR');
-          return;
-        }
-        arrEl.replaceChildren(_createStateItem('empty-state', t('arrivals_unavailable')));
       });
   },
 
-  addLoadMoreButton: function (listId, loc, stopExtId, currentDur, type) {
+  // Render the cached board sliced to the current paging horizon (renderDepartures
+  // / renderArrivals are unchanged — they receive the paginated slice). Rebuilds
+  // the line filter from the full board and the load-more button.
+  _renderBoard: function (type, loc, stopExtId) {
+    var isArr = type === 'ARR';
+    var data = isArr ? state._stationArrData : state._stationDepData;
+    if (!data) return;
+    var horizon = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+    // Keep the paging horizon from lagging the wall clock. The horizon is an
+    // absolute minute-of-day; on a long-open board "now" climbs toward it and
+    // the eff≤horizon slice would drift into the past and empty out (and a cold
+    // open with no server clock yet leaves it Infinity → full 24h, no
+    // pagination). Re-base to the next-hour window whenever it has fallen behind
+    // now (or is non-finite); a user's load-more extension (horizon > now+60) is
+    // preserved. Delivers the plan's "narrows it / repopulates the horizon for a
+    // long-open page" intent that a fixed absolute cap missed.
+    var nowMin = derivedServerNowMin();
+    if (nowMin != null && (!isFinite(horizon) || horizon < nowMin + 60)) {
+      horizon = computeInitialHorizon(data.jnyL || [], nowMin);
+      if (isArr) state._stationArrHorizon = horizon;
+      else state._stationDepHorizon = horizon;
+    }
+    var sliced = sliceToHorizon(data, horizon);
+    var filterLine = (isArr ? state._arrFilter : state._depFilter) || null;
+    var displayed = isArr
+      ? ui.renderArrivals(sliced, loc, stopExtId, filterLine)
+      : ui.renderDepartures(sliced, loc, stopExtId, filterLine);
+    if (state._activeTab === (isArr ? 'arrivals' : 'departures') || (!isArr && !state._activeTab)) {
+      ui.buildLineFilter(data, isArr ? null : displayed);
+    }
+    ui.addLoadMoreButton(isArr ? 'arrival-list' : 'departure-list', loc, stopExtId, type);
+  },
+
+  loadDepartures: function (loc, stopExtId, isInitial) {
+    return ui._loadBoard('DEP', loc, stopExtId, !!isInitial);
+  },
+
+  loadArrivals: function (loc, stopExtId) {
+    return ui._loadBoard('ARR', loc, stopExtId, false);
+  },
+
+  addLoadMoreButton: function (listId, loc, stopExtId, type) {
     var list = document.getElementById(listId);
     var existing = list.querySelector('.load-more-item');
     if (existing) existing.remove();
 
-    // Don't show load-more if HAFAS limit hint or empty-state is present
+    // Don't show load-more if HAFAS limit hint or empty-state is present.
     if (list.querySelector('.hafas-hint')) return;
     if (list.querySelector('.empty-state')) return;
 
-    if (currentDur >= 1440) {
+    var isArr = type === 'ARR';
+    var data = isArr ? state._stationArrData : state._stationDepData;
+    var horizon = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+    // Data-driven end: no cached departure beyond the horizon → no button.
+    // Covers both the sparse 24h end and the busy 50-entry HAFAS cap.
+    if (!data || !hasBeyondHorizon(data.jnyL || [], horizon)) {
       var hintLi = document.createElement('li');
       hintLi.className = 'load-more-item empty-state';
       hintLi.style.fontSize = '11px';
@@ -1490,20 +1694,18 @@ export var ui = {
     li.className = 'load-more-item';
     var btn = document.createElement('button');
     btn.className = 'load-more-btn';
-    btn.textContent = type === 'ARR' ? t('load_more_arr') : t('load_more_dep');
+    btn.textContent = isArr ? t('load_more_arr') : t('load_more_dep');
     btn.addEventListener('click', function () {
-      var newDur = Math.min(currentDur + 60, 1440);
-      btn.textContent = t('loading');
-      btn.disabled = true;
-      // Advance past the current window; the server widens geometrically from
-      // here until MORE entries than currently shown (min_results =
-      // state._station*Count) appear, so one click always makes progress even
-      // across a service gap — the old client-side per-click cascade is gone.
-      if (type === 'ARR') {
-        ui.loadArrivals(loc, stopExtId, newDur);
-      } else {
-        ui.loadDepartures(loc, stopExtId, newDur, false);
-      }
+      // Pure client-side pagination from the already-cached board — NO fetch.
+      // Extend the horizon by ≥60 min (or to the next departure if empty), then
+      // re-render the wider slice. The old server-cascade re-fetch is gone.
+      var d = isArr ? state._stationArrData : state._stationDepData;
+      if (!d) return;
+      var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+      var newH = extendHorizon(d.jnyL || [], curH);
+      if (isArr) state._stationArrHorizon = newH;
+      else state._stationDepHorizon = newH;
+      ui._renderBoard(type, loc, stopExtId);
     });
     li.appendChild(btn);
     list.appendChild(li);
@@ -1627,8 +1829,8 @@ export var ui = {
 
     if (jnyL.length === 0) {
       var arrDurMin = state._stationArrDur || 60;
-      // Keep only while an expand cascade is walking a gap (see renderDepartures).
-      if (state._autoExpandingArr && arrList.querySelector('.departure-item')) {
+      // Keep only while a full-board (re)fetch is in flight (see renderDepartures).
+      if (state._stationArrFetching && arrList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
       var arrEmptyText =
@@ -1807,14 +2009,14 @@ export var ui = {
 
     if (jnyL.length === 0) {
       var depDurMin = state._stationDepDur || 60;
-      // Keep the shown departures ONLY while an expand cascade is walking a
-      // service gap (load-more / auto-expand): those widening steps legitimately
-      // return "nothing new" and must not wipe the list. A normal SSE push or a
-      // filter change that empties the board is NOT expanding, so it still
-      // clears to the empty-state (otherwise a board that legitimately empties
-      // at end-of-service would show departed buses frozen forever, since the
-      // dup-signature check suppresses the next identical empty push).
-      if (state._autoExpandingDep && ui.departureList.querySelector('.departure-item')) {
+      // Keep the shown departures ONLY while a full-board (re)fetch is in flight
+      // (_stationDepFetching): a mid-fetch SSE empty-push must not wipe the list.
+      // A normal SSE push or a filter change that empties the board is NOT
+      // fetching, so it still clears to the empty-state (otherwise a board that
+      // legitimately empties at end-of-service would show departed buses frozen
+      // forever, since the dup-signature check suppresses the next identical
+      // empty push).
+      if (state._stationDepFetching && ui.departureList.querySelector('.departure-item')) {
         return filteredByExtId;
       }
       var depEmptyText =
@@ -1946,19 +2148,18 @@ export var ui = {
     }
 
     state._activeTab = tab;
-    // Switch the SSE board-type push when the user moves between DEP/ARR
-    // tabs of the same stop. The selection cookie stays the same; only the
-    // board_type field changes. We update it only when a stop is selected
-    // and the new tab is a stationboard tab.
+    // Switch the SSE board-type push when the user moves between DEP/ARR tabs of
+    // the same stop, and lazy-load ARR on its first view (ARR is not fetched on
+    // open). subscribeBoard always uses the fixed 2h realtime window.
     if (state.selectedStop && (tab === 'departures' || tab === 'arrivals')) {
       var newBoardType = tab === 'arrivals' ? 'ARR' : 'DEP';
       if (state._activeStationBoardType !== newBoardType) {
         state._activeStationBoardType = newBoardType;
-        var switchDur =
-          (newBoardType === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
-        api
-          .selectStream('stationboard', state.selectedStop.lid, newBoardType, switchDur)
-          .catch(function () {});
+        api.subscribeBoard(state.selectedStop.lid, newBoardType).catch(function () {});
+      }
+      // Lazy ARR: fetch the full board the first time the arrivals tab is opened.
+      if (newBoardType === 'ARR' && !state._stationArrData && !state._stationArrFetching) {
+        ui.loadArrivals(state.selectedStop, state._stationExtId);
       }
     }
     if (tab === 'departures' && state._stationDepData) {
@@ -2026,60 +2227,37 @@ export var ui = {
   // the server included in the payload (matches the StationSelection
   // board_type field). A de-dup signature skips re-rendering when an
   // identical push arrives, so the DOM doesn't flicker.
+  // Merges the 2h SSE realtime push into the cached full-day board (via the pure
+  // reconcileBoard) and re-renders the current horizon slice. A de-dup signature
+  // (identity + realtime) skips a no-op push so the DOM doesn't flicker.
   applyPushedStationboard: function (loc, data, boardType) {
-    if (state._autoExpandingDep || state._autoExpandingArr) return;
+    // Don't reconcile while a full (re)fetch is in flight — it owns the render.
+    if (state._stationDepFetching || state._stationArrFetching) return;
     var capturedLid = loc.lid;
-    var stopExtId = '';
-    if (loc.extId) {
-      stopExtId = loc.extId;
-    } else if (loc.lid) {
-      var match = loc.lid.match(/@L=(\d+)@/);
-      if (match) stopExtId = match[1];
-    }
-    var isArr = boardType === 'ARR';
-    var filterLine = isArr ? state._arrFilter || null : state._depFilter || null;
-    var dur = isArr ? state._stationArrDur || 60 : state._stationDepDur || 60;
-    var boardSig = function (jnyL) {
-      return (jnyL || [])
-        .map(function (j) {
-          var stb = j.stbStop || {};
-          return (
-            (j.jid || '') +
-            '|' +
-            (j.prodX != null ? j.prodX : '') +
-            '|' +
-            (j.dirTxt || '') +
-            '|' +
-            (j.date || '') +
-            '|' +
-            (stb.locX != null ? stb.locX : '') +
-            '|' +
-            (stb.dTimeS || '') +
-            '|' +
-            (stb.dTimeR || '') +
-            '|' +
-            (stb.aTimeS || '') +
-            '|' +
-            (stb.aTimeR || '')
-          );
-        })
-        .join(';');
-    };
     if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
-    var sig = boardSig(data.jnyL);
+    var isArr = boardType === 'ARR';
+    // Board not loaded yet (initial fetch pending, or ARR never opened) → drop
+    // this push; the next tick reconciles once the base board is present.
+    var cache = isArr ? state._stationArrData : state._stationDepData;
+    if (!cache) return;
+    // Server clock gate FIRST — before touching the dedup signature. If we
+    // committed the sig here and then bailed on a null clock, the next
+    // (identical) push after the clock arrives would match the stored sig and
+    // be dropped forever, so the first real reconcile would never run.
+    var nowMin = derivedServerNowMin();
+    if (nowMin == null) return; // no server clock yet → skip (avoid a NaN window)
+    var sig = _boardPushSig(data.jnyL);
     if (isArr) {
       if (sig === state._lastArrSig) return;
       state._lastArrSig = sig;
-      state._stationArrData = data;
-      ui.renderArrivals(data, loc, stopExtId, filterLine);
-      ui.addLoadMoreButton('arrival-list', loc, stopExtId, dur, 'ARR');
     } else {
       if (sig === state._lastDepSig) return;
       state._lastDepSig = sig;
-      state._stationDepData = data;
-      ui.renderDepartures(data, loc, stopExtId, filterLine);
-      ui.addLoadMoreButton('departure-list', loc, stopExtId, dur, 'DEP');
     }
+    var merged = reconcileBoard(cache, data, nowMin);
+    if (isArr) state._stationArrData = merged;
+    else state._stationDepData = merged;
+    ui._renderBoard(boardType, loc, state._stationExtId);
   },
 
   focusJourneyById: function (jid, prod, skipHistory) {

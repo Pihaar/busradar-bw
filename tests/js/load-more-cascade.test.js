@@ -1,11 +1,12 @@
 /**
- * Regression tests for the departure-board load-more path.
+ * Tests for the departure-board load-more path.
  *
- * The window-widening across a service gap now happens SERVER-side: the client
- * fires a single /stationboard request (auto_expand=true, min_results = the
- * count already shown) and the server returns the window it settled on as
- * `settledDur`. There is no client-side 60→1440 cascade any more — one request
- * per board, one loadDepartures call per load-more click.
+ * Window-widening is now fully CLIENT-side: the board is fetched ONCE at
+ * dur=1440 and paginated by extending a local horizon. A load-more click
+ * extends the horizon and re-renders the already-cached board — it fires NO
+ * new fetch. The old server-side auto_expand/min_results/ext_id cascade and the
+ * `settledDur` handshake are gone; the realtime SSE window is subscribed via
+ * api.subscribeBoard (the fixed 2h window), never selectStream at the fetch dur.
  *
  * These tests drive the REAL ui.loadDepartures and the REAL addLoadMoreButton
  * click handler; only the DOM-heavy leaf renderers are spied on the ui object
@@ -17,9 +18,11 @@ globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }) };
 
 const getStationBoard = vi.fn((...a) => Promise.resolve({ jnyL: [], common: {} }));
 const selectStream = vi.fn(() => Promise.resolve({}));
+const subscribeBoard = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: (...a) => subscribeBoard(...a),
     getStationBoard: (...a) => getStationBoard(...a),
     selectStream: (...a) => selectStream(...a),
   },
@@ -36,15 +39,20 @@ const { state } = await import('../../static/state.js');
 
 const loc = { lid: 'A=1@O=SAP-Allee@L=4407160@', name: 'SAP-Allee' };
 
-describe('load-more departure board — single request, server settledDur', () => {
+describe('load-more departure board — one plain full-window fetch, no cascade', () => {
   beforeEach(() => {
     getStationBoard.mockClear();
     selectStream.mockClear();
+    subscribeBoard.mockClear();
     state.selectedStop = loc;
     state._depFilter = null;
-    state._stationDepCount = 0;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     state._activeStationBoardType = 'DEP';
+    state._activeTab = 'departures';
+    state._stationExtId = '';
+    state._stationDepHorizon = 0;
+    state.serverTimeMin = null;
+    state.serverTimeStamp = null;
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(function () {});
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(function () {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
@@ -53,83 +61,91 @@ describe('load-more departure board — single request, server settledDur', () =
     vi.restoreAllMocks();
   });
 
-  it('issues exactly one request and adopts the server-settled window', async () => {
-    // Board already shows 25 (up to 20:43); user clicks load-more at dur=480.
-    // The server widens internally to 960 (05:39 next day) and reports it back.
-    vi.spyOn(ui, 'renderDepartures').mockReturnValue(new Array(31).fill({}));
-    state._stationDepCount = 25;
-    getStationBoard.mockResolvedValueOnce({ jnyL: [], common: {}, settledDur: 960 });
-    await ui.loadDepartures(loc, '', 480, false);
+  it('fetches once at dur=1440 and subscribes the SSE realtime window (not the fetch dur)', async () => {
+    vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}, {}, {}]);
+    getStationBoard.mockResolvedValueOnce({ jnyL: [], common: {} });
+    // The `dur` arg is vestigial — the loader always fetches the full window.
+    await ui.loadDepartures(loc, '', false);
 
     expect(getStationBoard).toHaveBeenCalledTimes(1);
     const args = getStationBoard.mock.calls[0];
-    expect(args[2]).toBe(480); // requested dur — no client cascade past it
-    expect(state._stationDepDur).toBe(960); // adopted the server's window
-    expect(state._stationDepCount).toBe(31);
-    expect(selectStream).toHaveBeenCalledWith('stationboard', loc.lid, 'DEP', 960);
-    expect(state._autoExpandingDep).toBe(false);
+    expect(args[2]).toBe(1440); // always the full window, never the caller's dur
+    expect(state._stationDepDur).toBe(1440);
+    // The realtime SSE subscription goes through subscribeBoard (fixed 2h),
+    // NOT selectStream at the 1440 fetch dur.
+    expect(subscribeBoard).toHaveBeenCalledWith(loc.lid, 'DEP');
+    expect(selectStream).not.toHaveBeenCalled();
+    expect(state._stationDepFetching).toBe(false); // .finally cleared it
   });
 
-  it('falls back to the requested dur when settledDur is absent', async () => {
-    // Legacy / error response with no settledDur → keep the dur we asked for.
-    vi.spyOn(ui, 'renderDepartures').mockReturnValue(new Array(3).fill({}));
-    state._stationDepCount = 3;
+  it('records the fetch timestamp and clears the retry gate on success', async () => {
+    vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}]);
+    state._stationDepRetryAt = 999;
     getStationBoard.mockResolvedValueOnce({ jnyL: [], common: {} });
-    await ui.loadDepartures(loc, '', 60, false);
-
-    expect(getStationBoard).toHaveBeenCalledTimes(1);
-    expect(state._stationDepDur).toBe(60);
-    expect(selectStream).toHaveBeenCalledWith('stationboard', loc.lid, 'DEP', 60);
+    await ui.loadDepartures(loc, '', true);
+    expect(state._stationDepFetchedAt).not.toBeNull();
+    expect(state._stationDepRetryAt).toBe(0);
   });
 });
 
-describe('load-more button click — one loadDepartures call with the next window', () => {
+describe('load-more button click — pure client pagination, no fetch', () => {
   beforeEach(() => {
     document.body.innerHTML = '<ul id="departure-list"></ul>';
+    getStationBoard.mockClear();
+    state.selectedStop = loc;
+    state._depFilter = null;
+    state._stationDepFetching = false;
+    state._activeStationBoardType = 'DEP';
+    state._activeTab = 'departures';
+    state._stationExtId = '';
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('calls loadDepartures once with newDur and isInitial=false', () => {
-    const spy = vi.spyOn(ui, 'loadDepartures').mockImplementation(() => Promise.resolve());
-    ui.addLoadMoreButton('departure-list', loc, '', 480, 'DEP');
+  it('extends the horizon and re-renders WITHOUT a new stationboard fetch', () => {
+    // Cached board has a departure at eff=780 (13:00); horizon is 720 (12:00),
+    // so a departure lies beyond it → the button is shown.
+    state._stationDepData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '130000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationDepHorizon = 720;
+    const renderSpy = vi.spyOn(ui, '_renderBoard').mockImplementation(function () {});
+    ui.addLoadMoreButton('departure-list', loc, '', 'DEP');
 
     const btn = document.querySelector('.load-more-btn');
     expect(btn).not.toBeNull();
     btn.click();
 
-    expect(spy).toHaveBeenCalledTimes(1);
-    const args = spy.mock.calls[0];
-    expect(args[0]).toBe(loc);
-    expect(args[2]).toBe(540); // currentDur 480 + 60
-    expect(args[3]).toBe(false); // isInitial — a manual load-more, not the stop-open
+    expect(state._stationDepHorizon).toBeGreaterThan(720); // horizon widened
+    expect(renderSpy).toHaveBeenCalledWith('DEP', loc, ''); // re-render the wider slice
+    expect(getStationBoard).not.toHaveBeenCalled(); // NO fetch
   });
 
-  it('propagates min_results and ext_id through to the stationboard request body', async () => {
-    // Drive the click WITHOUT mocking loadDepartures so the real getStationBoard
-    // args are observable: min_results = the count already shown, ext_id = stop.
-    vi.spyOn(ui, 'discoverPlatforms').mockImplementation(function () {});
-    vi.spyOn(ui, 'buildLineFilter').mockImplementation(function () {});
-    vi.spyOn(ui, 'renderDepartures').mockReturnValue([{}, {}, {}]);
-    getStationBoard.mockClear();
-    getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
-    state.selectedStop = loc;
-    state._depFilter = null;
-    state._autoExpandingDep = false;
-    state._activeStationBoardType = 'DEP';
-    state._stationDepCount = 25;
+  it('shows the max-timeframe hint (no button) when nothing lies beyond the horizon', () => {
+    state._stationDepData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationDepHorizon = 720; // 12:00 — the only departure is at/under it
+    ui.addLoadMoreButton('departure-list', loc, '', 'DEP');
+    expect(document.querySelector('.load-more-btn')).toBeNull();
+    expect(document.querySelector('.load-more-item.empty-state')).not.toBeNull();
+  });
 
-    ui.addLoadMoreButton('departure-list', loc, '6003411', 480, 'DEP');
-    document.querySelector('.load-more-btn').click();
-    await new Promise(function (r) {
-      setTimeout(r, 0);
-    });
-
-    const args = getStationBoard.mock.calls[0];
-    expect(args[2]).toBe(540); // newDur
-    expect(args[4]).toBe(25); // min_results = state._stationDepCount
-    expect(args[5]).toBe('6003411'); // ext_id = stopExtId
+  it('is a no-op click when the cache was torn down between render and click', () => {
+    state._stationDepData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '130000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationDepHorizon = 720;
+    const renderSpy = vi.spyOn(ui, '_renderBoard').mockImplementation(function () {});
+    ui.addLoadMoreButton('departure-list', loc, '', 'DEP');
+    const btn = document.querySelector('.load-more-btn');
+    state._stationDepData = null; // closePanel / refetch cleared it
+    btn.click();
+    expect(renderSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -141,7 +157,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     ui.departureList = document.getElementById('departure-list');
     state.selectedStop = loc;
     state._depFilter = null;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     state.vehicles = new Map();
   });
   afterEach(() => {
@@ -161,7 +177,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
   it('keeps the shown departures while an expand cascade returns none', () => {
     populate(3);
     state._stationDepDur = 480;
-    state._autoExpandingDep = true; // cascade walking a service gap
+    state._stationDepFetching = true; // cascade walking a service gap
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(3);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
@@ -172,7 +188,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     // freeze departed buses on screen (the architect-flagged stale-board path).
     populate(3);
     state._stationDepDur = 480;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
@@ -187,7 +203,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
   it('clears a populated board at dur=60 when not expanding (gate is the flag, not dur)', () => {
     populate(3);
     state._stationDepDur = 60;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
@@ -215,7 +231,7 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
     arrList = document.getElementById('arrival-list');
     state.selectedStop = loc;
     state._arrFilter = null;
-    state._autoExpandingArr = false;
+    state._stationArrFetching = false;
     state.vehicles = new Map();
   });
   afterEach(() => {
@@ -235,7 +251,7 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
   it('keeps the shown arrivals while an expand cascade returns none', () => {
     populate(2);
     state._stationArrDur = 480;
-    state._autoExpandingArr = true;
+    state._stationArrFetching = true;
     ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
     expect(arrList.querySelectorAll('.departure-item').length).toBe(2);
     expect(arrList.querySelector('.empty-state')).toBeNull();
@@ -244,29 +260,43 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
   it('clears to empty-state when a non-expanding render empties a wide board', () => {
     populate(2);
     state._stationArrDur = 480;
-    state._autoExpandingArr = false;
+    state._stationArrFetching = false;
     ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
     expect(arrList.querySelector('.empty-state')).not.toBeNull();
   });
 });
 
-describe('applyPushedStationboard — an empty SSE push clears a wide board (Bug 3 x SSE)', () => {
+describe('applyPushedStationboard — an empty SSE push reconciles a wide board empty (Bug 3 x SSE)', () => {
   beforeEach(() => {
-    document.body.innerHTML = '<ul id="departure-list"></ul>';
+    document.body.innerHTML = '<ul id="departure-list"></ul><div id="line-filter" hidden></div>';
     ui.departureList = document.getElementById('departure-list');
     state.selectedStop = loc;
     state._depFilter = null;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastDepSig = null;
-    state._stationDepDur = 480;
+    state._stationExtId = '';
+    state._stationDepDur = 1440;
+    state._activeTab = 'departures';
     state.vehicles = new Map();
+    // Server clock at 12:00 so the reconcile window (Soll ≤ now+120) is defined.
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
+    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(function () {});
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('clears the frozen list when the real push handler delivers an empty wide board', () => {
+  it('drops an in-window cached departure when the push no longer carries it', () => {
+    // Cache holds one 12:00 departure (in the 12:00→14:00 authoritative window);
+    // an empty push means HAFAS removed it → reconcile clears it → empty-state.
+    state._stationDepData = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }],
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+    };
+    state._stationDepHorizon = 780;
     const li = document.createElement('li');
     li.className = 'departure-item';
     ui.departureList.appendChild(li);
@@ -279,10 +309,10 @@ describe('loadArrivals error — keeps a populated list instead of wiping it (mi
   beforeEach(() => {
     document.body.innerHTML = '<ul id="arrival-list"></ul>';
     state.selectedStop = loc;
-    state._autoExpandingArr = false;
+    state._stationArrFetching = false;
+    state._activeStationBoardType = 'ARR';
     state._stationArrDur = 300;
     getStationBoard.mockClear();
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -293,17 +323,18 @@ describe('loadArrivals error — keeps a populated list instead of wiping it (mi
     li.className = 'departure-item';
     document.getElementById('arrival-list').appendChild(li);
     getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
-    await ui.loadArrivals(loc, '', 300, true);
+    await ui.loadArrivals(loc, '');
     expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(
       1,
     );
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).toBeNull();
-    expect(ui.addLoadMoreButton).toHaveBeenCalled();
+    // Backoff gate is armed so the 1s TTL ticker can't hammer HAFAS.
+    expect(state._stationArrRetryAt).toBeGreaterThan(0);
   });
 
   it('shows the error state when nothing was displayed yet', async () => {
     getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
-    await ui.loadArrivals(loc, '', 60, true);
+    await ui.loadArrivals(loc, '');
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 });
@@ -313,10 +344,10 @@ describe('loadDepartures error — keeps a populated list instead of wiping it',
     document.body.innerHTML = '<ul id="departure-list"></ul>';
     ui.departureList = document.getElementById('departure-list');
     state.selectedStop = loc;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
+    state._activeStationBoardType = 'DEP';
     state._stationDepDur = 300;
     getStationBoard.mockClear();
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -327,15 +358,15 @@ describe('loadDepartures error — keeps a populated list instead of wiping it',
     li.className = 'departure-item';
     ui.departureList.appendChild(li);
     getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
-    await ui.loadDepartures(loc, '', 300, true);
+    await ui.loadDepartures(loc, '', true);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
-    expect(ui.addLoadMoreButton).toHaveBeenCalled();
+    expect(state._stationDepRetryAt).toBeGreaterThan(0);
   });
 
   it('shows the error state when nothing was displayed yet', async () => {
     getStationBoard.mockImplementationOnce(() => Promise.reject(new Error('rate_limit')));
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 });

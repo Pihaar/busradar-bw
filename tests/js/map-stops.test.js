@@ -49,7 +49,7 @@ globalThis.L = {
 const getStops = vi.fn();
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { getStops: (...a) => getStops(...a) },
+  api: { subscribeBoard: () => Promise.resolve({}), getStops: (...a) => getStops(...a) },
 }));
 vi.mock('../../static/ui.js', () => ({ ui: { showStationBoard: vi.fn() } }));
 

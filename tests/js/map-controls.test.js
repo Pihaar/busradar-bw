@@ -117,7 +117,7 @@ vi.mock('../../static/refresh.js', () => ({ refresh: vi.fn() }));
 const getStops = vi.fn().mockResolvedValue({ stops: [] });
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { getStops: (...a) => getStops(...a) },
+  api: { subscribeBoard: () => Promise.resolve({}), getStops: (...a) => getStops(...a) },
 }));
 vi.mock('../../static/ui.js', () => ({
   ui: {

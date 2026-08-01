@@ -18,6 +18,7 @@ globalThis.L = { latLng: (lat, lon) => ({ lat, lng: lon }), circleMarker: vi.fn(
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: vi.fn(() => Promise.resolve({})),
     getStationBoard: vi.fn(),
     getJourney: vi.fn(() => new Promise(() => {})), // never-resolving by default
     selectStream: vi.fn(() => Promise.resolve({})),
@@ -154,9 +155,9 @@ describe('ui.loadDepartures — subscribes on fetch error so SSE can recover', (
     state._activeStationBoardType = 'DEP';
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
 
-    await ui.loadDepartures({ lid: LID, name: 'Sandhausen' }, '6003411', 60, false);
+    await ui.loadDepartures({ lid: LID, name: 'Sandhausen' }, '6003411', false);
 
-    expect(api.selectStream).toHaveBeenCalledWith('stationboard', LID, 'DEP', 60);
+    expect(api.subscribeBoard).toHaveBeenCalledWith(LID, 'DEP');
   });
 
   it('does NOT subscribe when the stop was deselected before the error', async () => {
@@ -165,9 +166,9 @@ describe('ui.loadDepartures — subscribes on fetch error so SSE can recover', (
     state._activeStationBoardType = 'DEP';
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
 
-    await ui.loadDepartures({ lid: LID, name: 'Sandhausen' }, '6003411', 60, false);
+    await ui.loadDepartures({ lid: LID, name: 'Sandhausen' }, '6003411', false);
 
-    expect(api.selectStream).not.toHaveBeenCalled();
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 
   it('does NOT subscribe from .catch when the active board is ARR (wrong tab)', async () => {
@@ -176,9 +177,9 @@ describe('ui.loadDepartures — subscribes on fetch error so SSE can recover', (
     state._activeStationBoardType = 'ARR'; // user switched to arrivals
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('x')));
 
-    await ui.loadDepartures({ lid: LID, name: 'S' }, '6003411', 60, false);
+    await ui.loadDepartures({ lid: LID, name: 'S' }, '6003411', false);
 
-    expect(api.selectStream).not.toHaveBeenCalled();
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 });
 
@@ -194,9 +195,9 @@ describe('ui.loadArrivals — subscribes on fetch error (ARR mirror)', () => {
     state._activeStationBoardType = 'ARR';
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
 
-    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411', 60, false);
+    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411');
 
-    expect(api.selectStream).toHaveBeenCalledWith('stationboard', LID, 'ARR', 60);
+    expect(api.subscribeBoard).toHaveBeenCalledWith(LID, 'ARR');
   });
 
   it('does NOT subscribe from .catch when the active board is DEP (wrong tab)', async () => {
@@ -205,8 +206,8 @@ describe('ui.loadArrivals — subscribes on fetch error (ARR mirror)', () => {
     state._activeStationBoardType = 'DEP';
     api.getStationBoard.mockReturnValueOnce(Promise.reject(new Error('x')));
 
-    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411', 60, false);
+    await ui.loadArrivals({ lid: LID, name: 'S' }, '6003411');
 
-    expect(api.selectStream).not.toHaveBeenCalled();
+    expect(api.subscribeBoard).not.toHaveBeenCalled();
   });
 });

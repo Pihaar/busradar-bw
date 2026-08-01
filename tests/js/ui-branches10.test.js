@@ -27,6 +27,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -75,8 +76,8 @@ beforeEach(() => {
   state.routeStopMarkers = [];
   state._stationDepDur = 60;
   state._stationArrDur = 60;
-  state._autoExpandingDep = false;
-  state._autoExpandingArr = false;
+  state._stationDepFetching = false;
+  state._stationArrFetching = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -196,19 +197,24 @@ describe('switchTab — an unknown tab leaves all three panels hidden (arrivals 
   });
 });
 
-describe('applyPushedStationboard — loc with neither extId nor lid + ARR dur fallback', () => {
-  it('leaves extId empty (else-if(loc.lid) false) and uses the ARR || 60 dur', () => {
-    const stop = { name: 'S' }; // no extId, no lid → but selectedStop must match by lid
-    state.selectedStop = stop; // selectedStop.lid === loc.lid (both undefined) → equal
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+describe('applyPushedStationboard — renders with an empty extId held in state', () => {
+  it('passes through the empty state._stationExtId to render + load-more', () => {
+    const stop = { name: 'S', lid: 'A=1@L=1@' };
+    state.selectedStop = stop;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastArrSig = null;
-    state._stationArrDur = 0; // falsy → || 60
+    state._stationExtId = '';
+    state._activeTab = 'arrivals';
+    state._stationArrData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     const render = vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'ARR');
     expect(render).toHaveBeenCalledWith(expect.anything(), stop, '', null);
-    expect(lm).toHaveBeenCalledWith('arrival-list', stop, '', 60, 'ARR');
+    expect(lm).toHaveBeenCalledWith('arrival-list', stop, '', 'ARR');
   });
 });
 

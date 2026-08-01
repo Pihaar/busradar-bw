@@ -43,7 +43,10 @@ const uiMock = {
 };
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 
-const apiMock = { selectStream: vi.fn(() => Promise.resolve({})) };
+const apiMock = {
+  subscribeBoard: vi.fn(() => Promise.resolve({})),
+  selectStream: vi.fn(() => Promise.resolve({})),
+};
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: apiMock,
@@ -797,8 +800,8 @@ describe('_resendActiveSelection rejection paths (the .catch handlers)', () => {
     await Promise.resolve(); // let the rejection settle through .catch
   });
 
-  it('a rejected stationboard selectStream is swallowed by its .catch', async () => {
-    apiMock.selectStream.mockReturnValueOnce(Promise.reject(new Error('net')));
+  it('a rejected stationboard subscribeBoard is swallowed by its .catch', async () => {
+    apiMock.subscribeBoard.mockReturnValueOnce(Promise.reject(new Error('net')));
     state.map = makeMap();
     state.selectedStop = { lid: 'A=1@L=7@' };
     state._activeStationBoardType = 'DEP';
@@ -806,7 +809,7 @@ describe('_resendActiveSelection rejection paths (the .catch handlers)', () => {
     startStream();
     instances[0].readyState = 1;
     instances[0].fire('subscribe', '{}');
-    expect(apiMock.selectStream).toHaveBeenCalledWith('stationboard', 'A=1@L=7@', 'DEP', 60);
+    expect(apiMock.subscribeBoard).toHaveBeenCalledWith('A=1@L=7@', 'DEP');
     await Promise.resolve();
     await Promise.resolve();
   });

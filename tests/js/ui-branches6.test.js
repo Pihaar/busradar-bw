@@ -24,9 +24,11 @@ globalThis.L = {
 const getJourney = vi.fn(() => new Promise(() => {}));
 const getStationBoard = vi.fn(() => new Promise(() => {}));
 const selectStream = vi.fn(() => Promise.resolve());
+const subscribeBoard = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: (...a) => subscribeBoard(...a),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -75,8 +77,8 @@ beforeEach(() => {
   state.routeStopMarkers = [];
   state._stationDepDur = 60;
   state._stationArrDur = 60;
-  state._autoExpandingDep = false;
-  state._autoExpandingArr = false;
+  state._stationDepFetching = false;
+  state._stationArrFetching = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -165,29 +167,32 @@ describe('buildLineFilter — lang fallback when settings.current.lang missing',
   });
 });
 
-describe('switchTab — arrivals else-if + ARR dur ternary', () => {
-  it('activates the arrivals tab and subscribes with the ARR dur (ternary true arm)', () => {
+describe('switchTab — arrivals else-if + board re-subscribe', () => {
+  it('activates the arrivals tab and re-subscribes the ARR board at the fixed 2h window', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
     state._activeStationBoardType = 'DEP';
-    state._stationArrDur = 240;
     state._stationArrData = { common: {}, jnyL: [] };
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     ui.switchTab('arrivals');
     expect(document.getElementById('tabpanel-arrivals').hidden).toBe(false);
-    expect(selectStream).toHaveBeenCalledWith('stationboard', 'A=1@L=1@', 'ARR', 240);
+    expect(subscribeBoard).toHaveBeenCalledWith('A=1@L=1@', 'ARR');
   });
 });
 
-describe('applyPushedStationboard — boardSig dirTxt/locX default arms', () => {
-  it('builds a signature from a jny with no dirTxt and no stbStop.locX', () => {
+describe('applyPushedStationboard — boardSig dirTxt/time default arms', () => {
+  it('builds a signature from a jny with no dirTxt and no times (defaults)', () => {
     state.selectedStop = { lid: 'A=1@L=1@', extId: 'E1' };
     state._lastDepSig = null;
-    state._stationDepDur = 60;
+    state._stationExtId = 'E1';
+    state._stationDepData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(
       { lid: 'A=1@L=1@', extId: 'E1' },
-      { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, // no dirTxt, no locX → defaults
+      { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, // no dirTxt, no times → defaults
       'DEP',
     );
     expect(state._lastDepSig).toContain('A|'); // jid A, defaults elsewhere
@@ -218,22 +223,6 @@ describe('renderDepartures — stbStop/locX/prodX default arms under filter', ()
     ui.renderDepartures(data, { name: 'S', platform: '2' }, 'E1', null);
     // stb {} → locX -1 → filtered out → empty-state
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
-  });
-});
-
-describe('loadArrivals — arrCount tracks the rendered array length', () => {
-  it('sets arrCount to 0 when renderArrivals returns an empty array', async () => {
-    const loc = { lid: 'A=1@L=1@', name: 'S' };
-    vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
-    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    vi.spyOn(ui, 'renderArrivals').mockReturnValue([]); // empty board
-    getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
-    state.selectedStop = loc;
-    state._activeStationBoardType = 'ARR';
-    await ui.loadArrivals(loc, '', 60, true);
-    await settle();
-    expect(state._stationArrCount).toBe(0);
   });
 });
 

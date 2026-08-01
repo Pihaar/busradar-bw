@@ -28,6 +28,7 @@ const getStationBoard = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStreamImpl(...a),
@@ -204,7 +205,7 @@ describe('loadDepartures/loadArrivals — selectStream .catch no-op arms', () =>
     state.selectedStop = loc;
     state._activeStationBoardType = 'DEP';
     state._stationDepCount = 0; // count grows → no cascade, hits the subscribe
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     await settle();
     expect(ui.renderDepartures).toHaveBeenCalled();
   });
@@ -214,7 +215,7 @@ describe('loadDepartures/loadArrivals — selectStream .catch no-op arms', () =>
     state.selectedStop = loc;
     state._activeStationBoardType = 'DEP';
     getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
-    await ui.loadDepartures(loc, '', 60, false);
+    await ui.loadDepartures(loc, '', false);
     await settle();
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
@@ -225,7 +226,7 @@ describe('loadDepartures/loadArrivals — selectStream .catch no-op arms', () =>
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
     state._stationArrCount = 0;
-    await ui.loadArrivals(loc, '', 60, true);
+    await ui.loadArrivals(loc, '');
     await settle();
     expect(ui.renderArrivals).toHaveBeenCalled();
   });
@@ -234,13 +235,13 @@ describe('loadDepartures/loadArrivals — selectStream .catch no-op arms', () =>
     state.selectedStop = loc;
     state._activeStationBoardType = 'ARR';
     getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate limit')));
-    await ui.loadArrivals(loc, '', 60, false);
+    await ui.loadArrivals(loc, '');
     await settle();
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 });
 
-describe('loadArrivals — single request adopts the server-settled window', () => {
+describe('loadArrivals — one plain full-window fetch', () => {
   const loc = { lid: 'A=1@L=1@', name: 'S' };
   beforeEach(() => {
     vi.spyOn(ui, 'discoverPlatforms').mockImplementation(() => {});
@@ -249,17 +250,15 @@ describe('loadArrivals — single request adopts the server-settled window', () 
     state._activeStationBoardType = 'ARR';
   });
 
-  it('fires one request and adopts settledDur from the response', async () => {
+  it('fires one request at dur=1440 and records it (no settledDur handshake)', async () => {
     state.selectedStop = loc;
-    state._stationArrCount = 2;
     vi.spyOn(ui, 'renderArrivals').mockReturnValue(new Array(5).fill({}));
-    // Server widened internally to 180 and reports it back as settledDur.
-    getStationBoard.mockResolvedValue({ jnyL: [], common: {}, settledDur: 180 });
-    await ui.loadArrivals(loc, '', 60, true);
+    getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
+    await ui.loadArrivals(loc, '');
     await settle();
     expect(getStationBoard).toHaveBeenCalledTimes(1);
-    expect(state._stationArrDur).toBe(180);
-    expect(state._stationArrCount).toBe(5);
+    expect(getStationBoard.mock.calls[0][2]).toBe(1440);
+    expect(state._stationArrDur).toBe(1440);
   });
 });
 
@@ -267,7 +266,7 @@ describe('empty-state "hours" variant', () => {
   it('renderDepartures shows the hours empty-state at dur >= 120', () => {
     ui.departureList = document.getElementById('departure-list');
     state._stationDepDur = 180;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     ui.renderDepartures({ jnyL: [], common: {} }, { name: 'S' }, '', null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });

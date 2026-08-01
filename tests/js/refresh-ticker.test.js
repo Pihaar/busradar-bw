@@ -33,7 +33,10 @@ const uiMock = {
 vi.mock('../../static/ui.js', () => ({ ui: uiMock }));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
-  api: { selectStream: vi.fn(() => Promise.resolve({})) },
+  api: {
+    subscribeBoard: () => Promise.resolve({}),
+    selectStream: vi.fn(() => Promise.resolve({})),
+  },
 }));
 vi.mock('../../static/map.js', () => ({
   markers: { updateAll: vi.fn() },

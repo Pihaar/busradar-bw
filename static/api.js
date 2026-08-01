@@ -1,5 +1,10 @@
 import { CONFIG } from './config.js';
-import { state } from './state.js';
+import { state, SSE_BOARD_DUR } from './state.js';
+
+// Re-exported from state.js (single source of truth shared with the reconcile
+// window in ui.js). Kept as a named export here for existing importers of the
+// api module.
+export { SSE_BOARD_DUR };
 
 // === TRACKED FETCH ===
 // Transparent wrapper around window.fetch for the debug dump: returns the
@@ -199,24 +204,20 @@ export var api = {
     });
   },
 
-  getStationBoard: function (lid, type, dur, autoExpand, minResults, extId) {
+  getStationBoard: function (lid, type, dur) {
     var abortKey = type === 'ARR' ? '_stationArrAbort' : '_stationDepAbort';
     if (api[abortKey]) api[abortKey].abort();
     api[abortKey] = new AbortController();
     return trackedFetch(CONFIG.apiBase + '/stationboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // auto_expand lets the server widen the window internally (one request
-      // instead of the old client-side 60→1440 cascade). min_results = the
-      // count the client already shows (expand until MORE appears); ext_id
-      // scopes the emptiness check to the opened platform.
+      // One plain full-window fetch (the client paginates the result and keeps
+      // it fresh via the 2h SSE reconcile). The old server-side auto-expand
+      // cascade (auto_expand/min_results/ext_id) is gone.
       body: JSON.stringify({
         lid: lid,
         type: type || 'DEP',
         dur: dur || 60,
-        auto_expand: !!autoExpand,
-        min_results: minResults || 0,
-        ext_id: extId || null,
       }),
       signal: api[abortKey].signal,
     }).then(function (r) {
@@ -255,6 +256,16 @@ export var api = {
   // payload must account for the last-writer-wins semantic.
   selectStream: function (type, id, boardType, dur) {
     return _selectStreamImpl(type, id, boardType, dur);
+  },
+
+  // Subscribe the SSE stream to a stationboard's REALTIME window. The initial
+  // board is fetched whole (dur=1440) and paginated client-side, but the SSE
+  // push only needs to keep the near-term fresh, so it is ALWAYS subscribed at
+  // the fixed 2h window — never the 1440 fetch dur. Routing every subscribe
+  // (open, tab switch, SSE-reconnect resend) through this one helper is what
+  // guarantees a reconnect can't accidentally re-subscribe at 1440.
+  subscribeBoard: function (lid, boardType) {
+    return _selectStreamImpl('stationboard', lid, boardType, SSE_BOARD_DUR);
   },
 };
 

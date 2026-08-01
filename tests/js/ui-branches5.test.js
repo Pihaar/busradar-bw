@@ -28,6 +28,7 @@ const announce = vi.fn();
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -107,8 +108,8 @@ beforeEach(() => {
   state.routeStopMarkers = [];
   state._stationDepDur = 60;
   state._stationArrDur = 60;
-  state._autoExpandingDep = false;
-  state._autoExpandingArr = false;
+  state._stationDepFetching = false;
+  state._stationArrFetching = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -204,23 +205,9 @@ describe('loadDepartures — announce name fallback + error dur fallback', () =>
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
     state.selectedStop = loc;
     state._stationDepCount = 0;
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     await settle();
     expect(announce).toHaveBeenCalled();
-  });
-
-  it('error path keeps a shown list using the state._stationDepDur || dur fallback', async () => {
-    ui.departureList = document.getElementById('departure-list');
-    const li = document.createElement('li');
-    li.className = 'departure-item';
-    ui.departureList.appendChild(li);
-    state.selectedStop = loc;
-    state._stationDepDur = 0; // falsy → || dur (300)
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate')));
-    await ui.loadDepartures(loc, '', 300, false);
-    await settle();
-    expect(ui.addLoadMoreButton).toHaveBeenCalledWith('departure-list', loc, '', 300, 'DEP');
   });
 });
 

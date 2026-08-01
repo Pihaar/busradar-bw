@@ -25,6 +25,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -394,7 +395,7 @@ describe('loadDepartures — activeTab / boardType false arms', () => {
     state._activeTab = 'arrivals'; // not 'departures' and truthy → filter skipped
     state._activeStationBoardType = 'ARR'; // DEP subscribe skipped
     state._stationDepCount = 0;
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     await settle();
     expect(bf).not.toHaveBeenCalled();
     expect(selectStream).not.toHaveBeenCalled();
@@ -416,7 +417,7 @@ describe('loadArrivals — activeTab / boardType false arms', () => {
     state._activeTab = 'departures';
     state._activeStationBoardType = 'DEP';
     state._stationArrCount = 0;
-    await ui.loadArrivals(loc, '', 60, true);
+    await ui.loadArrivals(loc, '');
     await settle();
     expect(bf).not.toHaveBeenCalled();
     expect(selectStream).not.toHaveBeenCalled();
@@ -447,7 +448,7 @@ describe('renderDepartures — filter sub-branch false arms', () => {
   beforeEach(() => {
     ui.departureList = document.getElementById('departure-list');
     state._stationDepDur = 60;
-    state._autoExpandingDep = false;
+    state._stationDepFetching = false;
     state.vehicles = new Map();
   });
 

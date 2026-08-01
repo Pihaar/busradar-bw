@@ -613,17 +613,6 @@ async def get_journey(request: Request, body: JourneyRequest) -> dict[str, Any] 
     return res
 
 
-# Wall-clock budget for the whole server-side auto-expand cascade. The cascade
-# can issue up to ~6 serial HAFAS calls (geometric 60→1440); at UPSTREAM_TIMEOUT
-# (10s) each that is up to ~60s, which would blow past nginx's proxy_read_timeout
-# (30s) and turn a slow HAFAS into a 504. This budget returns the best board
-# gathered so far (200) instead. Read as a module attribute at call time so tests
-# can monkeypatch it; kept < the nginx read timeout, > one full UPSTREAM_TIMEOUT so
-# at least one attempt always fits.
-_CASCADE_BUDGET_S = 14.0
-_EXT_ID_RE = re.compile(r"^[0-9]{1,20}$")
-
-
 class BoardType(str, Enum):
     DEP = "DEP"
     ARR = "ARR"
@@ -636,22 +625,9 @@ class StationBoardRequest(BaseModel):
     # multiples of 60) so the two interfaces can't pollute their shared
     # _stationboard_cache with keys the other side will never reuse.
     dur: int = Field(default=60, ge=60, le=1440)
-    # Opt-in server-side auto-expand: when true, get_stationboard widens `dur`
-    # geometrically (starting at `dur`) until the extId-scoped board has more than
-    # `min_results` entries, and returns the settled window as `settledDur`.
-    # Default false keeps the legacy single-fetch behaviour for every caller.
-    auto_expand: bool = False
-    # Stop the cascade once the extId-scoped entry count exceeds this. 0 means
-    # "expand until any entry appears" (initial open); load-more passes the count
-    # currently shown so the next window must reveal MORE. No upper bound: the
-    # value only controls the early stop, the geometric ≤6 step ceiling bounds the
-    # upstream fan-out.
-    min_results: int = Field(default=0, ge=0)
-    # Platform extId to scope the emptiness check to (mirrors the client's extId
-    # filter, see _extid_scoped_count). Empty/non-numeric/oversized coerces to None
-    # (fall back to a raw count) rather than 422 — the client sends "" for stops
-    # without a platform id. Never enters the HAFAS envelope or the cache key.
-    ext_id: str | None = None
+    # extra="ignore" is Pydantic's default: a stale client still sending the
+    # removed auto_expand/min_results/ext_id fields is accepted, the extras
+    # ignored — no 422 during a rolling deploy.
 
     @field_validator("dur")
     @classmethod
@@ -667,69 +643,6 @@ class StationBoardRequest(BaseModel):
             raise ValueError("Invalid location ID format")
         return v
 
-    @field_validator("ext_id")
-    @classmethod
-    def _normalize_ext_id(cls, v: str | None) -> str | None:
-        # Coerce anything that isn't a plausible numeric extId to None so a
-        # missing/odd platform id degrades to a raw count instead of rejecting
-        # the request.
-        return v if v and _EXT_ID_RE.match(v) else None
-
-
-def _extid_scoped_count(res: dict[str, Any], ext_id: str | None) -> int:
-    """Count board entries at platform `ext_id`, mirroring the client's extId
-    filter (static/ui.js renderDepartures, ~1808-1813). Falls back to the raw
-    entry count when no ext_id is given or the ext_id isn't a distinct loc in this
-    board (single-platform stop / unknown platform). Kept in sync with the client
-    filter: if one side's extId handling changes, change both."""
-    jny_l = res.get("jnyL", [])
-    if not ext_id:
-        return len(jny_l)
-    loc_l = res.get("common", {}).get("locL", [])
-    if not any(loc.get("extId") == ext_id for loc in loc_l):
-        return len(jny_l)
-
-    def _at_ext(j: dict[str, Any]) -> bool:
-        loc_x = (j.get("stbStop") or {}).get("locX")
-        return loc_x is not None and 0 <= loc_x < len(loc_l) and loc_l[loc_x].get("extId") == ext_id
-
-    return sum(1 for j in jny_l if _at_ext(j))
-
-
-async def _expand_stationboard(
-    app: FastAPI,
-    lid: str,
-    board_type: str,
-    start_dur: int,
-    min_results: int,
-    ext_id: str | None,
-) -> tuple[dict[str, Any] | None, int | None]:
-    """Server-side geometric auto-expand. Widens `dur` (start_dur, ×2, capped at
-    1440) until the extId-scoped board has more than `min_results` entries, using
-    the shared singleflight stationboard fetch so concurrent identical cascades and
-    the SSE tick collapse onto one upstream call per window. Returns the best (last
-    successful) board and the dur it was fetched at, or (None, None) if no fetch
-    succeeded. `_CASCADE_BUDGET_S` bounds the whole walk so a slow HAFAS yields the
-    best board so far instead of running into the nginx read timeout (504)."""
-    best_res: dict[str, Any] | None = None
-    best_dur: int | None = None
-    d = start_dur
-    try:
-        async with asyncio.timeout(_CASCADE_BUDGET_S):
-            while True:
-                res = await _fetch_stationboard_for_subscriber(app, lid, board_type, d)
-                if "error" in res:
-                    break  # fail-securely: don't hammer a sick HAFAS with more steps
-                best_res, best_dur = res, d  # remember every success, even an empty board
-                if _extid_scoped_count(res, ext_id) > min_results:
-                    break  # settled: the window now shows more than the client already had
-                if d >= 1440:
-                    break  # reached the max window
-                d = min(d * 2, 1440)
-    except TimeoutError:
-        pass  # budget exhausted → return whatever board we gathered so far
-    return best_res, best_dur
-
 
 @app.post("/api/stationboard", response_model=None)
 async def get_stationboard(
@@ -741,19 +654,6 @@ async def get_stationboard(
             content={"error": "rate_limit", "scope": "ip"},
             headers={"Retry-After": "1"},
         )
-
-    if body.auto_expand:
-        # Server-side cascade: one client request, the server widens the window
-        # internally. Replaces the old client-side loop that fired up to 24 DEP +
-        # 24 ARR requests and burst through the per-IP rate limit on quiet stops.
-        best_res, best_dur = await _expand_stationboard(
-            request.app, body.lid, body.type.value, body.dur, body.min_results, body.ext_id
-        )
-        if best_res is None:
-            return JSONResponse(status_code=502, content={"error": "upstream"})
-        # Shallow copy: settledDur must not leak into the shared cached/singleflight
-        # object (it is served verbatim to the SSE tick and to later cache hits).
-        return {**best_res, "settledDur": best_dur}
 
     now = time.time()
     cache_key = (body.lid, body.type.value, body.dur)

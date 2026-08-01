@@ -31,6 +31,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -90,28 +91,26 @@ describe('buildLineFilter / applyLineFilter — missing-data fallbacks', () => {
     expect(document.getElementById('line-filter').hidden).toBe(true);
   });
 
-  it('applyLineFilter(arr) uses the || 60 dur fallback when _stationArrDur is unset', () => {
+  it('applyLineFilter(arr) re-renders arrivals and adds the (4-arg) load-more', () => {
     state._activeTab = 'arrivals';
     state._stationArrData = { jnyL: [] };
     state._stationLoc = { lid: 'A' };
     state._stationExtId = '1';
-    state._stationArrDur = 0; // falsy → || 60
     vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyLineFilter('705');
-    expect(lm).toHaveBeenCalledWith('arrival-list', { lid: 'A' }, '1', 60, 'ARR');
+    expect(lm).toHaveBeenCalledWith('arrival-list', { lid: 'A' }, '1', 'ARR');
   });
 
-  it('applyLineFilter(dep) uses the || 60 dur fallback when _stationDepDur is unset', () => {
+  it('applyLineFilter(dep) re-renders departures and adds the (4-arg) load-more', () => {
     state._activeTab = 'departures';
     state._stationDepData = { jnyL: [] };
     state._stationLoc = { lid: 'A' };
     state._stationExtId = '1';
-    state._stationDepDur = 0;
     vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyLineFilter(null);
-    expect(lm).toHaveBeenCalledWith('departure-list', { lid: 'A' }, '1', 60, 'DEP');
+    expect(lm).toHaveBeenCalledWith('departure-list', { lid: 'A' }, '1', 'DEP');
   });
 });
 
@@ -185,8 +184,8 @@ describe('renderDepartures / renderArrivals — jnyL/common/prodL fallbacks', ()
     ui.departureList = document.getElementById('departure-list');
     state._stationDepDur = 60;
     state._stationArrDur = 60;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state.vehicles = new Map();
   });
 
@@ -217,32 +216,42 @@ describe('renderDepartures / renderArrivals — jnyL/common/prodL fallbacks', ()
   });
 });
 
-describe('applyPushedStationboard — dur fallbacks', () => {
-  it('uses the || 60 ARR dur fallback when _stationArrDur is falsy', () => {
+describe('applyPushedStationboard — reconcile + signature fallbacks', () => {
+  it('renders an ARR push through the (4-arg) load-more button', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastArrSig = null;
-    state._stationArrDur = 0; // falsy → 60
+    state._stationExtId = '1';
+    state._activeTab = 'arrivals';
+    state._stationArrData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(
       { lid: 'A=1@L=1@' },
       { jnyL: [{ jid: 'A', stbStop: {} }], common: {} },
       'ARR',
     );
-    expect(lm).toHaveBeenCalledWith('arrival-list', expect.anything(), '1', 60, 'ARR');
+    expect(lm).toHaveBeenCalledWith('arrival-list', expect.anything(), '1', 'ARR');
   });
 
   it('signature uses default arms for jnyL null and missing stbStop fields', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastDepSig = 'PREV';
-    state._stationDepDur = 60;
+    state._stationExtId = '1';
+    state._activeTab = 'departures';
+    state._stationDepData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    // data.jnyL undefined → boardSig(undefined) → (jnyL || []) empty → sig ''
+    // data.jnyL undefined → _boardPushSig(undefined) → (jnyL || []) empty → sig ''
     ui.applyPushedStationboard({ lid: 'A=1@L=1@' }, {}, 'DEP');
     expect(state._lastDepSig).toBe('');
   });
@@ -271,7 +280,7 @@ describe('showStationBoard / loadArrivals — dur + name fallbacks', () => {
     state._stationArrDur = 0; // falsy → || dur
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     getStationBoard.mockReturnValueOnce(Promise.reject(new Error('rate')));
-    await ui.loadArrivals({ lid: 'A=1@L=1@', name: 'S' }, '', 120, false);
+    await ui.loadArrivals({ lid: 'A=1@L=1@', name: 'S' }, '');
     await settle();
     expect(arr.querySelectorAll('.departure-item').length).toBe(1);
   });

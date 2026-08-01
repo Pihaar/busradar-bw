@@ -26,6 +26,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -271,8 +272,8 @@ describe('renderDepartures / renderArrivals — sparse jny fallbacks', () => {
   beforeEach(() => {
     state._stationDepDur = 60;
     state._stationArrDur = 60;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
   });
 
   it('renderDepartures uses "?" dir and default prodX/stbStop for a bare jny', () => {
@@ -304,11 +305,16 @@ describe('renderDepartures / renderArrivals — sparse jny fallbacks', () => {
 describe('applyPushedStationboard — boardSig fallbacks', () => {
   it('builds a signature from bare jny objects (all fields default) and renders', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastDepSig = null;
-    state._stationDepDur = 60;
+    state._stationExtId = '1';
+    state._activeTab = 'departures';
+    state._stationDepData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     const spy = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard({ lid: 'A=1@L=1@' }, { jnyL: [{}], common: {} }, 'DEP');
     expect(spy).toHaveBeenCalled();

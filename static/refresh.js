@@ -7,6 +7,7 @@ import {
   getDelayText,
   parseHafasTimeToMin,
   calcDelay,
+  derivedServerNowMin,
   debugLog,
 } from './state.js';
 import { api, trackedFetch } from './api.js';
@@ -149,8 +150,10 @@ export function _resendActiveSelection() {
     api.selectStream('journey', state.selectedJid).catch(function () {});
   } else if (state.selectedStop && state.selectedStop.lid) {
     var bt = state._activeStationBoardType || 'DEP';
-    var dur = (bt === 'ARR' ? state._stationArrDur : state._stationDepDur) || 60;
-    api.selectStream('stationboard', state.selectedStop.lid, bt, dur).catch(function () {});
+    // Always re-subscribe at the fixed 2h realtime window (subscribeBoard),
+    // never the 1440 fetch dur — otherwise a reconnect would push a 24h board
+    // every tick.
+    api.subscribeBoard(state.selectedStop.lid, bt).catch(function () {});
   }
 }
 
@@ -479,10 +482,46 @@ window.addEventListener('online', function () {
   }
 });
 
+// Stationboard 1h TTL. The full-day board is fetched once; only its near-2h
+// window is kept fresh by the SSE reconcile, so the far tail ages — refetch the
+// whole board every hour. This also repopulates the horizon for a long-open page
+// and re-establishes the board after a device sleep (wall-clock age crosses 1h on
+// wake). Rides the always-running 1s ticker so it works even while the SSE socket
+// is down (the refetch is an independent HTTP call). loadDepartures/loadArrivals
+// own the in-flight / fetchedAt / retryAt lifecycle; here we only decide "stale →
+// refetch". The user's paging horizon is preserved (only opening a stop resets it).
+var _BOARD_TTL_MS = 3600000;
+function _boardStale(isArr, now) {
+  if (isArr ? state._stationArrFetching : state._stationDepFetching) return false; // in-flight guard
+  var retryAt = isArr ? state._stationArrRetryAt : state._stationDepRetryAt;
+  if (retryAt && now < retryAt) return false; // backoff gate after a failed fetch
+  var data = isArr ? state._stationArrData : state._stationDepData;
+  if (!data) {
+    // Cold board (initial fetch never succeeded). Refetch ONLY if a prior
+    // attempt failed and armed the backoff (which has now elapsed above) — this
+    // is the initial-fetch retry so a cold HAFAS blip on stop-open isn't
+    // permanent. A never-attempted board (lazy ARR before its tab is opened)
+    // has retryAt 0 and is deliberately left alone.
+    return !!retryAt;
+  }
+  var fetchedAt = isArr ? state._stationArrFetchedAt : state._stationDepFetchedAt;
+  if (fetchedAt == null) return false;
+  var age = now - fetchedAt;
+  return age >= 0 && age > _BOARD_TTL_MS; // age<0 (clock jumped back) counts as fresh
+}
+function _maybeRefetchBoards() {
+  var stop = state.selectedStop;
+  if (!stop || !stop.lid) return;
+  var now = Date.now();
+  if (_boardStale(false, now)) ui.loadDepartures(stop, state._stationExtId, false);
+  if (_boardStale(true, now)) ui.loadArrivals(stop, state._stationExtId);
+}
+
 setInterval(function () {
   if (state._currentStopL && state.selectedJid) {
     ui.updateStopProgress(state._currentStopL);
   }
+  _maybeRefetchBoards();
   if (
     state.serverTimeStamp &&
     state._lastBusCount !== undefined &&
@@ -671,17 +710,10 @@ function _sselog(type, meta) {
   } catch (e) {}
 }
 
-// Server clock extrapolated to "now" from the last serverTime tick. Returns
-// null when no server time has arrived yet (the dump then shows null rather
-// than NaN); callers that need a number default it to 0. serverTimeMin and
-// serverTimeStamp are set together, so a null serverTimeMin implies elMs 0 and
-// the old `(serverTimeMin || 0) + elMs/60000` also yielded 0 — behaviour kept.
-// Shared by _applyJourneyPayload and the debug dump's serverTime block.
-export function derivedServerNowMin() {
-  if (state.serverTimeMin == null) return null;
-  const elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
-  return state.serverTimeMin + elMs / 60000;
-}
+// Server clock extrapolated to "now" from the last serverTime tick. Moved to
+// state.js (shared with ui.js's stationboard reconcile without an import cycle);
+// re-exported here for existing importers (_applyJourneyPayload, the debug dump).
+export { derivedServerNowMin };
 
 // Pan the map to keep the followed bus centered. Shared by the vehicles
 // handler (in-ring) and the journey handler (viewport-independent, keeps the
@@ -919,11 +951,48 @@ export function busradarDump() {
           });
           return { count: rows.length, rows: rows };
         };
+        // Full-day cache size (jnyL), so a large cache with an empty rendered list
+        // reveals the horizon/slice hid everything (the "board empties" signature).
+        const cacheCount = function (data) {
+          return data ? (data.jnyL ? data.jnyL.length : 0) : null;
+        };
+        const ageMs = function (ts) {
+          return ts == null ? null : Date.now() - ts;
+        };
+        const retryInMs = function (at) {
+          return at ? at - Date.now() : null;
+        };
+        // JSON turns Infinity into null; a cold-open sticky-Infinity horizon is a
+        // key signal, so serialise non-finite horizons as a string to preserve it.
+        const horizonVal = function (h) {
+          return h == null ? null : Number.isFinite(h) ? h : String(h);
+        };
         return {
           lid: s.lid || null,
           name: s.name || null,
           extId: s.extId || null,
+          filterExtId: state._stationExtId || null,
           activeBoardType: state._activeStationBoardType || null,
+          // Paging horizon (minutes-of-day; "Infinity" on a cold open before a
+          // server clock). A horizon that has fallen behind serverTime.derivedNowMin
+          // is the "board drifted empty after ~1h" signature.
+          depHorizon: horizonVal(state._stationDepHorizon),
+          arrHorizon: horizonVal(state._stationArrHorizon),
+          // Cache size vs. rendered slice (departures/arrivals below).
+          depCacheCount: cacheCount(state._stationDepData),
+          arrCacheCount: cacheCount(state._stationArrData),
+          // TTL/refetch lifecycle: age since last successful fetch, in-flight flag,
+          // and remaining backoff (a cold-fetch failure arms a >0 retry with null data).
+          depFetchedAgeMs: ageMs(state._stationDepFetchedAt),
+          arrFetchedAgeMs: ageMs(state._stationArrFetchedAt),
+          depFetching: !!state._stationDepFetching,
+          arrFetching: !!state._stationArrFetching,
+          depRetryInMs: retryInMs(state._stationDepRetryAt),
+          arrRetryInMs: retryInMs(state._stationArrRetryAt),
+          // Realtime-push dedup signatures — non-null means a push was accepted;
+          // a stuck value across dumps points at a dedup that never reconciled.
+          depLastSig: state._lastDepSig || null,
+          arrLastSig: state._lastArrSig || null,
           depDur: state._stationDepDur || null,
           arrDur: state._stationArrDur || null,
           departures: board('departure-list'),

@@ -42,6 +42,7 @@ const getJourney = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: vi.fn(),
     getJourney: (...a) => getJourney(...a),
     selectStream: vi.fn(() => Promise.resolve()),

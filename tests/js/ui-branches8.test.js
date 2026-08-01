@@ -29,9 +29,11 @@ globalThis.L = {
 const getJourney = vi.fn(() => new Promise(() => {}));
 const getStationBoard = vi.fn(() => new Promise(() => {}));
 const selectStream = vi.fn(() => Promise.resolve());
+const subscribeBoard = vi.fn(() => Promise.resolve({}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: (...a) => subscribeBoard(...a),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -80,8 +82,8 @@ beforeEach(() => {
   state.routeStopMarkers = [];
   state._stationDepDur = 60;
   state._stationArrDur = 60;
-  state._autoExpandingDep = false;
-  state._autoExpandingArr = false;
+  state._stationDepFetching = false;
+  state._stationArrFetching = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -268,24 +270,27 @@ describe('crd.y/x || 0 arms — a sibling loc with zero coordinates', () => {
   });
 });
 
-describe('switchTab — DEP dur ternary false arm', () => {
-  it('subscribes with the DEP dur when moving to the departures tab', () => {
+describe('switchTab — re-subscribes the DEP board on move to departures', () => {
+  it('re-subscribes the DEP board at the fixed 2h window', () => {
     state.selectedStop = { lid: 'A=1@L=1@' };
-    state._activeStationBoardType = 'ARR'; // moving to DEP → newBoardType DEP → ternary false arm
-    state._stationDepDur = 180;
+    state._activeStationBoardType = 'ARR'; // moving to DEP → newBoardType DEP
     state._stationDepData = { common: {}, jnyL: [] };
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     ui.switchTab('departures');
-    expect(selectStream).toHaveBeenCalledWith('stationboard', 'A=1@L=1@', 'DEP', 180);
+    expect(subscribeBoard).toHaveBeenCalledWith('A=1@L=1@', 'DEP');
   });
 });
 
-describe('applyPushedStationboard — DEP dur ternary false arm', () => {
-  it('uses the DEP dur (isArr false) for a DEP push', () => {
+describe('applyPushedStationboard — DEP push reconciles and re-renders', () => {
+  it('renders a DEP push and adds the (4-arg) load-more button', () => {
     state.selectedStop = { lid: 'A=1@L=1@', extId: 'E1' };
     state._lastDepSig = null;
-    state._stationDepDur = 240;
+    state._stationExtId = 'E1';
+    state._stationDepData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     const render = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(
       { lid: 'A=1@L=1@', extId: 'E1' },
@@ -293,7 +298,7 @@ describe('applyPushedStationboard — DEP dur ternary false arm', () => {
       'DEP',
     );
     expect(render).toHaveBeenCalled();
-    expect(lm).toHaveBeenCalledWith('departure-list', expect.anything(), 'E1', 240, 'DEP');
+    expect(lm).toHaveBeenCalledWith('departure-list', expect.anything(), 'E1', 'DEP');
   });
 });
 

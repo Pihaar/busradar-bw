@@ -1,5 +1,12 @@
 import { CONFIG } from './config.js';
 
+// SSE realtime window for a subscribed stationboard (minutes). The full board is
+// fetched at dur=1440 and paginated client-side; the per-tick SSE push only keeps
+// the next 2h current. Single source of truth: api.subscribeBoard subscribes at
+// this window AND ui.reconcileBoard uses it for the authoritative-zone top, so the
+// two can never desync. Lives here (shared low-level module, no import cycle).
+export var SSE_BOARD_DUR = 120;
+
 // === STATE ===
 export var state = {
   map: null,
@@ -10,6 +17,24 @@ export var state = {
   selectedJourneyData: null,
   selectedStop: null,
   _activeStationBoardType: 'DEP', // mirrors StationSelection.board_type server-side
+  // Stationboard cache (per board type). The full-day board is fetched once
+  // (dur=1440, capped by HAFAS at 50), realtime is kept fresh by the 2h SSE
+  // reconcile, and a 1h TTL refetches. `data != null` is the "loaded" flag
+  // (no separate boolean). Horizon = how far the user has paged (load-more),
+  // independent of data coverage. RetryAt = backoff gate after a failed fetch.
+  // Fetching = in-flight guard so the 1s TTL ticker can't stack refetches.
+  _stationDepData: null,
+  _stationArrData: null,
+  _stationDepFetchedAt: null,
+  _stationArrFetchedAt: null,
+  _stationDepFetching: false,
+  _stationArrFetching: false,
+  _stationDepHorizon: 0,
+  _stationArrHorizon: 0,
+  _stationDepRetryAt: 0,
+  _stationArrRetryAt: 0,
+  _stationDepDur: 60,
+  _stationArrDur: 60,
   routeLayer: null,
   routeStopMarkers: [],
   routeCoords: null,
@@ -200,6 +225,18 @@ export function calcDelay(timeS, timeR) {
   if (delay < -720) delay += 1440;
   else if (delay > 720) delay -= 1440;
   return delay;
+}
+
+// Server clock extrapolated to "now" (minutes-of-day, fractional) from the last
+// serverTime tick + wall-clock elapsed. Returns null when no server time has
+// arrived yet. Lives here (shared low-level module) so both refresh.js (journey
+// end-detection, debug dump) and ui.js (stationboard reconcile window) can use
+// it without an import cycle. serverTimeMin/serverTimeStamp are set together, so
+// a null serverTimeMin implies elMs 0 — behaviour matches the old inline form.
+export function derivedServerNowMin() {
+  if (state.serverTimeMin == null) return null;
+  var elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
+  return state.serverTimeMin + elMs / 60000;
 }
 
 export function getDelayClass(delay) {

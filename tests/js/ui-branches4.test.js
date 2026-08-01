@@ -28,6 +28,7 @@ const selectStream = vi.fn(() => Promise.resolve());
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStream(...a),
@@ -304,21 +305,6 @@ describe('setTabMode — station else-if arm', () => {
     ui.setTabMode('station');
     expect(document.getElementById('tab-stops').style.display).toBe('none');
     expect(spy).toHaveBeenCalled();
-  });
-});
-
-describe('applyPushedStationboard — lid-regex else-if arm', () => {
-  it('derives the extId via the lid @L= regex when loc.extId is absent', () => {
-    const stop = { lid: 'A=1@L=6003411@' }; // no extId → else-if(loc.lid) + regex match
-    state.selectedStop = stop;
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
-    state._lastDepSig = null;
-    state._stationDepDur = 60;
-    const spy = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
-    ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'DEP');
-    expect(spy).toHaveBeenCalledWith(expect.anything(), stop, '6003411', null);
   });
 });
 

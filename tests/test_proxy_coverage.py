@@ -1,17 +1,13 @@
 """Extended proxy endpoint tests with mocked HAFAS upstream for full coverage."""
 
-import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import proxy
 from proxy import (
     StationBoardRequest,
     _calc_delay,
-    _expand_stationboard,
-    _extid_scoped_count,
     _flatten_vehicles,
     _inflight,
     _journey_cache,
@@ -347,394 +343,31 @@ class TestSecurityHeaders:
         assert "frame-ancestors 'none'" in csp
 
 
-def _board(jny_count, *, loc_ext=None, stb_locx=0):
-    """Build a minimal StationBoard `res`. jny entries carry a stbStop.locX
-    so _extid_scoped_count can resolve them against locL."""
-    jny = [{"jid": f"j{i}", "stbStop": {"locX": stb_locx}} for i in range(jny_count)]
-    common = {"locL": [{"extId": loc_ext}]} if loc_ext is not None else {}
-    return {"jnyL": jny, "common": common}
+class TestStationboardStaleClientContract:
+    """The server-side auto-expand cascade was removed; a client that still
+    sends the old auto_expand/min_results/ext_id fields (mid-deploy) must be
+    tolerated (Pydantic extra='ignore'), never 422'd, and the response must not
+    carry the retired settledDur field."""
 
-
-def _fetch_mock(boards_by_dur, *, calls=None, sleep_after=None, sleep_s=0.5):
-    """Return an async stand-in for _fetch_stationboard_for_subscriber.
-
-    `boards_by_dur`: callable(dur) -> res dict (may contain "error").
-    `calls`: optional list to append each requested dur to.
-    `sleep_after`: if set, from that call index (0-based) onward the mock
-    sleeps `sleep_s` before returning — used to trip the cascade budget.
-    """
-    n = [0]
-
-    async def _mock(app, lid, board_type, dur):
-        idx = n[0]
-        n[0] += 1
-        if calls is not None:
-            calls.append(dur)
-        if sleep_after is not None and idx >= sleep_after:
-            await asyncio.sleep(sleep_s)
-        return boards_by_dur(dur)
-
-    return _mock
-
-
-class TestExtIdScopedCount:
-    def test_no_ext_id_returns_raw_len(self):
-        res = {"jnyL": [{"a": 1}, {"b": 2}]}
-        assert _extid_scoped_count(res, None) == 2
-
-    def test_empty_jny_l_returns_zero(self):
-        assert _extid_scoped_count({"jnyL": []}, "6003411") == 0
-
-    def test_ext_id_not_in_loc_l_falls_back_to_raw_len(self):
-        # ext_id given but no locL entry carries it → raw count (single-platform
-        # stop / unknown platform).
-        res = {"jnyL": [{"a": 1}, {"b": 2}], "common": {"locL": [{"extId": "999"}]}}
-        assert _extid_scoped_count(res, "6003411") == 2
-
-    def test_multi_platform_counts_only_matching(self):
-        # locL[0] is the wanted platform, locL[1] another. Entries: locX=0 (match),
-        # locX=1 (other platform), locX None (skipped), locX out-of-range (skipped),
-        # missing stbStop (skipped). Only the locX=0 entry counts.
-        res = {
-            "common": {"locL": [{"extId": "6003411"}, {"extId": "6003412"}]},
-            "jnyL": [
-                {"stbStop": {"locX": 0}},
-                {"stbStop": {"locX": 1}},
-                {"stbStop": {"locX": None}},
-                {"stbStop": {"locX": 9}},
-                {},
-            ],
-        }
-        assert _extid_scoped_count(res, "6003411") == 1
-
-
-class TestExtIdValidator:
-    def test_empty_string_coerces_to_none(self):
-        assert StationBoardRequest(lid="A=1@L=6003411@", ext_id="").ext_id is None
-
-    def test_non_numeric_coerces_to_none(self):
-        assert StationBoardRequest(lid="A=1@L=6003411@", ext_id="ab12").ext_id is None
-
-    def test_oversize_coerces_to_none(self):
-        # 21 digits exceeds the ^[0-9]{1,20}$ cap → None.
-        assert StationBoardRequest(lid="A=1@L=6003411@", ext_id="1" * 21).ext_id is None
-
-    def test_numeric_ext_id_preserved(self):
-        assert StationBoardRequest(lid="A=1@L=6003411@", ext_id="6003411").ext_id == "6003411"
-
-    @pytest.mark.asyncio
-    async def test_auto_expand_with_empty_ext_id_does_not_422(self, client):
-        # "" must degrade to a raw count, never reject the request.
-        async def mock(app, lid, board_type, dur):
-            return _board(1)
-
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True, "ext_id": ""},
-            )
-        assert resp.status_code == 200
-
-    @pytest.mark.asyncio
-    async def test_min_results_negative_422(self, client):
-        resp = await client.post(
-            "/api/stationboard",
-            json={"lid": "A=1@L=6003411@", "auto_expand": True, "min_results": -1},
+    def test_extra_removed_fields_are_ignored_by_the_model(self):
+        req = StationBoardRequest.model_validate(
+            {
+                "lid": "A=1@L=6003411@",
+                "type": "DEP",
+                "dur": 120,
+                "auto_expand": True,
+                "min_results": 25,
+                "ext_id": "6003411",
+            }
         )
-        assert resp.status_code == 422
-
-
-class TestExpandStationboard:
-    """Direct unit tests of the cascade helper with a mocked fetch."""
-
-    @pytest.mark.asyncio
-    async def test_settles_immediately_when_non_empty(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(2), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert dur == 60
-        assert res["jnyL"]
-        assert calls == [60]
+        assert req.dur == 120
+        assert not hasattr(req, "auto_expand")
+        assert not hasattr(req, "min_results")
+        assert not hasattr(req, "ext_id")
 
     @pytest.mark.asyncio
-    async def test_expands_geometrically_until_non_empty(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(0) if d < 240 else _board(3), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert calls == [60, 120, 240]
-        assert dur == 240
-        assert len(res["jnyL"]) == 3
-
-    @pytest.mark.asyncio
-    async def test_ext_id_scoped_cascade_continues_past_nonempty_raw_board(self):
-        # The defining behaviour of ext_id: a multi-platform stop whose RAW board
-        # is non-empty but whose OPENED platform is empty must keep widening. Here
-        # dur<240 returns 2 raw entries at a DIFFERENT platform (locX=1, out of the
-        # single-entry locL → scoped count 0), so a raw-count loop would wrongly
-        # settle at 60. Scoped counting walks on to dur=240 where the entries sit
-        # at the wanted platform (locX=0 → scoped 2 > 0). Guards against a
-        # regression that swaps _extid_scoped_count for len(jnyL).
-        def board(d):
-            return (
-                _board(2, loc_ext="6003411", stb_locx=1)
-                if d < 240
-                else _board(2, loc_ext="6003411", stb_locx=0)
-            )
-
-        calls = []
-        mock = _fetch_mock(board, calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, "6003411")
-        assert calls == [60, 120, 240]  # a raw-count regression would stop at [60]
-        assert dur == 240
-        assert len(res["jnyL"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_error_on_first_step_returns_none(self):
-        mock = _fetch_mock(lambda d: {"error": "upstream"})
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert res is None
-        assert dur is None
-
-    @pytest.mark.asyncio
-    async def test_empty_then_error_returns_the_empty_board(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(0) if d == 60 else {"error": "upstream"}, calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert calls == [60, 120]
-        assert dur == 60  # last success, not the errored step-2
-        assert res["jnyL"] == []
-
-    @pytest.mark.asyncio
-    async def test_stays_empty_to_cap(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(0), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert calls == [60, 120, 240, 480, 960, 1440]
-        assert dur == 1440
-        assert res["jnyL"] == []
-
-    @pytest.mark.asyncio
-    async def test_start_dur_1440_single_fetch(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(0), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 1440, 0, None)
-        assert calls == [1440]
-        assert dur == 1440
-
-    @pytest.mark.asyncio
-    async def test_min_results_load_more_semantics(self):
-        # dur=60 has 1 entry (<=min_results=3 → keep going), dur>=120 has 5 (>3 → settle).
-        calls = []
-        mock = _fetch_mock(lambda d: _board(1) if d < 120 else _board(5), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 3, None)
-        assert calls == [60, 120]
-        assert dur == 120
-
-    @pytest.mark.asyncio
-    async def test_min_results_unreachable_runs_to_cap(self):
-        calls = []
-        mock = _fetch_mock(lambda d: _board(2), calls=calls)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 100, None)
-        assert calls == [60, 120, 240, 480, 960, 1440]
-        assert dur == 1440
-
-    @pytest.mark.asyncio
-    async def test_budget_timeout_returns_board_gathered_so_far(self, monkeypatch):
-        monkeypatch.setattr(proxy, "_CASCADE_BUDGET_S", 0.02)
-        calls = []
-        # First fetch returns 1 entry but min_results=5 keeps the loop going;
-        # the second fetch sleeps past the budget → TimeoutError → return board 1.
-        mock = _fetch_mock(lambda d: _board(1), calls=calls, sleep_after=1, sleep_s=0.5)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 5, None)
-        assert dur == 60
-        assert len(res["jnyL"]) == 1
-
-    @pytest.mark.asyncio
-    async def test_budget_timeout_before_any_board_returns_none(self, monkeypatch):
-        monkeypatch.setattr(proxy, "_CASCADE_BUDGET_S", 0.02)
-        mock = _fetch_mock(lambda d: _board(1), sleep_after=0, sleep_s=0.5)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            res, dur = await _expand_stationboard(MagicMock(), "L", "DEP", 60, 0, None)
-        assert res is None
-        assert dur is None
-
-
-class TestStationboardAutoExpandEndpoint:
-    @pytest.mark.asyncio
-    async def test_returns_settled_dur(self, client):
-        mock = _fetch_mock(lambda d: _board(0) if d < 120 else _board(2))
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["settledDur"] == 120
-        assert len(data["jnyL"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_upstream_error_first_step_returns_502(self, client):
-        mock = _fetch_mock(lambda d: {"error": "upstream"})
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert resp.status_code == 502
-        assert resp.json()["error"] == "upstream"
-
-    @pytest.mark.asyncio
-    async def test_empty_to_cap_returns_200_with_empty_board(self, client):
-        mock = _fetch_mock(lambda d: _board(0))
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["settledDur"] == 1440
-        assert data["jnyL"] == []
-
-    @pytest.mark.asyncio
-    async def test_budget_timeout_returns_200_first_board(self, client, monkeypatch):
-        monkeypatch.setattr(proxy, "_CASCADE_BUDGET_S", 0.02)
-        mock = _fetch_mock(lambda d: _board(1), sleep_after=1, sleep_s=0.5)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={
-                    "lid": "A=1@L=6003411@",
-                    "type": "DEP",
-                    "auto_expand": True,
-                    "min_results": 5,
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["settledDur"] == 60
-
-    @pytest.mark.asyncio
-    async def test_budget_timeout_no_board_returns_502(self, client, monkeypatch):
-        monkeypatch.setattr(proxy, "_CASCADE_BUDGET_S", 0.02)
-        mock = _fetch_mock(lambda d: _board(1), sleep_after=0, sleep_s=0.5)
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert resp.status_code == 502
-
-    @pytest.mark.asyncio
-    async def test_cache_hit_mid_cascade(self, client):
-        # Pre-seed dur=240 as a fresh non-empty cache entry. The cascade fetches
-        # 60 and 120 from HAFAS (empty), then hits the cache at 240 and settles —
-        # so _hafas_call_via_app is only invoked twice.
-        import time as _t
-
-        _stationboard_cache[("A=1@L=6003411@", "DEP", 240)] = (_t.time(), _board(3))
-        call_durs = []
-
-        async def mock_hafas(app, method, req):
-            call_durs.append(req["dur"])
-            return _board(0)
-
-        with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["settledDur"] == 240
-        assert call_durs == [60, 120]
-
-    @pytest.mark.asyncio
-    async def test_cache_hit_on_reopen(self, client):
-        # Two identical auto_expand requests. The first fills the cache for every
-        # window it walked; the second serves entirely from cache → no new HAFAS calls.
-        call_count = [0]
-
-        def board(d):
-            return _board(0) if d < 120 else _board(2)
-
-        async def mock_hafas(app, method, req):
-            call_count[0] += 1
-            return board(req["dur"])
-
-        with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            r1 = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-            first = call_count[0]
-            r2 = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        assert r1.json()["settledDur"] == 120
-        assert r2.json()["settledDur"] == 120
-        assert call_count[0] == first  # second request added no upstream calls
-
-    @pytest.mark.asyncio
-    async def test_settled_dur_not_leaked_into_cache(self, client):
-        # The endpoint returns {**best_res, "settledDur": ...}; the shared cached
-        # object must stay clean so the SSE tick / later hits never see settledDur.
-        async def mock_hafas(app, method, req):
-            return _board(2)
-
-        with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
-            resp = await client.post(
-                "/api/stationboard",
-                json={"lid": "A=1@L=6003411@", "type": "DEP", "auto_expand": True},
-            )
-        settled = resp.json()["settledDur"]
-        cached = _stationboard_cache[("A=1@L=6003411@", "DEP", settled)][1]
-        assert "settledDur" not in cached
-
-    @pytest.mark.asyncio
-    async def test_ext_id_scopes_expansion_end_to_end(self, client):
-        # ext_id flows request → _expand_stationboard → _extid_scoped_count end to
-        # end: the opened platform is empty at dur=60 (raw board non-empty at a
-        # different platform), so the cascade advances to dur=120 where the wanted
-        # platform has entries. A raw-count loop would settle at 60.
-        def board(d):
-            return (
-                _board(2, loc_ext="6003411", stb_locx=1)
-                if d < 120
-                else _board(2, loc_ext="6003411", stb_locx=0)
-            )
-
-        async def mock(app, lid, board_type, dur):
-            return board(dur)
-
-        with patch("proxy._fetch_stationboard_for_subscriber", side_effect=mock):
-            resp = await client.post(
-                "/api/stationboard",
-                json={
-                    "lid": "A=1@L=6003411@",
-                    "type": "DEP",
-                    "auto_expand": True,
-                    "ext_id": "6003411",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["settledDur"] == 120
-
-    @pytest.mark.asyncio
-    async def test_auto_expand_false_uses_legacy_single_fetch(self, client):
-        # auto_expand=false → the old path: min_results/ext_id ignored, one fetch,
-        # no settledDur in the response.
-        async def mock_hafas(app, method, req):
+    async def test_stale_client_body_still_returns_200_without_settled_dur(self, client):
+        async def mock_hafas(request, method, req):
             return MOCK_HAFAS_STATIONBOARD
 
         with patch("proxy._hafas_call_via_app", side_effect=mock_hafas):
@@ -743,12 +376,13 @@ class TestStationboardAutoExpandEndpoint:
                 json={
                     "lid": "A=1@L=6003411@",
                     "type": "DEP",
-                    "dur": 60,
-                    "min_results": 99,
+                    "dur": 1440,
+                    "auto_expand": True,
+                    "min_results": 25,
                     "ext_id": "6003411",
                 },
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert "settledDur" not in data
         assert "jnyL" in data
+        assert "settledDur" not in data

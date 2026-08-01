@@ -28,6 +28,7 @@ const getStationBoard = vi.fn(() => new Promise(() => {}));
 vi.mock('../../static/api.js', () => ({
   trackedFetch: (...a) => window.fetch(...a),
   api: {
+    subscribeBoard: () => Promise.resolve({}),
     getStationBoard: (...a) => getStationBoard(...a),
     getJourney: (...a) => getJourney(...a),
     selectStream: (...a) => selectStreamImpl(...a),
@@ -355,7 +356,7 @@ describe('renderArrivals — extId platform filtering (mirror)', () => {
   const arrList = () => document.getElementById('arrival-list');
   beforeEach(() => {
     state._stationArrDur = 60;
-    state._autoExpandingArr = false;
+    state._stationArrFetching = false;
     state.vehicles = new Map();
   });
 
@@ -501,19 +502,19 @@ describe('loadDepartures / loadArrivals — cascade edge + abort', () => {
     getStationBoard.mockImplementation(() => {
       return Promise.resolve({ jnyL: [], common: {} });
     });
-    const p = ui.loadDepartures(loc, '', 60, true);
+    const p = ui.loadDepartures(loc, '', true);
     // flip selection so the guard inside the .then bails
     state.selectedStop = { lid: 'OTHER' };
     await p;
     await settle();
-    expect(state._autoExpandingDep).toBe(false);
+    expect(state._stationDepFetching).toBe(false);
   });
 
   it('loadDepartures is silent on an AbortError', async () => {
     ui.departureList = document.getElementById('departure-list');
     getStationBoard.mockReturnValueOnce(Promise.reject({ name: 'AbortError' }));
     state.selectedStop = loc;
-    await ui.loadDepartures(loc, '', 60, true);
+    await ui.loadDepartures(loc, '', true);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
   });
 
@@ -522,29 +523,34 @@ describe('loadDepartures / loadArrivals — cascade edge + abort', () => {
     state.selectedStop = loc;
     state._stationArrCount = 0;
     getStationBoard.mockResolvedValue({ jnyL: [], common: {} });
-    const p = ui.loadArrivals(loc, '', 60, true);
+    const p = ui.loadArrivals(loc, '');
     state.selectedStop = { lid: 'OTHER' };
     await p;
     await settle();
-    expect(state._autoExpandingArr).toBe(false);
+    expect(state._stationArrFetching).toBe(false);
   });
 
   it('loadArrivals is silent on an AbortError', async () => {
     getStationBoard.mockReturnValueOnce(Promise.reject({ name: 'AbortError' }));
     state.selectedStop = loc;
-    await ui.loadArrivals(loc, '', 60, true);
+    await ui.loadArrivals(loc, '');
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).toBeNull();
   });
 });
 
-describe('applyPushedStationboard — extId present branch', () => {
-  it('uses loc.extId directly when present', () => {
+describe('applyPushedStationboard — renders with the state-held extId', () => {
+  it('passes state._stationExtId through to renderDepartures', () => {
     state.selectedStop = { lid: 'A=1@L=1@', extId: 'E1' };
-    state._autoExpandingDep = false;
-    state._autoExpandingArr = false;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
     state._lastDepSig = null;
-    state._stationDepDur = 60;
+    state._stationExtId = 'E1';
+    state._activeTab = 'departures';
+    state._stationDepData = { jnyL: [], common: {} };
+    state.serverTimeMin = 720;
+    state.serverTimeStamp = Date.now();
     const renderSpy = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     const stop = { lid: 'A=1@L=1@', extId: 'E1' };
     ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'DEP');
