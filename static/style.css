@@ -55,12 +55,12 @@
   --color-ontime: #00f5d4;
   --color-delayed: #fbbf24;
   --color-major-delay: #ff5757;
-  --color-early: #38bdf8;
+  --color-early: #93c5fd;
   --color-nodata: #6b7280;
   --glow-ontime: 0 0 10px rgb(0 245 212 / 50%), 0 0 20px rgb(0 245 212 / 20%);
   --glow-delayed: 0 0 10px rgb(251 191 36 / 50%), 0 0 20px rgb(251 191 36 / 20%);
   --glow-major: 0 0 10px rgb(255 87 87 / 50%), 0 0 20px rgb(255 87 87 / 20%);
-  --glow-early: 0 0 10px rgb(56 189 248 / 40%), 0 0 20px rgb(56 189 248 / 15%);
+  --glow-early: 0 0 10px rgb(147 197 253 / 50%), 0 0 20px rgb(147 197 253 / 20%);
   --font-display: 'Syne', system-ui, sans-serif;
   --font-mono: 'DM Mono', 'Menlo', monospace;
   --font-body: 'DM Sans', system-ui, sans-serif;
@@ -725,7 +725,7 @@ html, body {
 .detail-delay-badge--ontime { background: rgb(0 245 212 / 15%); color: var(--color-ontime); }
 .detail-delay-badge--delayed { background: rgb(251 191 36 / 15%); color: var(--color-delayed); }
 .detail-delay-badge--major-delay { background: rgb(255 87 87 / 15%); color: var(--color-major-delay); }
-.detail-delay-badge--early { background: rgb(255 255 255 / 10%); color: var(--color-early); }
+.detail-delay-badge--early { background: #1e3a8a; color: var(--color-early); }
 .detail-delay-badge--nodata { background: rgb(107 114 128 / 15%); color: var(--color-nodata); }
 
 .detail-tabs {
@@ -945,7 +945,7 @@ html, body {
 .stop-delay--ontime { background: rgb(0 245 212 / 10%); color: var(--color-ontime); }
 .stop-delay--delayed { background: rgb(251 191 36 / 10%); color: var(--color-delayed); }
 .stop-delay--major-delay { background: rgb(255 87 87 / 10%); color: var(--color-major-delay); }
-.stop-delay--early { background: rgb(255 255 255 / 10%); color: var(--color-early); }
+.stop-delay--early { background: #1e3a8a; color: var(--color-early); }
 
 /* === DEPARTURE LIST === */
 .departure-list {
@@ -1428,7 +1428,7 @@ html, body {
   --glow-ontime: 0 0 6px rgb(5 150 136 / 30%);
   --glow-delayed: 0 0 6px rgb(217 119 6 / 30%);
   --glow-major: 0 0 6px rgb(220 38 38 / 30%);
-  --glow-early: 0 0 6px rgb(30 58 95 / 20%);
+  --glow-early: 0 0 6px rgb(30 58 95 / 30%);
 }
 [data-theme="light"] .leaflet-tile-pane { filter: none; }
 [data-theme="light"] .stop-marker { stroke: rgb(5 150 136 / 50%); fill: #e8eaf0; }
@@ -1441,6 +1441,8 @@ html, body {
 [data-theme="light"] .bus-marker--delayed { background: var(--color-delayed); color: #fff; }
 [data-theme="light"] .bus-marker--major-delay { background: var(--color-major-delay); color: #fff; }
 [data-theme="light"] .bus-marker--early { background: var(--color-early); color: #fff; }
+[data-theme="light"] .stop-delay--early { background: #bfdbfe; color: var(--color-early); }
+[data-theme="light"] .detail-delay-badge--early { background: #bfdbfe; color: var(--color-early); }
 [data-theme="light"] .bus-marker--nodata { background: var(--color-nodata); color: #fff; }
 
 /* === RESPONSIVE: DESKTOP === */
