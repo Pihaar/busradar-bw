@@ -140,6 +140,7 @@ beforeEach(() => {
   state._restoreInProgress = false;
   state.serverTimeMin = null;
   state.serverTimeStamp = null;
+  state.serverDate = null;
   state._lastConnectedClients = undefined;
   state._appVersion = null;
   state._versionUpdateBannerShown = false;
@@ -161,6 +162,17 @@ describe('_handleVehiclesPayload — server time', () => {
     // 12*60 + 30 + 45/60 = 750.75
     expect(state.serverTimeMin).toBeCloseTo(750.75, 2);
     expect(state.serverTimeStamp).toBeTypeOf('number');
+  });
+
+  it('captures serverDate alongside serverTimeMin from the same tick', () => {
+    feed({ vehicles: [], serverTime: '123045', serverDate: '20260801' });
+    expect(state.serverDate).toBe('20260801');
+  });
+
+  it('leaves serverDate untouched when the payload omits it', () => {
+    state.serverDate = '20260801';
+    feed({ vehicles: [], serverTime: '123045' });
+    expect(state.serverDate).toBe('20260801');
   });
 
   it('handles HHMM (no seconds) — ss defaults to 0', () => {

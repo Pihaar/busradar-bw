@@ -1005,6 +1005,18 @@ export function busradarDump() {
           arrDur: state._stationArrDur || null,
           departures: board('departure-list'),
           arrivals: board('arrival-list'),
+          // Paging-horizon change ring: which cause moved the horizon, and per
+          // reconcile the cache size before/after. The direct diagnostic for a
+          // "board resets to default" report. Non-finite from/to serialised as a
+          // string (horizonVal) so JSON.stringify doesn't drop the boundary.
+          horizonLog: (state._boardHorizonLog || []).map(function (e) {
+            var o = { t: e.t, board: e.board, cause: e.cause };
+            if ('from' in e) o.from = horizonVal(e.from);
+            if ('to' in e) o.to = horizonVal(e.to);
+            if ('keptBefore' in e) o.keptBefore = e.keptBefore;
+            if ('keptAfter' in e) o.keptAfter = e.keptAfter;
+            return o;
+          }),
         };
       } catch (e) {
         return { error: String(e) };
@@ -1239,6 +1251,9 @@ function _handleVehiclesPayload(data) {
       if (newMin >= oldDisplayMin - 0.05 || oldDisplayMin < 0) {
         state.serverTimeMin = newMin;
         state.serverTimeStamp = Date.now();
+        // Capture the server date from the SAME tick so the stationboard math can
+        // anchor "now" to the board's service date across a local-midnight roll.
+        if (data.serverDate) state.serverDate = data.serverDate;
       }
     }
   }

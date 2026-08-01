@@ -27,6 +27,7 @@ import time
 from collections.abc import AsyncGenerator, Awaitable
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -239,9 +240,14 @@ async def _fetch_vehicles_for_viewport(
         if "error" in res:
             out = {"error": res["error"]}
         else:
+            # Single clock read, pinned to the schedule's timezone: serverTime and
+            # serverDate must carry the same instant (no midnight race), and the
+            # date must match the HAFAS service-date frame regardless of host TZ.
+            now = datetime.now(ZoneInfo("Europe/Berlin"))
             out = {
                 "vehicles": _flatten_vehicles(res),
-                "serverTime": datetime.now().strftime("%H%M%S"),
+                "serverTime": now.strftime("%H%M%S"),
+                "serverDate": now.strftime("%Y%m%d"),
             }
         if not fut.done():
             fut.set_result(out)

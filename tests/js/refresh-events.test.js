@@ -926,6 +926,39 @@ describe('follow-pan log + busradarDump (debug dump)', () => {
     expect(d.stop.depRetryInMs).toBeNull();
   });
 
+  it('busradarDump stop.horizonLog serialises the change ring (Infinity → string sentinel)', () => {
+    state.selectedStop = { lid: 'A=1@L=9@' };
+    state._stationExtId = '9';
+    state._boardHorizonLog = [
+      { t: 1, board: 'dep', from: 0, to: 780, cause: 'open' },
+      { t: 2, board: 'dep', from: 780, to: Infinity, cause: 'rebase' },
+      { t: 3, board: 'dep', cause: 'reconcile', keptBefore: 27, keptAfter: 26 },
+    ];
+    const d = JSON.parse(busradarDump());
+    expect(d.stop.horizonLog).toHaveLength(3);
+    expect(d.stop.horizonLog[0]).toMatchObject({ board: 'dep', from: 0, to: 780, cause: 'open' });
+    // Non-finite horizon serialised as a string so JSON.stringify doesn't drop it.
+    expect(d.stop.horizonLog[1].to).toBe('Infinity');
+    expect(d.stop.horizonLog[2]).toMatchObject({
+      cause: 'reconcile',
+      keptBefore: 27,
+      keptAfter: 26,
+    });
+    expect('from' in d.stop.horizonLog[2]).toBe(false); // reconcile entries carry counts, not from/to
+  });
+
+  it('busradarDump stop.horizonLog defaults to [] when the ring is unset', () => {
+    state.selectedStop = { lid: 'A=1@L=9@' };
+    const saved = state._boardHorizonLog;
+    try {
+      state._boardHorizonLog = undefined;
+      const d = JSON.parse(busradarDump());
+      expect(d.stop.horizonLog).toEqual([]);
+    } finally {
+      state._boardHorizonLog = saved || [];
+    }
+  });
+
   it('busradarDump env fingerprint is populated (fields present for cross-browser compare)', () => {
     const d = JSON.parse(busradarDump());
     expect(typeof d.env.userAgent === 'string' || d.env.userAgent === null).toBe(true);

@@ -35,6 +35,10 @@ export var state = {
   _stationArrRetryAt: 0,
   _stationDepDur: 60,
   _stationArrDur: 60,
+  // Rolling ring of paging-horizon changes (per board) for the debug dump, so a
+  // "board resets to default" report is diagnosable: which cause moved the
+  // horizon, and whether a reconcile dropped entries. Bounded (see _pushHorizonLog).
+  _boardHorizonLog: [],
   routeLayer: null,
   routeStopMarkers: [],
   routeCoords: null,
@@ -43,6 +47,10 @@ export var state = {
   lastUpdate: null,
   serverTimeMin: null,
   serverTimeStamp: null,
+  // Server calendar date (YYYYMMDD) from the same tick as serverTimeMin, so the
+  // stationboard math can anchor "now" to the board's service date across a
+  // local-midnight rollover (see serverNowMinRel). Null until the first tick.
+  serverDate: null,
   panelState: 'hidden',
   followBus: false,
   _followPanning: false,
@@ -237,6 +245,48 @@ export function derivedServerNowMin() {
   if (state.serverTimeMin == null) return null;
   var elMs = state.serverTimeStamp ? Date.now() - state.serverTimeStamp : 0;
   return state.serverTimeMin + elMs / 60000;
+}
+
+// Whole-day difference (to - from) between two HAFAS YYYYMMDD date strings.
+// Both are structurally validated first (8 digits, plausible year, month 1-12,
+// day 1-31); anything else returns 0 so a corrupt/missing upstream date can
+// never produce a huge or NaN day shift (Date.UTC silently normalises overflow
+// like "99999999" into a finite far-future date). Month is 0-indexed for Date.UTC.
+export function dateDiffDays(from, to) {
+  var parse = function (s) {
+    if (typeof s !== 'string' || !/^\d{8}$/.test(s)) return null;
+    var y = parseInt(s.slice(0, 4), 10);
+    var mo = parseInt(s.slice(4, 6), 10);
+    var d = parseInt(s.slice(6, 8), 10);
+    if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return Date.UTC(y, mo - 1, d);
+  };
+  var a = parse(from);
+  var b = parse(to);
+  if (a == null || b == null) return 0;
+  return Math.round((b - a) / 86400000);
+}
+
+// "Now" as an absolute minute in the board's service-date frame: minute-of-day
+// plus the whole-day gap between the board's base date (sD) and the current
+// server date. This keeps "now" in the SAME frame as the day-shifted board
+// entry times, so a comparison stays correct across local midnight (until the
+// hourly refetch renews sD). Null when no server clock yet; falls back to plain
+// minute-of-day when serverDate is unknown (sD-frame assumed to be today).
+export function serverNowMinRel(baseDate) {
+  var now = derivedServerNowMin();
+  if (now == null) return null;
+  if (!state.serverDate || !baseDate) return now;
+  return now + dateDiffDays(baseDate, state.serverDate) * 1440;
+}
+
+// Append a paging-horizon change to the bounded debug ring (dep/arr board).
+// Kept small; the debug dump serialises non-finite from/to as a string sentinel
+// (this stores the raw numeric values — the live horizon stays numeric).
+export function _pushHorizonLog(entry) {
+  var log = state._boardHorizonLog;
+  log.push(entry);
+  if (log.length > 30) log.shift();
 }
 
 export function getDelayClass(delay) {

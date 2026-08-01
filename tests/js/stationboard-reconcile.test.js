@@ -331,3 +331,135 @@ describe('sliceToHorizon', () => {
     expect(sliceToHorizon({}, 720).jnyL).toEqual([]);
   });
 });
+
+describe('boardEntryEff — day-offset (sD-frame)', () => {
+  const SD = '20260131';
+  const NEXT = '20260201';
+  const mk = (opts) => ({ jid: 'J', prodX: 0, dirTxt: 'D', date: opts.date, stbStop: opts.stb });
+
+  it('shifts a next-day entry (date > sD, no prefix) by +1440', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '045600' } }), SD)).toBe(296 + 1440);
+  });
+  it('applies the shift on the Ist string when Ist is present', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '045600', dTimeR: '050600' } }), SD)).toBe(
+      306 + 1440,
+    );
+  });
+  it('does NOT shift when baseDate is absent (graceful → raw)', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '045600' } }))).toBe(296);
+  });
+  it('does NOT shift when the entry has no date', () => {
+    expect(boardEntryEff({ jid: 'J', stbStop: { dTimeS: '045600' } }, SD)).toBe(296);
+  });
+  it('does NOT shift when date == sD', () => {
+    expect(boardEntryEff(mk({ date: SD, stb: { dTimeS: '045600' } }), SD)).toBe(296);
+  });
+  it('does NOT shift when date < sD', () => {
+    expect(boardEntryEff(mk({ date: '20260130', stb: { dTimeS: '045600' } }), SD)).toBe(296);
+  });
+  it('does not double-count a time-string +1d prefix', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '1045600' } }), SD)).toBe(296 + 1440);
+  });
+  it('does not double-count a +2d prefix', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '2045600' } }), SD)).toBe(296 + 2880);
+  });
+  it('clamps the date shift to at most 2 days', () => {
+    expect(boardEntryEff(mk({ date: '20260105', stb: { dTimeS: '045600' } }), '20260101')).toBe(
+      296 + 2880,
+    );
+  });
+  it('returns null when neither time parses (no shift on null)', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: {} }), SD)).toBeNull();
+  });
+  it('shifts an arrival-only next-day entry (aTimeS/aTimeR fallback) too', () => {
+    expect(boardEntryEff(mk({ date: NEXT, stb: { aTimeS: '045600' } }), SD)).toBe(296 + 1440);
+    expect(boardEntryEff(mk({ date: NEXT, stb: { aTimeS: '045600', aTimeR: '050600' } }), SD)).toBe(
+      306 + 1440,
+    );
+  });
+
+  describe('Ist wrapped past midnight (same service date)', () => {
+    it('lifts a raw Ist that is far below Soll by a day', () => {
+      expect(boardEntryEff(mk({ date: SD, stb: { dTimeS: '235800', dTimeR: '000700' } }), SD)).toBe(
+        1447,
+      );
+    });
+    it('does NOT lift a legitimate small-delay Ist', () => {
+      expect(boardEntryEff(mk({ date: SD, stb: { dTimeS: '235800', dTimeR: '235900' } }), SD)).toBe(
+        1439,
+      );
+    });
+    it('threshold: Ist == sollAbs-720 does not lift, sollAbs-721 lifts', () => {
+      expect(
+        boardEntryEff(mk({ date: SD, stb: { dTimeS: hhmm(800), dTimeR: hhmm(80) } }), SD),
+      ).toBe(80);
+      expect(
+        boardEntryEff(mk({ date: SD, stb: { dTimeS: hhmm(800), dTimeR: hhmm(79) } }), SD),
+      ).toBe(79 + 1440);
+    });
+    it('does not double-lift a next-day entry whose Ist follows its Soll', () => {
+      expect(
+        boardEntryEff(mk({ date: NEXT, stb: { dTimeS: '045600', dTimeR: '050600' } }), SD),
+      ).toBe(306 + 1440);
+    });
+  });
+});
+
+describe('horizon helpers — day-offset aware (baseDate)', () => {
+  const SD = '20260131';
+  const NEXT = '20260201';
+  const today = (min) => ({
+    jid: 't' + min,
+    prodX: 0,
+    dirTxt: 'D',
+    date: SD,
+    stbStop: { dTimeS: hhmm(min) },
+  });
+  const tomorrow = (min) => ({
+    jid: 'm' + min,
+    prodX: 0,
+    dirTxt: 'D',
+    date: NEXT,
+    stbStop: { dTimeS: hhmm(min) },
+  });
+  const common = { locL: [{ extId: 'E1' }], prodL: [{ nameS: '721' }] };
+
+  it('sliceToHorizon excludes a next-day entry until the horizon passes midnight', () => {
+    const board = { jnyL: [today(700), tomorrow(300)], common: {} };
+    expect(sliceToHorizon(board, 900, SD).jnyL.map((j) => j.jid)).toEqual(['t700']);
+    expect(
+      sliceToHorizon(board, 1800, SD)
+        .jnyL.map((j) => j.jid)
+        .sort(),
+    ).toEqual(['m300', 't700']);
+  });
+  it('sliceToHorizon boundary: eff === horizon included, +1 excluded', () => {
+    const board = { jnyL: [today(720)], common: {} };
+    expect(sliceToHorizon(board, 720, SD).jnyL.length).toBe(1);
+    expect(sliceToHorizon(board, 719, SD).jnyL.length).toBe(0);
+  });
+  it('sliceToHorizon without baseDate treats a next-day entry as raw (leaks in)', () => {
+    expect(sliceToHorizon({ jnyL: [tomorrow(300)], common: {} }, 900).jnyL.length).toBe(1);
+  });
+  it('computeInitialHorizon: today wins over a next-day entry as the minimum', () => {
+    expect(computeInitialHorizon([today(740), tomorrow(300)], 600, SD)).toBe(740);
+  });
+  it('hasBeyondHorizon: a next-day entry counts as beyond a today horizon', () => {
+    expect(hasBeyondHorizon([tomorrow(300)], 900, SD)).toBe(true);
+    expect(hasBeyondHorizon([tomorrow(300)], 900)).toBe(false);
+  });
+  it('extendHorizon jumps to the next-day entry once today is exhausted', () => {
+    expect(extendHorizon([tomorrow(300)], 800, SD)).toBe(300 + 1440);
+  });
+  it('reconcile keeps a next-day entry as tail instead of deleting it', () => {
+    const cache = { jnyL: [today(700), tomorrow(300)], common, sD: SD };
+    const pushBoard = { jnyL: [today(700)], common };
+    const merged = reconcileBoard(cache, pushBoard, 600); // winTop=700; tomorrow abs 1740 > 700 → tail
+    expect(merged.jnyL.map((j) => j.jid)).toContain('m300');
+  });
+  it('reconcile sorts a next-day entry after today (sD-frame)', () => {
+    const cache = { jnyL: [tomorrow(300), today(700)], common, sD: SD };
+    const merged = reconcileBoard(cache, { jnyL: [], common }, 500); // winTop=620; both tail, kept + sorted
+    expect(merged.jnyL.map((j) => j.jid)).toEqual(['t700', 'm300']);
+  });
+});

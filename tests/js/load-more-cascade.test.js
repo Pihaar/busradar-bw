@@ -370,3 +370,73 @@ describe('loadDepartures error — keeps a populated list instead of wiping it',
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 });
+
+describe('applyPushedStationboard — next-day entries survive the reconcile (day-offset fix)', () => {
+  const SD = '20260801';
+  beforeEach(() => {
+    document.body.innerHTML = '<ul id="departure-list"></ul><div id="line-filter" hidden></div>';
+    ui.departureList = document.getElementById('departure-list');
+    state.selectedStop = loc;
+    state._depFilter = null;
+    state._stationDepFetching = false;
+    state._stationArrFetching = false;
+    state._lastDepSig = null;
+    state._stationExtId = '';
+    state._stationDepDur = 1440;
+    state._activeTab = 'departures';
+    state.vehicles = new Map();
+    state._boardHorizonLog = [];
+    state.serverTimeStamp = 0; // deterministic derivedServerNowMin
+    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(function () {});
+    vi.spyOn(ui, 'buildLineFilter').mockImplementation(function () {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const today = { jid: 'today', prodX: 0, dirTxt: 'X', date: SD, stbStop: { dTimeS: '120000' } };
+  const nextMorning = {
+    jid: 'nextmorning',
+    prodX: 0,
+    dirTxt: 'X',
+    date: '20260802',
+    stbStop: { dTimeS: '050000' },
+  };
+  const common = { prodL: [{ nameS: '721' }], locL: [] };
+
+  it('keeps a paged next-day departure when the 2h push carries only today', () => {
+    state.serverTimeMin = 720; // 12:00
+    state.serverDate = SD;
+    state._stationDepData = { jnyL: [today, nextMorning], common, sD: SD };
+    state._stationDepHorizon = 1800; // paged past midnight
+    ui.applyPushedStationboard(loc, { jnyL: [today], common }, 'DEP');
+    // Without the day-offset fix the next-day entry (raw Soll 300 ≤ winTop 720) would
+    // be dropped as "departed"; with it, Soll 1740 > winTop → kept in the tail.
+    expect(state._stationDepData.jnyL.map((j) => j.jid)).toContain('nextmorning');
+    const rec = state._boardHorizonLog.filter((e) => e.cause === 'reconcile').pop();
+    expect(rec.keptBefore).toBe(2);
+    expect(rec.keptAfter).toBe(2);
+  });
+
+  it('over local midnight (sD=yesterday, serverDate=today) still keeps the next-day entry', () => {
+    state.serverTimeMin = 1; // 00:01
+    state.serverDate = '20260802';
+    state._stationDepData = { jnyL: [nextMorning], common, sD: SD };
+    state._stationDepHorizon = 3000;
+    ui.applyPushedStationboard(loc, { jnyL: [], common }, 'DEP');
+    // nowMinRel = 1 + 1 day = 1441; next-morning Soll = 300 + 1440 = 1740 > winTop → tail.
+    expect(state._stationDepData.jnyL.map((j) => j.jid)).toContain('nextmorning');
+  });
+
+  it('tolerates a cache without jnyL (keptBefore falls back to 0)', () => {
+    state.serverTimeMin = 720;
+    state.serverDate = null;
+    state._stationDepData = { common }; // no jnyL
+    state._stationDepHorizon = 900;
+    const p = { jid: 'p', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } };
+    ui.applyPushedStationboard(loc, { jnyL: [p], common }, 'DEP');
+    expect(state._stationDepData.jnyL.map((j) => j.jid)).toEqual(['p']);
+    const rec = state._boardHorizonLog.filter((e) => e.cause === 'reconcile').pop();
+    expect(rec.keptBefore).toBe(0);
+  });
+});

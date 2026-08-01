@@ -403,6 +403,10 @@ class TestFetchVehiclesForViewport:
         out = await sse_handler._fetch_vehicles_for_viewport(None, (49.0, 8.0, 49.6, 9.0), "CALC")
         assert out["vehicles"] == [{"jid": "X"}]
         assert "serverTime" in out
+        # serverDate rides along in the same tick (YYYYMMDD), for the client's
+        # sD-frame "now" math across local midnight.
+        assert "serverDate" in out
+        assert len(out["serverDate"]) == 8 and out["serverDate"].isdigit()
 
     @pytest.mark.asyncio
     async def test_upstream_error(self, monkeypatch):

@@ -8,7 +8,9 @@ import {
   getDayOffset,
   parseHafasTimeToMin,
   calcDelay,
-  derivedServerNowMin,
+  serverNowMinRel,
+  dateDiffDays,
+  _pushHorizonLog,
   getDelayClass,
   getDelayText,
   extractHafasMessages,
@@ -22,21 +24,50 @@ import { announce } from './status.js';
 // The full-day board is fetched once and paginated client-side; the 2h SSE push
 // is merged into it here. These are pure (no DOM) so they unit-test directly.
 
-// Effective (realtime-aware, offset-aware) minute — Ist over Soll. Used for the
-// display sort and the pagination horizon (what the user sees).
-export function boardEntryEff(jny) {
-  var stb = (jny && jny.stbStop) || {};
-  var r = parseHafasTimeToMin(stb.dTimeR || stb.aTimeR || '');
-  if (r != null) return r;
-  return parseHafasTimeToMin(stb.dTimeS || stb.aTimeS || '');
+// Whole-day offset (>= 0) a raw board time must be shifted by, from the entry
+// date vs the board's base service date (sD). HAFAS also encodes an offset as a
+// length>6 time-string prefix (already applied by parseHafasTimeToMin); callers
+// add THIS only when getDayOffset(timeStr) === 0 to avoid double counting. The
+// prefix, when present, is authoritative and assumed to equal the date offset.
+// Clamped to [0,2]: the board spans 24h (HAFAS caps it at 50 entries), so a
+// structurally-valid but corrupt far-future date can't shift an entry astronomically.
+function entryDateShiftDays(jny, baseDate) {
+  if (!jny || !jny.date || !baseDate) return 0;
+  var d = dateDiffDays(baseDate, jny.date);
+  return Math.min(2, d > 0 ? d : 0);
 }
 
-// Scheduled (Soll) minute — HAFAS `dur` filters the board by Soll, so the SSE
-// push authoritatively covers exactly Soll ≤ now+dur. Used for the reconcile
-// window membership (which cache entries the push is allowed to remove).
-function _boardEntrySoll(jny) {
+// Absolute minute of one board time in the board's service-date frame: the
+// parsed minute plus the date-based day shift (only when the time string itself
+// carried no prefix offset). Null when the time is absent/unparseable.
+function _entryAbsMin(jny, timeStr, baseDate) {
+  var m = parseHafasTimeToMin(timeStr);
+  if (m == null) return null;
+  return getDayOffset(timeStr) === 0 ? m + entryDateShiftDays(jny, baseDate) * 1440 : m;
+}
+
+// Effective (realtime-aware, day-offset-aware) minute — Ist over Soll, absolute
+// in the board's sD-frame. Used for the display sort and the pagination horizon.
+export function boardEntryEff(jny, baseDate) {
   var stb = (jny && jny.stbStop) || {};
-  return parseHafasTimeToMin(stb.dTimeS || stb.aTimeS || '');
+  var sollAbs = _entryAbsMin(jny, stb.dTimeS || stb.aTimeS || '', baseDate);
+  var istStr = stb.dTimeR || stb.aTimeR || '';
+  var istAbs = _entryAbsMin(jny, istStr, baseDate);
+  if (istAbs == null) return sollAbs;
+  // An Ist that wrapped past midnight without its own offset (raw HH:MM far
+  // below Soll on the same run) is a next-day Ist: lift it a day so eff stays
+  // monotonic with Soll. sollAbs/istAbs are both in the sD-frame here, so the
+  // comparison is frame-consistent.
+  if (getDayOffset(istStr) === 0 && sollAbs != null && istAbs < sollAbs - 720) istAbs += 1440;
+  return istAbs;
+}
+
+// Scheduled (Soll) minute, absolute in the sD-frame — HAFAS `dur` filters the
+// board by Soll, so the SSE push authoritatively covers exactly Soll ≤ now+dur.
+// Used for the reconcile window membership (which cache entries it may remove).
+function _boardEntrySoll(jny, baseDate) {
+  var stb = (jny && jny.stbStop) || {};
+  return _entryAbsMin(jny, stb.dTimeS || stb.aTimeS || '', baseDate);
 }
 
 // Stable per-entry merge key: day-distinct (date + offset-prefixed times) and
@@ -111,6 +142,7 @@ function _adoptEntry(jny, srcLocL, srcProdL, dstLocL, dstProdL) {
 // Merged list re-sorted by effective time. Returns a NEW board (pure).
 export function reconcileBoard(cache, push, nowMin) {
   if (!cache || nowMin == null) return cache;
+  var baseDate = cache.sD; // canonical day anchor; the merged board inherits it
   var pushJny = (push && push.jnyL) || [];
   var pushLocL = (push && push.common && push.common.locL) || [];
   var pushProdL = (push && push.common && push.common.prodL) || [];
@@ -118,10 +150,12 @@ export function reconcileBoard(cache, push, nowMin) {
   // Window top = min(now + the 2h SSE realtime window, max Soll the push
   // covers). SSE_BOARD_DUR is the SAME constant api.subscribeBoard uses, so the
   // reconcile's authoritative zone can never desync from what the server pushes.
+  // now + Soll are both in the sD-frame (baseDate), so next-day entries (Soll
+  // 1440+) fall in the tail instead of being wrongly dropped as departed.
   var winTop = nowMin + SSE_BOARD_DUR;
   var maxPushSoll = null;
   for (var i = 0; i < pushJny.length; i++) {
-    var ps = _boardEntrySoll(pushJny[i]);
+    var ps = _boardEntrySoll(pushJny[i], baseDate);
     if (ps != null && (maxPushSoll == null || ps > maxPushSoll)) maxPushSoll = ps;
   }
   if (maxPushSoll != null && maxPushSoll < winTop) winTop = maxPushSoll;
@@ -131,7 +165,7 @@ export function reconcileBoard(cache, push, nowMin) {
 
   var adopted = [];
   for (var j = 0; j < pushJny.length; j++) {
-    var soll = _boardEntrySoll(pushJny[j]);
+    var soll = _boardEntrySoll(pushJny[j], baseDate);
     if (soll == null || soll > winTop) continue; // only the authoritative zone
     adopted.push(_adoptEntry(pushJny[j], pushLocL, pushProdL, newLocL, newProdL));
   }
@@ -139,15 +173,15 @@ export function reconcileBoard(cache, push, nowMin) {
   var kept = [];
   var cacheJny = cache.jnyL || [];
   for (var k = 0; k < cacheJny.length; k++) {
-    var cs = _boardEntrySoll(cacheJny[k]);
+    var cs = _boardEntrySoll(cacheJny[k], baseDate);
     if (cs == null || cs > winTop) kept.push(cacheJny[k]); // tail: untouched
     // in-window cache entries are dropped; `adopted` re-adds the ones still present
   }
 
   var merged = kept.concat(adopted);
   merged.sort(function (a, b) {
-    var ea = boardEntryEff(a);
-    var eb = boardEntryEff(b);
+    var ea = boardEntryEff(a, baseDate);
+    var eb = boardEntryEff(b, baseDate);
     if (ea == null) return eb == null ? 0 : 1;
     if (eb == null) return -1;
     return ea - eb;
@@ -160,11 +194,11 @@ export function reconcileBoard(cache, push, nowMin) {
 
 // Initial horizon: ~next hour, but at least the next upcoming departure so a
 // sparse board never renders an empty slice while it has departures to show.
-export function computeInitialHorizon(jnyL, nowMin) {
+export function computeInitialHorizon(jnyL, nowMin, baseDate) {
   var h = nowMin + 60;
   var next = null;
   for (var i = 0; i < (jnyL || []).length; i++) {
-    var e = boardEntryEff(jnyL[i]);
+    var e = boardEntryEff(jnyL[i], baseDate);
     if (e != null && e >= nowMin && (next == null || e < next)) next = e;
   }
   if (next != null && next > h) h = next;
@@ -173,11 +207,11 @@ export function computeInitialHorizon(jnyL, nowMin) {
 
 // Extend by 60 min, or jump to the next departure beyond the horizon if +60
 // would reveal nothing new.
-export function extendHorizon(jnyL, horizonMin) {
+export function extendHorizon(jnyL, horizonMin, baseDate) {
   var h = horizonMin + 60;
   var next = null;
   for (var i = 0; i < (jnyL || []).length; i++) {
-    var e = boardEntryEff(jnyL[i]);
+    var e = boardEntryEff(jnyL[i], baseDate);
     if (e != null && e > horizonMin && (next == null || e < next)) next = e;
   }
   if (next != null && next > h) h = next;
@@ -185,9 +219,9 @@ export function extendHorizon(jnyL, horizonMin) {
 }
 
 // Any cached departure beyond the horizon? Drives the data-driven load-more end.
-export function hasBeyondHorizon(jnyL, horizonMin) {
+export function hasBeyondHorizon(jnyL, horizonMin, baseDate) {
   for (var i = 0; i < (jnyL || []).length; i++) {
-    var e = boardEntryEff(jnyL[i]);
+    var e = boardEntryEff(jnyL[i], baseDate);
     if (e != null && e > horizonMin) return true;
   }
   return false;
@@ -195,13 +229,31 @@ export function hasBeyondHorizon(jnyL, horizonMin) {
 
 // Shallow-copy the board with jnyL sliced to eff ≤ horizon (renderDepartures
 // stays unchanged — it just receives the paginated slice).
-export function sliceToHorizon(board, horizonMin) {
+export function sliceToHorizon(board, horizonMin, baseDate) {
   var jnyL = (board && board.jnyL) || [];
   return Object.assign({}, board, {
     jnyL: jnyL.filter(function (j) {
-      var e = boardEntryEff(j);
+      var e = boardEntryEff(j, baseDate);
       return e != null && e <= horizonMin;
     }),
+  });
+}
+
+// Central paging-horizon setter: writes the per-board horizon AND records the
+// change in the debug ring, so a "board resets to default" report shows which
+// cause moved it. Single write path — every horizon mutation goes through here.
+// The live value stays numeric (the dump serialises a non-finite horizon as a
+// string sentinel at read time, not here).
+function _setHorizon(isArr, val, cause) {
+  var from = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+  if (isArr) state._stationArrHorizon = val;
+  else state._stationDepHorizon = val;
+  _pushHorizonLog({
+    t: Date.now(),
+    board: isArr ? 'arr' : 'dep',
+    from: from,
+    to: val,
+    cause: cause,
   });
 }
 
@@ -631,8 +683,8 @@ export var ui = {
     state._stationArrFetchedAt = null;
     state._stationDepRetryAt = 0;
     state._stationArrRetryAt = 0;
-    state._stationDepHorizon = 0;
-    state._stationArrHorizon = 0;
+    _setHorizon(false, 0, 'close');
+    _setHorizon(true, 0, 'close');
     state._lastDepSig = null;
     state._lastArrSig = null;
     // Tell the SSE stream we no longer have a selection, so the
@@ -1521,8 +1573,8 @@ export var ui = {
     state._stationArrFetching = false;
     state._stationDepRetryAt = 0;
     state._stationArrRetryAt = 0;
-    state._stationDepHorizon = 0;
-    state._stationArrHorizon = 0;
+    _setHorizon(false, 0, 'open');
+    _setHorizon(true, 0, 'open');
     state._stationDepDur = 1440;
     state._stationArrDur = 1440;
     state._lastDepSig = null;
@@ -1572,14 +1624,14 @@ export var ui = {
           state._lastDepSig = null;
         }
         ui.discoverPlatforms(data);
-        var nowMin = derivedServerNowMin();
+        var nowMin = serverNowMinRel(data.sD);
         var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
         if (isInitial || curH === 0) {
           // No server clock yet → Infinity shows everything until the next tick
           // narrows it (avoids a blank board on a cold open).
-          var h = nowMin == null ? Infinity : computeInitialHorizon(data.jnyL || [], nowMin);
-          if (isArr) state._stationArrHorizon = h;
-          else state._stationDepHorizon = h;
+          var h =
+            nowMin == null ? Infinity : computeInitialHorizon(data.jnyL || [], nowMin, data.sD);
+          _setHorizon(isArr, h, isInitial ? 'open' : 'ttl-refetch');
         }
         ui._renderBoard(type, loc, stopExtId);
         // Subscribe the SSE realtime window ONLY for the active board.
@@ -1642,13 +1694,12 @@ export var ui = {
     // now (or is non-finite); a user's load-more extension (horizon > now+60) is
     // preserved. Delivers the plan's "narrows it / repopulates the horizon for a
     // long-open page" intent that a fixed absolute cap missed.
-    var nowMin = derivedServerNowMin();
+    var nowMin = serverNowMinRel(data.sD);
     if (nowMin != null && (!isFinite(horizon) || horizon < nowMin + 60)) {
-      horizon = computeInitialHorizon(data.jnyL || [], nowMin);
-      if (isArr) state._stationArrHorizon = horizon;
-      else state._stationDepHorizon = horizon;
+      horizon = computeInitialHorizon(data.jnyL || [], nowMin, data.sD);
+      _setHorizon(isArr, horizon, 'rebase');
     }
-    var sliced = sliceToHorizon(data, horizon);
+    var sliced = sliceToHorizon(data, horizon, data.sD);
     var filterLine = (isArr ? state._arrFilter : state._depFilter) || null;
     var displayed = isArr
       ? ui.renderArrivals(sliced, loc, stopExtId, filterLine)
@@ -1681,7 +1732,7 @@ export var ui = {
     var horizon = isArr ? state._stationArrHorizon : state._stationDepHorizon;
     // Data-driven end: no cached departure beyond the horizon → no button.
     // Covers both the sparse 24h end and the busy 50-entry HAFAS cap.
-    if (!data || !hasBeyondHorizon(data.jnyL || [], horizon)) {
+    if (!data || !hasBeyondHorizon(data.jnyL || [], horizon, data.sD)) {
       var hintLi = document.createElement('li');
       hintLi.className = 'load-more-item empty-state';
       hintLi.style.fontSize = '11px';
@@ -1702,9 +1753,8 @@ export var ui = {
       var d = isArr ? state._stationArrData : state._stationDepData;
       if (!d) return;
       var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
-      var newH = extendHorizon(d.jnyL || [], curH);
-      if (isArr) state._stationArrHorizon = newH;
-      else state._stationDepHorizon = newH;
+      var newH = extendHorizon(d.jnyL || [], curH, d.sD);
+      _setHorizon(isArr, newH, 'load-more');
       ui._renderBoard(type, loc, stopExtId);
     });
     li.appendChild(btn);
@@ -1892,10 +1942,9 @@ export var ui = {
       } else {
         timeEl.textContent = formatTime(timeR || timeS);
       }
-      var dayOffset = getDayOffset(timeR || timeS);
-      if (!dayOffset && jny.date && data.sD && jny.date > data.sD) {
-        dayOffset = 1;
-      }
+      // Shared day-offset rule (also drives the board sort/horizon): time-string
+      // prefix, else the entry-date-vs-sD fallback. max(0) keeps it non-negative.
+      var dayOffset = Math.max(0, getDayOffset(timeR || timeS) || entryDateShiftDays(jny, data.sD));
       if (dayOffset > 0) {
         var dayBadge = document.createElement('span');
         dayBadge.className = 'departure-day-badge';
@@ -2078,10 +2127,9 @@ export var ui = {
       } else {
         timeEl.textContent = formatTime(timeR || timeS);
       }
-      var dayOffset = getDayOffset(timeR || timeS);
-      if (!dayOffset && jny.date && data.sD && jny.date > data.sD) {
-        dayOffset = 1;
-      }
+      // Shared day-offset rule (also drives the board sort/horizon): time-string
+      // prefix, else the entry-date-vs-sD fallback. max(0) keeps it non-negative.
+      var dayOffset = Math.max(0, getDayOffset(timeR || timeS) || entryDateShiftDays(jny, data.sD));
       if (dayOffset > 0) {
         var dayBadge = document.createElement('span');
         dayBadge.className = 'departure-day-badge';
@@ -2244,7 +2292,7 @@ export var ui = {
     // committed the sig here and then bailed on a null clock, the next
     // (identical) push after the clock arrives would match the stored sig and
     // be dropped forever, so the first real reconcile would never run.
-    var nowMin = derivedServerNowMin();
+    var nowMin = serverNowMinRel(cache.sD);
     if (nowMin == null) return; // no server clock yet → skip (avoid a NaN window)
     var sig = _boardPushSig(data.jnyL);
     if (isArr) {
@@ -2254,7 +2302,19 @@ export var ui = {
       if (sig === state._lastDepSig) return;
       state._lastDepSig = sig;
     }
+    var keptBefore = (cache.jnyL || []).length;
     var merged = reconcileBoard(cache, data, nowMin);
+    // Record the reconcile in the debug ring: a drop (keptAfter < keptBefore with
+    // no matching departure) is the signature of the day-offset deletion bug.
+    // merged always carries jnyL here (cache is truthy and nowMin non-null, so
+    // reconcileBoard cannot early-return the cache).
+    _pushHorizonLog({
+      t: Date.now(),
+      board: isArr ? 'arr' : 'dep',
+      cause: 'reconcile',
+      keptBefore: keptBefore,
+      keptAfter: merged.jnyL.length,
+    });
     if (isArr) state._stationArrData = merged;
     else state._stationDepData = merged;
     ui._renderBoard(boardType, loc, state._stationExtId);
