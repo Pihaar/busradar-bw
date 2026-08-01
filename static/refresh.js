@@ -1051,6 +1051,7 @@ export function busradarDump() {
           derivedNowMin: null,
           localNowMin: null,
           skewMin: null,
+          serverDate: state.serverDate || null,
         };
       }
       const now = new Date();
@@ -1065,6 +1066,9 @@ export function busradarDump() {
         derivedNowMin: +dnm.toFixed(3),
         localNowMin: +localNowMin.toFixed(3),
         skewMin: +skew.toFixed(3),
+        // sD-frame anchor: the server calendar date that serverNowMinRel uses to
+        // lift "now" into the board's service-date frame (diagnoses midnight cases).
+        serverDate: state.serverDate || null,
       };
     })(),
     // What the detail-panel header actually renders (state-vs-DOM mismatch).

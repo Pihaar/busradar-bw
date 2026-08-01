@@ -1321,10 +1321,12 @@ describe('busradarDump Runde 2 — network / SSE / time / markers / sw / geo', (
 
   it('serverTime: all null when no server tick yet', () => {
     state.serverTimeMin = null;
+    state.serverDate = null;
     const d = JSON.parse(busradarDump());
     expect(d.serverTime.serverTimeMin).toBeNull();
     expect(d.serverTime.derivedNowMin).toBeNull();
     expect(d.serverTime.skewMin).toBeNull();
+    expect(d.serverTime.serverDate).toBeNull();
   });
 
   it('serverTime: populated with a near-zero skew when the clock is in sync', () => {
@@ -1356,9 +1358,11 @@ describe('busradarDump Runde 2 — network / SSE / time / markers / sw / geo', (
   it('serverTime: stampMs falls back to null when serverTimeStamp is 0/falsy', () => {
     state.serverTimeMin = 600;
     state.serverTimeStamp = null; // serverTimeMin set but no stamp
+    state.serverDate = '20260801';
     const d = JSON.parse(busradarDump());
     expect(d.serverTime.stampMs).toBeNull();
     expect(d.serverTime.derivedNowMin).toBe(600); // elapsed 0
+    expect(d.serverTime.serverDate).toBe('20260801'); // sD-frame anchor surfaced
   });
 
   it('panelHeader reads the detail header text; missing nodes fall back to null', () => {

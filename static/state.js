@@ -277,7 +277,12 @@ export function serverNowMinRel(baseDate) {
   var now = derivedServerNowMin();
   if (now == null) return null;
   if (!state.serverDate || !baseDate) return now;
-  return now + dateDiffDays(baseDate, state.serverDate) * 1440;
+  // Clamp the day gap to [0,2] like entryDateShiftDays: normal staleness is 0-1
+  // day (the board is refetched hourly), so a corrupt/far-off sD can't throw the
+  // anchor astronomically off. Bounds the whole-board "now" the same way entries
+  // are bounded, keeping both sides of the comparison in a sane range.
+  var days = Math.min(2, Math.max(0, dateDiffDays(baseDate, state.serverDate)));
+  return now + days * 1440;
 }
 
 // Append a paging-horizon change to the bounded debug ring (dep/arr board).

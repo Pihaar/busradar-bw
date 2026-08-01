@@ -75,6 +75,25 @@ describe('serverNowMinRel', () => {
     state.serverDate = '20260802';
     expect(serverNowMinRel('20260801')).toBe(1 + 1440);
   });
+  it('clamps the day gap to 2 for an implausibly stale/corrupt board date', () => {
+    // serverDate 9 days after sD → clamped to 2 so a corrupt sD cannot throw the
+    // anchor astronomically off (mirrors entryDateShiftDays [0,2]).
+    state.serverTimeMin = 720;
+    state.serverDate = '20260810';
+    expect(serverNowMinRel('20260801')).toBe(720 + 2 * 1440);
+  });
+  it('pins the upper clamp edge: 2 days is NOT clamped, 3 days IS', () => {
+    state.serverTimeMin = 720;
+    state.serverDate = '20260803'; // exactly +2 → unchanged
+    expect(serverNowMinRel('20260801')).toBe(720 + 2 * 1440);
+    state.serverDate = '20260804'; // +3 → first clamped value (still 2)
+    expect(serverNowMinRel('20260801')).toBe(720 + 2 * 1440);
+  });
+  it('clamps a negative gap (board date after server date) to 0', () => {
+    state.serverTimeMin = 720;
+    state.serverDate = '20260731'; // serverDate before sD → dateDiffDays -1 → max(0,-1)=0
+    expect(serverNowMinRel('20260801')).toBe(720);
+  });
 });
 
 describe('_pushHorizonLog', () => {
