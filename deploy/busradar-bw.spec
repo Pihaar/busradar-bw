@@ -7,6 +7,7 @@ License:        MIT AND BSD-2-Clause
 Group:          Productivity/Networking/Web/Servers
 URL:            https://busradar.pihaar.de
 Source0:        busradar-bw-%{version}.tar.gz
+Source1:        busradar-sysusers.conf
 Source99:       busradar-bw-rpmlintrc
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
@@ -54,12 +55,12 @@ install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py ha
 cp -a build/static %{buildroot}/opt/busradar/
 printf '%%s\n' '%{version}-%{release}' > %{buildroot}/opt/busradar/VERSION
 install -D -m 644 deploy/busradar.service %{buildroot}%{_unitdir}/busradar.service
-install -D -m 644 deploy/busradar-sysusers.conf %{buildroot}%{_sysusersdir}/busradar.conf
+install -D -m 644 %{SOURCE1} %{buildroot}%{_sysusersdir}/busradar.conf
 install -D -m 644 deploy/busradar-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/busradar.conf
 
 %pre
 %service_add_pre busradar.service
-%sysusers_create_package busradar deploy/busradar-sysusers.conf
+%sysusers_create_package busradar %{SOURCE1}
 
 %post
 %service_add_post busradar.service
@@ -88,5 +89,6 @@ install -D -m 644 deploy/busradar-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/busr
 %{_unitdir}/busradar.service
 %{_sysusersdir}/busradar.conf
 %{_tmpfilesdir}/busradar.conf
+%ghost %dir %attr(0750,busradar,busradar) /var/lib/busradar
 
 %changelog

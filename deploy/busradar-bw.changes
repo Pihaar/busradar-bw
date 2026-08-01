@@ -1,0 +1,11 @@
+-------------------------------------------------------------------
+Sat Aug  1 22:01:35 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Fix the sysusers user creation at install time: reference the
+  sysusers config via Source1 so %sysusers_create_package embeds it
+  at build time. It previously read deploy/busradar-sysusers.conf from
+  the not-yet-unpacked tarball, yielding an empty %pre and creating
+  the busradar user only on the next boot.
+- rpmlintrc: filter the renamed dir-or-file-outside-snapshot check
+  for /opt/busradar and drop the stale non-standard-dir-in-usr filter.
+- Track the /var/lib/busradar tmpfiles directory as %ghost.
