@@ -55,12 +55,12 @@
   --color-ontime: #00f5d4;
   --color-delayed: #fbbf24;
   --color-major-delay: #ff5757;
-  --color-early: #fff;
+  --color-early: #38bdf8;
   --color-nodata: #6b7280;
   --glow-ontime: 0 0 10px rgb(0 245 212 / 50%), 0 0 20px rgb(0 245 212 / 20%);
   --glow-delayed: 0 0 10px rgb(251 191 36 / 50%), 0 0 20px rgb(251 191 36 / 20%);
   --glow-major: 0 0 10px rgb(255 87 87 / 50%), 0 0 20px rgb(255 87 87 / 20%);
-  --glow-early: 0 0 10px rgb(255 255 255 / 40%), 0 0 20px rgb(255 255 255 / 15%);
+  --glow-early: 0 0 10px rgb(56 189 248 / 40%), 0 0 20px rgb(56 189 248 / 15%);
   --font-display: 'Syne', system-ui, sans-serif;
   --font-mono: 'DM Mono', 'Menlo', monospace;
   --font-body: 'DM Sans', system-ui, sans-serif;
