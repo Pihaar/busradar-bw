@@ -26,7 +26,7 @@ python3 -m uvicorn proxy:app --host 0.0.0.0 --port 8000
 - Bus-Interpolation (flüssige Bewegung zwischen Tick-Updates)
 - Tick-aware Cache (synchronisiert auf HAFAS-Update-Tick, vermeidet stale data)
 - Richtungspfeile auf Bus-Markern
-- Haltestellensuche (BW-weit, 10.400+ Stops)
+- Haltestellensuche (BW-weit, 11.000+ Stops)
 - Liniensuche BW-weit (findet Busse auch außerhalb des Viewports)
 - Abfahrts-/Ankünftetafel pro Haltestelle mit Bussteig-Zuordnung
 - Getrennte Linienfilter pro Tab (Abfahrten/Ankünfte unabhängig)
@@ -66,11 +66,11 @@ fließen als kleine POSTs zurück; der State lebt server-seitig auf der Subscrib
 
 ```
 busradar-bw/
-├── proxy.py                 # FastAPI Backend-Proxy mit SSE-Stream (~1500 LOC)
+├── proxy.py                 # FastAPI Backend-Proxy mit SSE-Stream (~900 LOC)
 ├── fanout.py                # Subscriber-Registry + Tick-Fanout (Condition + selection_seq)
 ├── tick.py                  # Tick-Tracker (HAFAS-Update-Detection)
 ├── stops_builder.py         # BW-weiter Stops-Cache-Builder
-├── stops_cache.json         # 10.400+ Stops (täglich neu gebaut)
+├── stops_cache.json         # 11.000+ Stops (täglich neu gebaut)
 ├── line_analyze.py          # Verspätungs-Analyzer für gesammelte Tracking-Daten
 ├── line_logger.py           # Per-Fahrt JSONL-Logger (auf Wunsch reaktivierbar)
 ├── requirements.txt         # Python deps (fastapi, uvicorn, httpx, pydantic v2)
@@ -80,12 +80,12 @@ busradar-bw/
 │   ├── state.js, config.js  # State + Konfiguration
 │   ├── api.js               # Fetch-Layer + selectStream-Wrapper
 │   ├── map.js               # Leaflet-Karte, Marker, Polylines
-│   ├── ui.js                # Sheet/Panel, Listen, Dialoge (~2200 LOC)
+│   ├── ui.js                # Sheet/Panel, Listen, Dialoge (~2900 LOC)
 │   ├── refresh.js           # EventSource-Driver, Reconnect-Backoff, _applyJourneyPayload
 │   ├── status.js            # Status-Bar (Tick, User-Counter)
 │   ├── sw.js                # Service Worker (precache, offline)
 │   ├── i18n.js              # Übersetzungen DE+EN
-│   ├── style.css            # Design System (~1300 LOC)
+│   ├── style.css            # Design System (~1500 LOC)
 │   ├── manifest.webmanifest # PWA Manifest
 │   ├── favicon.svg
 │   ├── vendor/leaflet.*     # Self-hosted Leaflet 1.9.4
