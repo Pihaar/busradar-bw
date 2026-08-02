@@ -22,6 +22,14 @@ Requires:       ((python314-fastapi >= 0.100) or (python313-fastapi >= 0.100) or
 Requires:       ((python314-starlette >= 1.3.1) or (python313-starlette >= 1.3.1) or (python311-starlette >= 1.3.1) or (python3-starlette >= 1.3.1))
 Requires:       ((python314-uvicorn >= 0.20) or (python313-uvicorn >= 0.20) or (python311-uvicorn >= 0.20) or (python3-uvicorn >= 0.20))
 Requires:       ((python314-httpx >= 0.24) or (python313-httpx >= 0.24) or (python311-httpx >= 0.24) or (python3-httpx >= 0.24))
+# rpm's automatic sysusers dependency generator is unreliable for this package
+# (it emits neither the user(busradar)/group(busradar) Provides, and the
+# Requires(pre) it generates for the pre scriptlet come and go between builds).
+# Declare the Provides explicitly so installability is invariant regardless of
+# the generator; the user and group are created at install time by the pre
+# scriptlet (sysusers_create_package below runs systemd-sysusers).
+Provides:       group(busradar)
+Provides:       user(busradar)
 %systemd_requires
 
 %description
