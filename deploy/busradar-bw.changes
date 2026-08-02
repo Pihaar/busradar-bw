@@ -1,4 +1,21 @@
 -------------------------------------------------------------------
+Sun Aug  2 16:56:46 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Stationboard: fix the departure/arrival board so a selected platform
+  shows its own departures from the initial view. At multi-platform
+  stops (e.g. Wiesloch-Walldorf Bahnhof) the paging horizon, slice,
+  line filter and load-more now operate on the platform-scoped board
+  instead of the full station board, so the initial view is no longer
+  empty when the next station-wide departure belongs to another
+  platform, and the line filter matches what is shown. The scope
+  decision is derived once (locL geometry, stable across reconciles
+  and refetches) and shared by every consumer.
+- Load-more now stays available at busy stops whose board hit the
+  HAFAS 50-entry cap, as long as the selected platform has cached
+  departures beyond the current horizon (the 50-cap hint no longer
+  suppresses client-side pagination).
+
+-------------------------------------------------------------------
 Sat Aug  1 22:01:35 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Fix the sysusers user creation at install time: reference the

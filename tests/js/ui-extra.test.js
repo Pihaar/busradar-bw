@@ -352,48 +352,13 @@ describe('updateJourneyStopDelays — patch details', () => {
   });
 });
 
-describe('renderArrivals — extId platform filtering (mirror)', () => {
+describe('renderArrivals — line filter, spans, colours, row click', () => {
   const arrList = () => document.getElementById('arrival-list');
   beforeEach(() => {
     state._stationArrDur = 60;
     state._stationArrFetching = false;
     state.vehicles = new Map();
-  });
-
-  it('filters to the exact extId when the loc has a platform', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, aTimeS: '121000' } },
-      ],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'E1' }, { extId: 'E2' }] },
-    };
-    ui.renderArrivals(data, { name: 'S', platform: '2' }, 'E1', null);
-    expect(arrList().querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('filters when far sibling platforms exist (no explicit platform)', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } }],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E9', name: 'S', crd: { x: 8700000, y: 49400000 } },
-        ],
-      },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'E1', null);
-    expect(arrList().querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('filters by name when the extId is unknown', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'OTHER', name: 'S' }] },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'MISSING', null);
-    expect(arrList().querySelector('.empty-state')).not.toBeNull();
+    state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
 
   it('applies a line filter to arrivals', () => {
@@ -404,7 +369,7 @@ describe('renderArrivals — extId platform filtering (mirror)', () => {
       ],
       common: { prodL: [{ nameS: '721' }, { nameS: '705' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', '705');
+    ui.renderArrivals(data, '705');
     expect(arrList().querySelectorAll('.departure-item').length).toBe(1);
   });
 
@@ -422,7 +387,7 @@ describe('renderArrivals — extId platform filtering (mirror)', () => {
       common: { prodL: [{ nameS: '721' }], locL: [] },
       sD: '20260131',
     };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    ui.renderArrivals(data, null);
     expect(arrList().querySelector('.stop-time-planned')).not.toBeNull();
     expect(arrList().querySelector('.departure-day-badge')).not.toBeNull();
   });
@@ -436,7 +401,7 @@ describe('renderArrivals — extId platform filtering (mirror)', () => {
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    ui.renderArrivals(data, null);
     const colors = [...arrList().querySelectorAll('.departure-delay')].map((e) => e.style.color);
     expect(colors.some((c) => c.includes('delayed'))).toBe(true);
     expect(colors.some((c) => c.includes('major-delay'))).toBe(true);
@@ -454,7 +419,7 @@ describe('renderArrivals — extId platform filtering (mirror)', () => {
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    ui.renderArrivals(data, null);
     const rows = arrList().querySelectorAll('.departure-item');
     rows[0].click();
     rows[1].click();
@@ -475,7 +440,8 @@ describe('renderDepartures — remaining delay colours', () => {
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderDepartures(data, { name: 'S' }, '', null);
+    state._stationDepData = data;
+    ui.renderDepartures(data, null);
     const colors = [...ui.departureList.querySelectorAll('.departure-delay')].map(
       (e) => e.style.color,
     );
@@ -551,10 +517,12 @@ describe('applyPushedStationboard — renders with the state-held extId', () => 
     state.serverTimeStamp = Date.now();
     const renderSpy = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
+    const lmSpy = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     const stop = { lid: 'A=1@L=1@', extId: 'E1' };
     ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'DEP');
-    expect(renderSpy).toHaveBeenCalledWith(expect.anything(), stop, 'E1', null);
+    expect(renderSpy).toHaveBeenCalled();
+    // The state-held extId flows through _renderBoard to the load-more button.
+    expect(lmSpy).toHaveBeenCalledWith('departure-list', stop, 'E1', 'DEP');
   });
 });
 

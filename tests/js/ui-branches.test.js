@@ -297,25 +297,12 @@ describe('deselect during render — no re-render, single fetch', () => {
   });
 });
 
-describe('renderArrivals — dedup + out-of-range + nodata colour', () => {
+describe('renderArrivals — nodata colour', () => {
   const arrList = () => document.getElementById('arrival-list');
   beforeEach(() => {
     state._stationArrDur = 60;
     state._stationArrFetching = false;
-  });
-
-  it('dedups identical arrival rows and drops out-of-range under platform filter', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } }, // dup key
-        { jid: 'C', prodX: 0, dirTxt: 'Z', stbStop: { locX: 9, aTimeS: '121000' } }, // out of range
-      ],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'E1' }] },
-    };
-    ui.renderArrivals(data, { name: 'S', platform: '2' }, 'E1', null);
-    // only the deduped in-range row survives
-    expect(arrList().querySelectorAll('.departure-item').length).toBe(1);
+    state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
 
   it('renders the nodata colour when an arrival has no realtime', () => {
@@ -323,7 +310,7 @@ describe('renderArrivals — dedup + out-of-range + nodata colour', () => {
       jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { aTimeS: '' } }],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    ui.renderArrivals(data, null);
     const el = arrList().querySelector('.departure-delay');
     expect(el.style.color).toContain('secondary');
   });

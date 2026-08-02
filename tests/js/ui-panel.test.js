@@ -224,7 +224,8 @@ describe('ui.switchTab', () => {
     const spy = vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     ui.switchTab('departures');
     expect(document.getElementById('tabpanel-departures').hidden).toBe(false);
-    expect(spy).toHaveBeenCalledWith(state._stationDepData, null);
+    // No extId/platform → _scopedStationBoard passes the board through unchanged.
+    expect(spy).toHaveBeenCalledWith(state._stationDepData);
   });
 
   it('arrivals with cached data rebuilds the line filter', () => {
@@ -232,7 +233,7 @@ describe('ui.switchTab', () => {
     const spy = vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     ui.switchTab('arrivals');
     expect(document.getElementById('tabpanel-arrivals').hidden).toBe(false);
-    expect(spy).toHaveBeenCalledWith(state._stationArrData, null);
+    expect(spy).toHaveBeenCalledWith(state._stationArrData);
   });
 
   it('switching DEP↔ARR of a selected stop re-subscribes the board SSE', () => {
@@ -344,7 +345,7 @@ describe('ui.hideLineFilter / buildLineFilter / applyLineFilter', () => {
     vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyLineFilter(null);
     expect(state._arrFilter).toBeNull();
-    expect(renderSpy).toHaveBeenCalledWith(state._stationArrData, { lid: 'A' }, '1', null);
+    expect(renderSpy).toHaveBeenCalled();
   });
 });
 
@@ -377,22 +378,27 @@ describe('ui.addLoadMoreButton', () => {
     expect(list.querySelector('.load-more-btn')).not.toBeNull();
   });
 
-  it('does nothing when a hafas-hint is present', () => {
+  it('shows load-more beyond the horizon even when a HAFAS 50-cap hint is present', () => {
+    // Regression: at a busy stop the full board hits the 50 cap and renderX adds
+    // the hafas-hint; the scoped platform still has a departure beyond the horizon
+    // (780 > 720), so load-more must remain available to page to it.
     const list = document.getElementById('dl');
     const hint = document.createElement('li');
-    hint.className = 'hafas-hint';
+    hint.className = 'empty-state hafas-hint';
     list.appendChild(hint);
     ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
-    expect(list.querySelector('.load-more-btn')).toBeNull();
+    expect(list.querySelector('.load-more-btn')).not.toBeNull();
   });
 
-  it('does nothing when an empty-state is present', () => {
+  it('at the end of the board, does not stack a second hint over an existing empty-state', () => {
     const list = document.getElementById('dl');
     const es = document.createElement('li');
     es.className = 'empty-state';
     list.appendChild(es);
+    state._stationDepData = null; // nothing beyond the horizon
     ui.addLoadMoreButton('dl', { lid: 'A' }, '1', 'DEP');
     expect(list.querySelector('.load-more-btn')).toBeNull();
+    expect(list.querySelectorAll('.empty-state').length).toBe(1); // no extra hint stacked
   });
 
   it('renders the max-timeframe hint (no button) when nothing lies beyond the horizon', () => {

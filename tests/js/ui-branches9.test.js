@@ -105,6 +105,8 @@ beforeEach(() => {
   state._stationArrDur = 60;
   state._stationDepFetching = false;
   state._stationArrFetching = false;
+  state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
+  state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -324,47 +326,6 @@ describe('load* manual (isInitial=false) — renders without announcing', () => 
   });
 });
 
-describe('extId proximity — sibling with crd.y/x === 0 (|| 0 arms) forces filtering', () => {
-  it('renderDepartures: a zero-coord sibling is > 1m away → filters to the extId', () => {
-    ui.departureList = document.getElementById('departure-list');
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, dTimeS: '121000' } },
-      ],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 0, y: 0 } }, // filterLoc crd.x/y === 0 → || 0
-          { extId: 'E2', name: 'S', crd: { x: 8600000, y: 49300000 } }, // far sibling
-        ],
-      },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('renderArrivals: a zero-coord sibling forces filtering (mirror)', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, aTimeS: '121000' } },
-      ],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 0, y: 0 } },
-          { extId: 'E2', name: 'S', crd: { x: 8600000, y: 49300000 } },
-        ],
-      },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'E1', null);
-    expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(
-      1,
-    );
-  });
-});
-
 describe('filtered prodX default arm (line filter + out-of-range prodX)', () => {
   it('renderDepartures line filter: an out-of-range prodX defaults to {} (no nameS → filtered out)', () => {
     ui.departureList = document.getElementById('departure-list');
@@ -375,7 +336,7 @@ describe('filtered prodX default arm (line filter + out-of-range prodX)', () => 
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderDepartures(data, { name: 'S' }, '', '721');
+    ui.renderDepartures(data, '721');
     // only the 721 row survives the line filter; the {}-prod row is dropped
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
   });
@@ -388,22 +349,10 @@ describe('filtered prodX default arm (line filter + out-of-range prodX)', () => 
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', '721');
+    ui.renderArrivals(data, '721');
     expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(
       1,
     );
-  });
-});
-
-describe('extId-unknown, no same-name sibling → shouldFilter stays false', () => {
-  it('renderDepartures does not filter when no loc shares the stop name', () => {
-    ui.departureList = document.getElementById('departure-list');
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'OTHER', name: 'Totally Different' }] },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'MISSING', null); // hasOtherWithSameName false
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
   });
 });
 

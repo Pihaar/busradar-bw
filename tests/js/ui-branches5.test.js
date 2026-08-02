@@ -211,57 +211,22 @@ describe('loadDepartures — announce name fallback + error dur fallback', () =>
   });
 });
 
-describe('HAFAS-limit hint via (data.jnyL || []).length', () => {
+describe('HAFAS-limit hint via state board length', () => {
   it('renderDepartures appends the hint when the raw jnyL hits the limit even after filtering', () => {
     ui.departureList = document.getElementById('departure-list');
-    // 50 raw entries (== limit); a line filter narrows the shown rows but the
-    // hint condition reads the raw data.jnyL length.
+    // 50 raw entries (== limit); the hint condition reads the full board length
+    // off state, not the passed data.
     const data = { jnyL: bigJnyL(50, 'DEP'), common: { prodL: [{ nameS: '721' }], locL: [] } };
-    ui.renderDepartures(data, { name: 'S' }, '', null);
+    state._stationDepData = data;
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelector('.hafas-hint')).not.toBeNull();
   });
 
   it('renderArrivals appends the hint at the limit', () => {
     const data = { jnyL: bigJnyL(50, 'ARR'), common: { prodL: [{ nameS: '721' }], locL: [] } };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    state._stationArrData = data;
+    ui.renderArrivals(data, null);
     expect(document.getElementById('arrival-list').querySelector('.hafas-hint')).not.toBeNull();
-  });
-});
-
-describe('renderArrivals — proximity filter within 1m (no filter) vs same-name-no-crd', () => {
-  const arrList = () => document.getElementById('arrival-list');
-
-  it('does not filter when a same-name sibling is within 1m', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, aTimeS: '121000' } },
-      ],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E2', name: 'S', crd: { x: 8600000, y: 49300000 } }, // within 1m
-        ],
-      },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'E1', null);
-    expect(arrList().querySelectorAll('.departure-item').length).toBe(2);
-  });
-
-  it('does not filter when the only same-name sibling has no crd (excluded from otherLocs)', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } }],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E2', name: 'S' }, // no crd → not pushed to otherLocs
-        ],
-      },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'E1', null);
-    expect(arrList().querySelectorAll('.departure-item').length).toBe(1);
   });
 });
 

@@ -160,6 +160,12 @@ export function reconcileBoard(cache, push, nowMin) {
   }
   if (maxPushSoll != null && maxPushSoll < winTop) winTop = maxPushSoll;
 
+  // newLocL is append-only: _adoptEntry (via _findOrAppend) only appends new locs
+  // to it, never removes. This is load-bearing for computeScopeActive, which
+  // decides platform-scoping from locL geometry — within a reconcile the scope
+  // decision can only go unfiltered->filtered, never flip back. (A TTL refetch in
+  // _loadBoard replaces the board wholesale and re-evaluates scope from the fresh
+  // locL; that path is self-healing, not covered by this append-only guarantee.)
   var newLocL = ((cache.common && cache.common.locL) || []).slice();
   var newProdL = ((cache.common && cache.common.prodL) || []).slice();
 
@@ -235,6 +241,63 @@ export function sliceToHorizon(board, horizonMin, baseDate) {
     jnyL: jnyL.filter(function (j) {
       var e = boardEntryEff(j, baseDate);
       return e != null && e <= horizonMin;
+    }),
+  });
+}
+
+// Should the board be scoped to a single platform (extId)? Decided purely from
+// the common.locL geometry. locL reflects the station TOPOLOGY (equivalent
+// platform locs), which HAFAS returns independent of the service level: a probe
+// with a zero-departure window still lists the same-named sibling platforms. So
+// the decision is stable across reconciles (locL is append-only there) AND across
+// TTL refetches and quiet periods (weekends/nights) — reduced service thins jnyL,
+// not locL. No frozen flag needed (the deliberate plan choice); only a HAFAS
+// topology change could alter the decision, which self-heals on the next refetch.
+// A platform stop (hasPlatform) always scopes. Otherwise: the chosen extId's loc
+// ("self") must exist in the board AND a same-named sibling platform (self.name,
+// different extId) must sit > 1 m away. Same-name is anchored to the board's own
+// self-loc name (NOT the passed-in loc.name — that mismatch was the only real
+// defect of the old inline logic): it separates sibling platforms (which share a
+// name, e.g. all "Wiesloch-Walldorf Bahnhof") from unrelated stops that HAFAS
+// also lists in locL. self absent from locL -> false (show all, never an empty
+// board for a refetch board that carries a different loc representation).
+export function computeScopeActive(board, hasPlatform, filterExtId) {
+  if (!filterExtId) return false;
+  if (hasPlatform) return true;
+  var locL = ((board && board.common) || {}).locL || [];
+  var self = null;
+  for (var i = 0; i < locL.length; i++) {
+    if (locL[i].extId === filterExtId) {
+      self = locL[i];
+      break;
+    }
+  }
+  if (!self || !self.crd) return false;
+  for (var k = 0; k < locL.length; k++) {
+    var l = locL[k];
+    if (l.extId === filterExtId || !l.crd || l.name !== self.name) continue;
+    var dlat = (Math.abs((l.crd.y || 0) - (self.crd.y || 0)) / 1e6) * 111000;
+    var dlon = (Math.abs((l.crd.x || 0) - (self.crd.x || 0)) / 1e6) * 111000 * 0.65;
+    if (Math.sqrt(dlat * dlat + dlon * dlon) > 1) return true;
+  }
+  return false;
+}
+
+// Shallow-copy the board with jnyL filtered to the chosen platform (extId), or
+// the original board when not scoping. Number.isInteger bounds: a manipulated or
+// non-integer stbStop.locX from the HAFAS response would otherwise reach
+// locL[idx].extId and throw a TypeError, aborting the board render.
+export function scopedBoard(board, scopeActive, filterExtId) {
+  if (!scopeActive || !filterExtId) return board;
+  var jnyL = (board && board.jnyL) || [];
+  var locL = ((board && board.common) || {}).locL || [];
+  return Object.assign({}, board, {
+    jnyL: jnyL.filter(function (j) {
+      var stb = j.stbStop || {};
+      var idx = stb.locX != null ? stb.locX : -1;
+      return (
+        Number.isInteger(idx) && idx >= 0 && idx < locL.length && locL[idx].extId === filterExtId
+      );
     }),
   });
 }
@@ -1070,11 +1133,11 @@ export var ui = {
     }, 100);
   },
 
-  buildLineFilter: function (data, filteredJnyL) {
+  buildLineFilter: function (data) {
     var filterEl = document.getElementById('line-filter');
     var common = data.common || {};
     var prodL = common.prodL || [];
-    var jnyL = filteredJnyL || data.jnyL || [];
+    var jnyL = data.jnyL || [];
 
     var lines = new Set();
     jnyL.forEach(function (jny) {
@@ -1125,7 +1188,8 @@ export var ui = {
   },
 
   applyLineFilter: function (line) {
-    if (state._activeTab === 'arrivals') {
+    var isArr = state._activeTab === 'arrivals';
+    if (isArr) {
       state._arrFilter = line;
     } else {
       state._depFilter = line;
@@ -1137,13 +1201,11 @@ export var ui = {
       btn.classList.toggle('filter-chip--active', isActive);
     });
 
-    if (state._activeTab === 'arrivals' && state._stationArrData) {
-      ui.renderArrivals(state._stationArrData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton('arrival-list', state._stationLoc, state._stationExtId, 'ARR');
-    } else if (state._stationDepData) {
-      ui.renderDepartures(state._stationDepData, state._stationLoc, state._stationExtId, line);
-      ui.addLoadMoreButton('departure-list', state._stationLoc, state._stationExtId, 'DEP');
-    }
+    // Re-render through the shared path (scoped + sliced) so a filter click shows
+    // exactly what the initial view showed (bug B). skipFilterRebuild keeps the
+    // chip strip intact (no flicker / focus loss). _renderBoard's own `!data`
+    // guard covers a tab whose board isn't loaded yet.
+    ui._renderBoard(isArr ? 'ARR' : 'DEP', state._stationLoc, state._stationExtId, true);
   },
 
   _stopSig: function (stopL) {
@@ -1627,9 +1689,13 @@ export var ui = {
         var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
         if (isInitial || curH === 0) {
           // No server clock yet → Infinity shows everything until the next tick
-          // narrows it (avoids a blank board on a cold open).
+          // narrows it (avoids a blank board on a cold open). The initial horizon
+          // is computed on the PLATFORM-SCOPED jnyL so a sparse own-platform board
+          // isn't left empty by a nearer other-platform departure (bug C).
           var h =
-            nowMin == null ? Infinity : computeInitialHorizon(data.jnyL || [], nowMin, data.sD);
+            nowMin == null
+              ? Infinity
+              : computeInitialHorizon(ui._scopedStationBoard(type).jnyL || [], nowMin, data.sD);
           _setHorizon(isArr, h, isInitial ? 'open' : 'ttl-refetch');
         }
         ui._renderBoard(type, loc, stopExtId);
@@ -1677,13 +1743,32 @@ export var ui = {
       });
   },
 
-  // Render the cached board sliced to the current paging horizon (renderDepartures
-  // / renderArrivals are unchanged — they receive the paginated slice). Rebuilds
-  // the line filter from the full board and the load-more button.
-  _renderBoard: function (type, loc, stopExtId) {
+  // The single scoping derivation. Reads the full cache board + the stable stop
+  // loc/extId from state, returns the platform-scoped-or-full board. Every render/
+  // paging consumer goes through here so slice, horizon, pagination and the line
+  // filter can never diverge. Deterministic in (state._stationXData,
+  // state._stationLoc.platform, state._stationExtId) → repeated calls in one cycle
+  // agree; board null (ARR not yet loaded) passes through scopedBoard unharmed.
+  _scopedStationBoard: function (type) {
+    var board = type === 'ARR' ? state._stationArrData : state._stationDepData;
+    var hasPlatform = !!(state._stationLoc && state._stationLoc.platform);
+    return scopedBoard(
+      board,
+      computeScopeActive(board, hasPlatform, state._stationExtId),
+      state._stationExtId,
+    );
+  },
+
+  // Render the platform-scoped board sliced to the current paging horizon
+  // (renderDepartures / renderArrivals receive the scoped + paginated slice).
+  // Rebuilds the line filter from the scoped board and the load-more button.
+  // skipFilterRebuild=true (applyLineFilter path) re-renders the slice without
+  // rebuilding the chip strip, so a filter click doesn't recreate chip DOM.
+  _renderBoard: function (type, loc, stopExtId, skipFilterRebuild) {
     var isArr = type === 'ARR';
     var data = isArr ? state._stationArrData : state._stationDepData;
     if (!data) return;
+    var view = ui._scopedStationBoard(type);
     var horizon = isArr ? state._stationArrHorizon : state._stationDepHorizon;
     // Keep the paging horizon from lagging the wall clock. The horizon is an
     // absolute minute-of-day; on a long-open board "now" climbs toward it and
@@ -1691,20 +1776,22 @@ export var ui = {
     // open with no server clock yet leaves it Infinity → full 24h, no
     // pagination). Re-base to the next-hour window whenever it has fallen behind
     // now (or is non-finite); a user's load-more extension (horizon > now+60) is
-    // preserved. Delivers the plan's "narrows it / repopulates the horizon for a
-    // long-open page" intent that a fixed absolute cap missed.
+    // preserved. Computed on the SCOPED view so the rebased horizon covers the
+    // own platform's next departure, not a nearer other-platform one (bug C).
     var nowMin = serverNowMinRel(data.sD);
     if (nowMin != null && (!isFinite(horizon) || horizon < nowMin + 60)) {
-      horizon = computeInitialHorizon(data.jnyL || [], nowMin, data.sD);
+      horizon = computeInitialHorizon(view.jnyL || [], nowMin, data.sD);
       _setHorizon(isArr, horizon, 'rebase');
     }
-    var sliced = sliceToHorizon(data, horizon, data.sD);
+    var sliced = sliceToHorizon(view, horizon, data.sD);
     var filterLine = (isArr ? state._arrFilter : state._depFilter) || null;
-    var displayed = isArr
-      ? ui.renderArrivals(sliced, loc, stopExtId, filterLine)
-      : ui.renderDepartures(sliced, loc, stopExtId, filterLine);
-    if (state._activeTab === (isArr ? 'arrivals' : 'departures') || (!isArr && !state._activeTab)) {
-      ui.buildLineFilter(data, isArr ? null : displayed);
+    if (isArr) ui.renderArrivals(sliced, filterLine);
+    else ui.renderDepartures(sliced, filterLine);
+    if (
+      !skipFilterRebuild &&
+      (state._activeTab === (isArr ? 'arrivals' : 'departures') || (!isArr && !state._activeTab))
+    ) {
+      ui.buildLineFilter(view);
     }
     ui.addLoadMoreButton(isArr ? 'arrival-list' : 'departure-list', loc, stopExtId, type);
   },
@@ -1722,42 +1809,50 @@ export var ui = {
     var existing = list.querySelector('.load-more-item');
     if (existing) existing.remove();
 
-    // Don't show load-more if HAFAS limit hint or empty-state is present.
-    if (list.querySelector('.hafas-hint')) return;
-    if (list.querySelector('.empty-state')) return;
-
     var isArr = type === 'ARR';
-    var data = isArr ? state._stationArrData : state._stationDepData;
+    var view = ui._scopedStationBoard(type);
     var horizon = isArr ? state._stationArrHorizon : state._stationDepHorizon;
-    // Data-driven end: no cached departure beyond the horizon → no button.
-    // Covers both the sparse 24h end and the busy 50-entry HAFAS cap.
-    if (!data || !hasBeyondHorizon(data.jnyL || [], horizon, data.sD)) {
+    // Show load-more iff the CHOSEN platform has cached departures beyond the
+    // current horizon (pure client-side pagination — no fetch). Evaluated on the
+    // SCOPED view so an other-platform entry can't show a button that reveals
+    // nothing on the own platform. Deliberately independent of the HAFAS 50-cap
+    // hint: that hint is about entries HAFAS never returned, whereas load-more
+    // pages the already-loaded ones — suppressing the button on its presence
+    // would strand the user at a busy stop whose board hit the 50 cap.
+    if (view && hasBeyondHorizon(view.jnyL || [], horizon, view.sD)) {
+      var li = document.createElement('li');
+      li.className = 'load-more-item';
+      var btn = document.createElement('button');
+      btn.className = 'load-more-btn';
+      btn.textContent = isArr ? t('load_more_arr') : t('load_more_dep');
+      btn.addEventListener('click', function () {
+        // Pure client-side pagination from the already-cached board — NO fetch.
+        // Extend the horizon by ≥60 min (or to the next departure if empty), then
+        // re-render the wider slice. The old server-cascade re-fetch is gone.
+        // extendHorizon runs on the SCOPED view so it widens to the own platform's
+        // next departure, not a nearer other-platform one.
+        var d = ui._scopedStationBoard(type);
+        if (!d) return;
+        var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
+        var newH = extendHorizon(d.jnyL || [], curH, d.sD);
+        _setHorizon(isArr, newH, 'load-more');
+        ui._renderBoard(type, loc, stopExtId);
+      });
+      li.appendChild(btn);
+      list.appendChild(li);
+      return;
+    }
+
+    // End of the scoped board. Don't stack another marker if the list already
+    // carries one (a genuine empty-state, or the 50-cap hafas-hint — both use the
+    // .empty-state class); otherwise note the 24h paging limit.
+    if (!list.querySelector('.empty-state')) {
       var hintLi = document.createElement('li');
       hintLi.className = 'load-more-item empty-state';
       hintLi.style.fontSize = '11px';
       hintLi.textContent = t('max_timeframe_hint');
       list.appendChild(hintLi);
-      return;
     }
-
-    var li = document.createElement('li');
-    li.className = 'load-more-item';
-    var btn = document.createElement('button');
-    btn.className = 'load-more-btn';
-    btn.textContent = isArr ? t('load_more_arr') : t('load_more_dep');
-    btn.addEventListener('click', function () {
-      // Pure client-side pagination from the already-cached board — NO fetch.
-      // Extend the horizon by ≥60 min (or to the next departure if empty), then
-      // re-render the wider slice. The old server-cascade re-fetch is gone.
-      var d = isArr ? state._stationArrData : state._stationDepData;
-      if (!d) return;
-      var curH = isArr ? state._stationArrHorizon : state._stationDepHorizon;
-      var newH = extendHorizon(d.jnyL || [], curH, d.sD);
-      _setHorizon(isArr, newH, 'load-more');
-      ui._renderBoard(type, loc, stopExtId);
-    });
-    li.appendChild(btn);
-    list.appendChild(li);
   },
 
   discoverPlatforms: function (data) {
@@ -1804,58 +1899,11 @@ export var ui = {
     if (added) stopsLayer.saveToCache();
   },
 
-  renderArrivals: function (data, loc, filterExtId, filterLine) {
+  renderArrivals: function (data, filterLine) {
     var jnyL = data.jnyL || [];
     var common = data.common || {};
     var prodL = common.prodL || [];
-    var locL = common.locL || [];
     var arrList = document.getElementById('arrival-list');
-
-    if (filterExtId) {
-      var hasPlatform = loc && loc.platform;
-      var extIdKnown = locL.some(function (l) {
-        return l.extId === filterExtId;
-      });
-      var shouldFilter = false;
-      if (!hasPlatform && extIdKnown) {
-        var filterLoc = null;
-        var otherLocs = [];
-        locL.forEach(function (l) {
-          if (l.extId === filterExtId) filterLoc = l;
-          else if (l.name === (loc && loc.name) && l.crd) otherLocs.push(l);
-        });
-        if (filterLoc && filterLoc.crd && otherLocs.length > 0) {
-          for (var si = 0; si < otherLocs.length; si++) {
-            var dlat =
-              (Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6) * 111000;
-            var dlon =
-              (Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6) * 111000 * 0.65;
-            if (Math.sqrt(dlat * dlat + dlon * dlon) > 1) {
-              shouldFilter = true;
-              break;
-            }
-          }
-        }
-      } else if (!hasPlatform && !extIdKnown && locL.length > 0) {
-        var hasOtherWithSameName = locL.some(function (l) {
-          return l.name === (loc && loc.name);
-        });
-        if (hasOtherWithSameName) shouldFilter = true;
-      }
-      if (hasPlatform || shouldFilter) {
-        // Kept in sync with proxy.py _extid_scoped_count, which mirrors this
-        // extId filter server-side so the auto-expand cascade widens on the same
-        // (platform-scoped) count the user sees here. Change both together.
-        jnyL = jnyL.filter(function (jny) {
-          var stb = jny.stbStop || {};
-          var locIdx = stb.locX != null ? stb.locX : -1;
-          if (locIdx < 0 || locIdx >= locL.length) return false;
-          return locL[locIdx].extId === filterExtId;
-        });
-      }
-    }
-
-    var filteredByExtId = jnyL;
 
     if (filterLine) {
       jnyL = jnyL.filter(function (jny) {
@@ -1880,7 +1928,7 @@ export var ui = {
       var arrDurMin = state._stationArrDur || 60;
       // Keep only while a full-board (re)fetch is in flight (see renderDepartures).
       if (state._stationArrFetching && arrList.querySelector('.departure-item')) {
-        return filteredByExtId;
+        return;
       }
       var arrEmptyText =
         arrDurMin >= 1440
@@ -1889,7 +1937,7 @@ export var ui = {
             ? t('arr_empty_hours', { n: Math.round(arrDurMin / 60) })
             : t('arr_empty_minutes', { n: arrDurMin });
       arrList.replaceChildren(_createStateItem('empty-state', arrEmptyText));
-      return filteredByExtId;
+      return;
     }
 
     jnyL.forEach(function (jny) {
@@ -1968,8 +2016,8 @@ export var ui = {
       li.appendChild(delayEl);
       frag.appendChild(li);
     });
-    /* v8 ignore next -- unreachable: data.jnyL is truthy here: an empty derived jnyL returns early above, so this `|| []` fallback is unreachable */
-    if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
+    /* v8 ignore next -- state._stationArrData carries a jnyL array whenever a render runs (set in _loadBoard before _renderBoard's guarded call), so the `|| []` fallback is unreachable */
+    if ((state._stationArrData.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
       hintLi.style.fontSize = '11px';
@@ -1977,60 +2025,12 @@ export var ui = {
       frag.appendChild(hintLi);
     }
     arrList.replaceChildren(frag);
-    return filteredByExtId;
   },
 
-  renderDepartures: function (data, loc, filterExtId, filterLine) {
+  renderDepartures: function (data, filterLine) {
     var jnyL = data.jnyL || [];
     var common = data.common || {};
     var prodL = common.prodL || [];
-    var locL = common.locL || [];
-
-    if (filterExtId) {
-      var hasPlatform = loc && loc.platform;
-      var extIdKnown = locL.some(function (l) {
-        return l.extId === filterExtId;
-      });
-      var shouldFilter = false;
-      if (!hasPlatform && extIdKnown) {
-        var filterLoc = null;
-        var otherLocs = [];
-        locL.forEach(function (l) {
-          if (l.extId === filterExtId) filterLoc = l;
-          else if (l.name === (loc && loc.name) && l.crd) otherLocs.push(l);
-        });
-        if (filterLoc && filterLoc.crd && otherLocs.length > 0) {
-          for (var si = 0; si < otherLocs.length; si++) {
-            var dlat =
-              (Math.abs((otherLocs[si].crd.y || 0) - (filterLoc.crd.y || 0)) / 1e6) * 111000;
-            var dlon =
-              (Math.abs((otherLocs[si].crd.x || 0) - (filterLoc.crd.x || 0)) / 1e6) * 111000 * 0.65;
-            if (Math.sqrt(dlat * dlat + dlon * dlon) > 1) {
-              shouldFilter = true;
-              break;
-            }
-          }
-        }
-      } else if (!hasPlatform && !extIdKnown && locL.length > 0) {
-        var hasOtherWithSameName = locL.some(function (l) {
-          return l.name === (loc && loc.name);
-        });
-        if (hasOtherWithSameName) shouldFilter = true;
-      }
-      if (hasPlatform || shouldFilter) {
-        // Kept in sync with proxy.py _extid_scoped_count, which mirrors this
-        // extId filter server-side so the auto-expand cascade widens on the same
-        // (platform-scoped) count the user sees here. Change both together.
-        jnyL = jnyL.filter(function (jny) {
-          var stb = jny.stbStop || {};
-          var locIdx = stb.locX != null ? stb.locX : -1;
-          if (locIdx < 0 || locIdx >= locL.length) return false;
-          return locL[locIdx].extId === filterExtId;
-        });
-      }
-    }
-
-    var filteredByExtId = jnyL;
 
     if (filterLine) {
       jnyL = jnyL.filter(function (jny) {
@@ -2066,7 +2066,7 @@ export var ui = {
       // forever, since the dup-signature check suppresses the next identical
       // empty push).
       if (state._stationDepFetching && ui.departureList.querySelector('.departure-item')) {
-        return filteredByExtId;
+        return;
       }
       var depEmptyText =
         depDurMin >= 1440
@@ -2075,7 +2075,7 @@ export var ui = {
             ? t('dep_empty_hours', { n: Math.round(depDurMin / 60) })
             : t('dep_empty_minutes', { n: depDurMin });
       this.departureList.replaceChildren(_createStateItem('empty-state', depEmptyText));
-      return filteredByExtId;
+      return;
     }
 
     jnyL.forEach(function (jny) {
@@ -2154,8 +2154,8 @@ export var ui = {
       li.appendChild(delayEl);
       frag.appendChild(li);
     });
-    /* v8 ignore next -- unreachable: data.jnyL is truthy here: an empty derived jnyL returns early above, so this `|| []` fallback is unreachable */
-    if ((data.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
+    /* v8 ignore next -- state._stationDepData carries a jnyL array whenever a render runs (set in _loadBoard before _renderBoard's guarded call), so the `|| []` fallback is unreachable */
+    if ((state._stationDepData.jnyL || []).length >= CONFIG.hafasStationboardLimit) {
       var hintLi = document.createElement('li');
       hintLi.className = 'empty-state hafas-hint';
       hintLi.style.fontSize = '11px';
@@ -2163,7 +2163,6 @@ export var ui = {
       frag.appendChild(hintLi);
     }
     this.departureList.replaceChildren(frag);
-    return filteredByExtId;
   },
 
   switchTab: function (tab) {
@@ -2212,9 +2211,9 @@ export var ui = {
       }
     }
     if (tab === 'departures' && state._stationDepData) {
-      ui.buildLineFilter(state._stationDepData, null);
+      ui.buildLineFilter(ui._scopedStationBoard('DEP'));
     } else if (tab === 'arrivals' && state._stationArrData) {
-      ui.buildLineFilter(state._stationArrData, null);
+      ui.buildLineFilter(ui._scopedStationBoard('ARR'));
     } else if (tab === 'stops') {
       ui.hideLineFilter();
     }

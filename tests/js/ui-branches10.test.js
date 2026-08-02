@@ -174,19 +174,6 @@ describe('updateJourneyStopDelays — aTimeR-only depTime + no-time dot arms', (
   });
 });
 
-describe('renderArrivals — extId unknown, no same-name loc (shouldFilter stays false)', () => {
-  it('does not filter when no loc shares the stop name', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, aTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'OTHER', name: 'Different' }] },
-    };
-    ui.renderArrivals(data, { name: 'S' }, 'MISSING', null);
-    expect(document.getElementById('arrival-list').querySelectorAll('.departure-item').length).toBe(
-      1,
-    );
-  });
-});
-
 describe('switchTab — an unknown tab leaves all three panels hidden (arrivals else-if false)', () => {
   it('does not activate any tab for a bogus name', () => {
     ui.switchTab('bogus');
@@ -213,7 +200,8 @@ describe('applyPushedStationboard — renders with an empty extId held in state'
     vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     const lm = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'ARR');
-    expect(render).toHaveBeenCalledWith(expect.anything(), stop, '', null);
+    expect(render).toHaveBeenCalled();
+    // The empty state._stationExtId flows through _renderBoard to the load-more.
     expect(lm).toHaveBeenCalledWith('arrival-list', stop, '', 'ARR');
   });
 });

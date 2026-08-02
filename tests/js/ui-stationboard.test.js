@@ -48,6 +48,10 @@ beforeEach(() => {
   state._stationArrFetching = false;
   state._stationDepDur = 60;
   state._stationArrDur = 60;
+  // The hint check at the tail of renderDepartures/renderArrivals reads the full
+  // board length off state; give it an empty board so a normal render sees < limit.
+  state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
+  state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   state.vehicles = new Map();
   state.allStops = new Map();
   state.map = { setView: vi.fn() };
@@ -72,7 +76,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
       { jid: 'A', prodX: 0, dirTxt: 'Ziel 1', stbStop: { dTimeS: '120000' } },
       { jid: 'B', prodX: 0, dirTxt: 'Ziel 2', stbStop: { dTimeS: '121000' } },
     ]);
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
     expect(ui.departureList.querySelector('.departure-line').textContent).toBe('721');
   });
@@ -81,7 +85,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
     const data = depData([
       { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000', dTimeR: '120500' } },
     ]);
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelector('.stop-time-planned')).not.toBeNull();
     expect(ui.departureList.querySelector('.stop-time-real')).not.toBeNull();
   });
@@ -91,7 +95,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
       jnyL: [{ jid: 'A', dirTxt: 'X', stbStop: { dTimeS: '120000' } }],
       common: { prodL: [], locL: [] },
     };
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelector('.departure-line').textContent).toBe('?');
   });
 
@@ -100,7 +104,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
       { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } },
       { jid: 'B', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } },
     ]);
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
   });
 
@@ -109,7 +113,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
       [{ jid: 'A', prodX: 0, dirTxt: 'X', date: '20260201', stbStop: { dTimeS: '000500' } }],
       { sD: '20260131' },
     );
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelector('.departure-day-badge')).not.toBeNull();
   });
 
@@ -121,7 +125,7 @@ describe('ui.renderDepartures — rows & formatting', () => {
       ],
       common: { prodL: [{ nameS: '721' }, { nameS: '705' }], locL: [] },
     };
-    ui.renderDepartures(data, loc, '', '705');
+    ui.renderDepartures(data, '705');
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
     expect(ui.departureList.querySelector('.departure-line').textContent).toBe('705');
   });
@@ -130,7 +134,9 @@ describe('ui.renderDepartures — rows & formatting', () => {
     const jnyL = [];
     for (let i = 0; i < 50; i++)
       jnyL.push({ jid: 'J' + i, prodX: 0, dirTxt: 'D' + i, stbStop: { dTimeS: hhmmssI(i) } });
-    ui.renderDepartures(depData(jnyL), loc, '', null);
+    // The hint reads the full board length off state, not the passed data.
+    state._stationDepData = depData(jnyL);
+    ui.renderDepartures(depData(jnyL), null);
     expect(ui.departureList.querySelector('.hafas-hint')).not.toBeNull();
   });
 
@@ -139,8 +145,6 @@ describe('ui.renderDepartures — rows & formatting', () => {
     const sel = vi.spyOn(ui, 'selectJourney').mockImplementation(() => {});
     ui.renderDepartures(
       depData([{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }]),
-      loc,
-      '',
       null,
     );
     ui.departureList.querySelector('.departure-item').click();
@@ -152,8 +156,6 @@ describe('ui.renderDepartures — rows & formatting', () => {
     const foc = vi.spyOn(ui, 'focusJourneyById').mockImplementation(() => {});
     ui.renderDepartures(
       depData([{ jid: 'Z', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }]),
-      loc,
-      '',
       null,
     );
     ui.departureList.querySelector('.departure-item').click();
@@ -161,80 +163,8 @@ describe('ui.renderDepartures — rows & formatting', () => {
   });
 
   it('a departure without a jid is not clickable (no cursor pointer)', () => {
-    ui.renderDepartures(
-      depData([{ prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }]),
-      loc,
-      '',
-      null,
-    );
+    ui.renderDepartures(depData([{ prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }]), null);
     expect(ui.departureList.querySelector('.departure-item').style.cursor).toBe('');
-  });
-});
-
-describe('ui.renderDepartures — extId platform filtering', () => {
-  it('filters to the exact extId when loc has a platform', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, dTimeS: '121000' } },
-      ],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'E1' }, { extId: 'E2' }] },
-    };
-    ui.renderDepartures(data, { name: 'S', platform: '2' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('filters when sibling platforms are > 1m apart (no explicit platform)', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E9', name: 'S', crd: { x: 8700000, y: 49400000 } }, // far sibling
-        ],
-      },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('does not filter when siblings are within 1m (same physical stop)', () => {
-    const data = {
-      jnyL: [
-        { jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } },
-        { jid: 'B', prodX: 0, dirTxt: 'Y', stbStop: { locX: 1, dTimeS: '121000' } },
-      ],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E2', name: 'S', crd: { x: 8600000, y: 49300000 } },
-        ],
-      },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
-  });
-
-  it('filters by name when the extId is unknown but a same-name loc exists', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'OTHER', name: 'S' }] },
-    };
-    // extId 'MISSING' unknown, but a same-name loc → shouldFilter, then the
-    // filter drops rows whose stbStop.locX extId != 'MISSING' (all of them).
-    ui.renderDepartures(data, { name: 'S' }, 'MISSING', null);
-    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
-  });
-
-  it('drops a row whose stbStop.locX is out of range under filtering', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 9, dTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'E1' }] },
-    };
-    ui.renderDepartures(data, { name: 'S', platform: '2' }, 'E1', null);
-    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 });
 
@@ -249,8 +179,6 @@ describe('ui.renderArrivals', () => {
   it('renders arrival rows with the from-prefix', () => {
     ui.renderArrivals(
       arrData([{ jid: 'A', prodX: 0, dirTxt: 'Herkunft', stbStop: { aTimeS: '120000' } }]),
-      loc,
-      '',
       null,
     );
     const dest = document.getElementById('arrival-list').querySelector('.departure-dest');
@@ -258,19 +186,19 @@ describe('ui.renderArrivals', () => {
   });
 
   it('shows an empty-state (minutes) when no arrivals', () => {
-    ui.renderArrivals(arrData([]), loc, '', null);
+    ui.renderArrivals(arrData([]), null);
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 
   it('shows the 24h empty-state at dur >= 1440', () => {
     state._stationArrDur = 1440;
-    ui.renderArrivals(arrData([]), loc, '', null);
+    ui.renderArrivals(arrData([]), null);
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 
   it('shows the hours empty-state at dur >= 120', () => {
     state._stationArrDur = 180;
-    ui.renderArrivals(arrData([]), loc, '', null);
+    ui.renderArrivals(arrData([]), null);
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 
@@ -281,9 +209,8 @@ describe('ui.renderArrivals', () => {
     arrList.appendChild(li);
     state._stationArrFetching = true;
     state._stationArrDur = 480;
-    const ret = ui.renderArrivals(arrData([]), loc, '', null);
+    ui.renderArrivals(arrData([]), null);
     expect(arrList.querySelectorAll('.departure-item').length).toBe(1);
-    expect(ret).toEqual([]);
   });
 
   it('row click on an on-map bus selects the journey', () => {
@@ -291,8 +218,6 @@ describe('ui.renderArrivals', () => {
     const sel = vi.spyOn(ui, 'selectJourney').mockImplementation(() => {});
     ui.renderArrivals(
       arrData([{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { aTimeS: '120000' } }]),
-      loc,
-      '',
       null,
     );
     document.getElementById('arrival-list').querySelector('.departure-item').click();
@@ -303,7 +228,9 @@ describe('ui.renderArrivals', () => {
     const jnyL = [];
     for (let i = 0; i < 50; i++)
       jnyL.push({ jid: 'J' + i, prodX: 0, dirTxt: 'D' + i, stbStop: { aTimeS: hhmmssI(i) } });
-    ui.renderArrivals(arrData(jnyL), loc, '', null);
+    // The hint reads the full board length off state, not the passed data.
+    state._stationArrData = arrData(jnyL);
+    ui.renderArrivals(arrData(jnyL), null);
     expect(document.getElementById('arrival-list').querySelector('.hafas-hint')).not.toBeNull();
   });
 });
@@ -446,11 +373,13 @@ describe('ui.applyPushedStationboard', () => {
   it('renders with the extId held in state (set by showStationBoard), not re-derived from loc', () => {
     state._stationExtId = '6003411';
     const renderSpy = vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
-    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
+    const lmSpy = vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
     const stop = { lid: 'A=1@L=6003411@', name: 'S' };
     state.selectedStop = stop;
     ui.applyPushedStationboard(stop, { jnyL: [{ jid: 'A', stbStop: {} }], common: {} }, 'DEP');
-    expect(renderSpy).toHaveBeenCalledWith(expect.anything(), stop, '6003411', null);
+    expect(renderSpy).toHaveBeenCalled();
+    // The state-held extId flows through _renderBoard to the load-more button.
+    expect(lmSpy).toHaveBeenCalledWith('departure-list', stop, '6003411', 'DEP');
   });
 });
 

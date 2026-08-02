@@ -206,9 +206,12 @@ describe('switchTab — departures cached-data else-if', () => {
   it('rebuilds the filter from cached dep data (the else-if(dep) arm)', () => {
     state._stationDepData = { common: {}, jnyL: [] };
     state._stationArrData = null;
+    state._stationExtId = null;
+    state._stationLoc = null;
     const spy = vi.spyOn(ui, 'buildLineFilter').mockImplementation(() => {});
     ui.switchTab('departures');
-    expect(spy).toHaveBeenCalledWith(state._stationDepData, null);
+    // No extId/platform → _scopedStationBoard passes the board through unchanged.
+    expect(spy).toHaveBeenCalledWith(state._stationDepData);
   });
 });
 

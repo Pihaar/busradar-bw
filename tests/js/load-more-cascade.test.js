@@ -159,6 +159,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     state._depFilter = null;
     state._stationDepFetching = false;
     state.vehicles = new Map();
+    state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -178,7 +179,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     populate(3);
     state._stationDepDur = 480;
     state._stationDepFetching = true; // cascade walking a service gap
-    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(3);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
   });
@@ -189,14 +190,14 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     populate(3);
     state._stationDepDur = 480;
     state._stationDepFetching = false;
-    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
   it('shows the empty-state at the default window when nothing is upcoming', () => {
     populate(0);
     state._stationDepDur = 60;
-    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
@@ -204,7 +205,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
     populate(3);
     state._stationDepDur = 60;
     state._stationDepFetching = false;
-    ui.renderDepartures({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
@@ -218,7 +219,7 @@ describe('renderDepartures — keeps list only while an expand cascade is in fli
       ],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderDepartures(data, loc, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
     expect(ui.departureList.querySelector('.empty-state')).toBeNull();
   });
@@ -233,6 +234,7 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
     state._arrFilter = null;
     state._stationArrFetching = false;
     state.vehicles = new Map();
+    state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -252,7 +254,7 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
     populate(2);
     state._stationArrDur = 480;
     state._stationArrFetching = true;
-    ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderArrivals({ jnyL: [], common: {} }, null);
     expect(arrList.querySelectorAll('.departure-item').length).toBe(2);
     expect(arrList.querySelector('.empty-state')).toBeNull();
   });
@@ -261,7 +263,7 @@ describe('renderArrivals — same keep-only-while-expanding rule (mirror)', () =
     populate(2);
     state._stationArrDur = 480;
     state._stationArrFetching = false;
-    ui.renderArrivals({ jnyL: [], common: {} }, loc, '', null);
+    ui.renderArrivals({ jnyL: [], common: {} }, null);
     expect(arrList.querySelector('.empty-state')).not.toBeNull();
   });
 });

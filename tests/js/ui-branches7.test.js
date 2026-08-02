@@ -75,6 +75,8 @@ beforeEach(() => {
   state.routeLayer = null;
   state.routeCoords = null;
   state.routeStopMarkers = [];
+  state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
+  state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -113,8 +115,6 @@ describe('renderDepartures / renderArrivals — ontime delay colour', () => {
         ],
         common: { prodL: [{ nameS: '721' }], locL: [] },
       },
-      { name: 'S' },
-      '',
       null,
     );
     expect(ui.departureList.querySelector('.departure-delay').style.color).toContain('ontime');
@@ -128,8 +128,6 @@ describe('renderDepartures / renderArrivals — ontime delay colour', () => {
         ],
         common: { prodL: [{ nameS: '721' }], locL: [] },
       },
-      { name: 'S' },
-      '',
       null,
     );
     expect(
@@ -146,8 +144,6 @@ describe('renderDepartures / renderArrivals — ontime delay colour', () => {
         ],
         common: { prodL: [{ nameS: '721' }], locL: [] },
       },
-      { name: 'S' },
-      '',
       null,
     );
     expect(ui.departureList.querySelector('.departure-delay').style.color).toContain('early');
@@ -161,8 +157,6 @@ describe('renderDepartures / renderArrivals — ontime delay colour', () => {
         ],
         common: { prodL: [{ nameS: '721' }], locL: [] },
       },
-      { name: 'S' },
-      '',
       null,
     );
     expect(

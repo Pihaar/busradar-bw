@@ -274,30 +274,32 @@ describe('renderDepartures / renderArrivals — sparse jny fallbacks', () => {
     state._stationArrDur = 60;
     state._stationDepFetching = false;
     state._stationArrFetching = false;
+    state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
+    state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
 
   it('renderDepartures uses "?" dir and default prodX/stbStop for a bare jny', () => {
     ui.departureList = document.getElementById('departure-list');
-    ui.renderDepartures({ jnyL: [{}], common: {} }, { name: 'S' }, '', null);
+    ui.renderDepartures({ jnyL: [{}], common: {} }, null);
     const item = ui.departureList.querySelector('.departure-item');
     expect(item.querySelector('.departure-dest').textContent).toBe('?');
     expect(item.querySelector('.departure-line').textContent).toBe('?');
   });
 
   it('renderArrivals uses the from-prefix + "?" for a bare jny', () => {
-    ui.renderArrivals({ jnyL: [{}], common: {} }, { name: 'S' }, '', null);
+    ui.renderArrivals({ jnyL: [{}], common: {} }, null);
     const dest = document.getElementById('arrival-list').querySelector('.departure-dest');
     expect(dest.textContent).toContain('?');
   });
 
   it('renderDepartures with a completely empty data object shows the empty-state', () => {
     ui.departureList = document.getElementById('departure-list');
-    ui.renderDepartures({}, { name: 'S' }, '', null);
+    ui.renderDepartures({}, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
   it('renderArrivals with an empty data object shows the empty-state', () => {
-    ui.renderArrivals({}, { name: 'S' }, '', null);
+    ui.renderArrivals({}, null);
     expect(document.getElementById('arrival-list').querySelector('.empty-state')).not.toBeNull();
   });
 });

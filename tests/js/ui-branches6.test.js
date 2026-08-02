@@ -213,19 +213,6 @@ describe('discoverPlatforms — common/locL/gidL default arms', () => {
   });
 });
 
-describe('renderDepartures — stbStop/locX/prodX default arms under filter', () => {
-  it('a jny with no stbStop and no prodX is filtered out (locX -1 arm) when platform-filtering', () => {
-    ui.departureList = document.getElementById('departure-list');
-    const data = {
-      jnyL: [{ jid: 'A', dirTxt: 'X' }], // no stbStop, no prodX
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'E1' }] },
-    };
-    ui.renderDepartures(data, { name: 'S', platform: '2' }, 'E1', null);
-    // stb {} → locX -1 → filtered out → empty-state
-    expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
-  });
-});
-
 describe('focusJourneyById — journey/common/stopL default arms (not-started)', () => {
   beforeEach(() => {
     vi.spyOn(ui, '_disableFollow').mockImplementation(() => {});

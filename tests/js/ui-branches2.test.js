@@ -267,14 +267,14 @@ describe('empty-state "hours" variant', () => {
     ui.departureList = document.getElementById('departure-list');
     state._stationDepDur = 180;
     state._stationDepFetching = false;
-    ui.renderDepartures({ jnyL: [], common: {} }, { name: 'S' }, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 
   it('renderDepartures shows the 24h empty-state at dur >= 1440', () => {
     ui.departureList = document.getElementById('departure-list');
     state._stationDepDur = 1440;
-    ui.renderDepartures({ jnyL: [], common: {} }, { name: 'S' }, '', null);
+    ui.renderDepartures({ jnyL: [], common: {} }, null);
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
 });
@@ -329,25 +329,5 @@ describe('focusJourneyById — ended-time wrap arms', () => {
     await settle();
     // lastArrTime 'junk' is truthy → parseHafasTimeToMin null → lastMin 0 → 0+5<=600 → ended
     expect(ui.stopList.querySelector('.empty-state')).not.toBeNull();
-  });
-});
-
-describe('renderDepartures — extId filter with a same-name sibling that has no crd', () => {
-  it('does not push a same-name loc lacking crd into otherLocs', () => {
-    ui.departureList = document.getElementById('departure-list');
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: {
-        prodL: [{ nameS: '721' }],
-        // filterLoc E1 has crd; a same-name sibling has NO crd → excluded from otherLocs,
-        // so otherLocs stays empty → shouldFilter false → nothing filtered out
-        locL: [
-          { extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } },
-          { extId: 'E2', name: 'S' },
-        ],
-      },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
   });
 });

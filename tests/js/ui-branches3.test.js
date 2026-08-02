@@ -444,36 +444,6 @@ describe('discoverPlatforms — A× gid with too few parts', () => {
   });
 });
 
-describe('renderDepartures — filter sub-branch false arms', () => {
-  beforeEach(() => {
-    ui.departureList = document.getElementById('departure-list');
-    state._stationDepDur = 60;
-    state._stationDepFetching = false;
-    state.vehicles = new Map();
-  });
-
-  it('extId known but no far sibling → does not filter', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: {
-        prodL: [{ nameS: '721' }],
-        locL: [{ extId: 'E1', name: 'S', crd: { x: 8600000, y: 49300000 } }],
-      },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'E1', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
-  });
-
-  it('extId unknown, no same-name loc → does not filter', () => {
-    const data = {
-      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { locX: 0, dTimeS: '120000' } }],
-      common: { prodL: [{ nameS: '721' }], locL: [{ extId: 'OTHER', name: 'Different' }] },
-    };
-    ui.renderDepartures(data, { name: 'S' }, 'MISSING', null);
-    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(1);
-  });
-});
-
 describe('showJourneyEnded — entry without a marker', () => {
   it('does not throw when the ended entry has no marker', () => {
     state.selectedJid = 'J';

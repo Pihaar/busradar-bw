@@ -187,6 +187,8 @@ describe('renderDepartures / renderArrivals — jnyL/common/prodL fallbacks', ()
     state._stationDepFetching = false;
     state._stationArrFetching = false;
     state.vehicles = new Map();
+    state._stationDepData = { jnyL: [], common: { prodL: [], locL: [] } };
+    state._stationArrData = { jnyL: [], common: { prodL: [], locL: [] } };
   });
 
   it('renderDepartures with prodX out of range uses the {} prod fallback ("?")', () => {
@@ -194,7 +196,7 @@ describe('renderDepartures / renderArrivals — jnyL/common/prodL fallbacks', ()
       jnyL: [{ jid: 'A', prodX: 9, dirTxt: 'X', stbStop: { dTimeS: '120000' } }],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderDepartures(data, { name: 'S' }, '', null);
+    ui.renderDepartures(data, null);
     expect(ui.departureList.querySelector('.departure-line').textContent).toBe('?');
   });
 
@@ -203,14 +205,14 @@ describe('renderDepartures / renderArrivals — jnyL/common/prodL fallbacks', ()
       jnyL: [{ jid: 'A', prodX: 9, dirTxt: 'X', stbStop: { aTimeS: '120000' } }],
       common: { prodL: [{ nameS: '721' }], locL: [] },
     };
-    ui.renderArrivals(data, { name: 'S' }, '', null);
+    ui.renderArrivals(data, null);
     expect(
       document.getElementById('arrival-list').querySelector('.departure-line').textContent,
     ).toBe('?');
   });
 
-  it('renderDepartures HAFAS-hint uses (data.jnyL || []) — an empty data object shows empty-state, not hint', () => {
-    ui.renderDepartures({}, { name: 'S' }, '', null);
+  it('renderDepartures HAFAS-hint uses the state board length — an empty data object shows empty-state, not hint', () => {
+    ui.renderDepartures({}, null);
     expect(ui.departureList.querySelector('.hafas-hint')).toBeNull();
     expect(ui.departureList.querySelector('.empty-state')).not.toBeNull();
   });
