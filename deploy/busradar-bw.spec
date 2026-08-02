@@ -22,12 +22,6 @@ Requires:       ((python314-fastapi >= 0.100) or (python313-fastapi >= 0.100) or
 Requires:       ((python314-starlette >= 1.3.1) or (python313-starlette >= 1.3.1) or (python311-starlette >= 1.3.1) or (python3-starlette >= 1.3.1))
 Requires:       ((python314-uvicorn >= 0.20) or (python313-uvicorn >= 0.20) or (python311-uvicorn >= 0.20) or (python3-uvicorn >= 0.20))
 Requires:       ((python314-httpx >= 0.24) or (python313-httpx >= 0.24) or (python311-httpx >= 0.24) or (python3-httpx >= 0.24))
-# sysusers_create_package adds Requires(pre) on the busradar user/group, but the
-# automatic sysusers Provides generator does not emit them for this package.
-# Declare them explicitly so the package satisfies its own dependency; the pre
-# scriptlet creates the user/group at install time.
-Provides:       group(busradar)
-Provides:       user(busradar)
 %systemd_requires
 
 %description
