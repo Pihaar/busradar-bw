@@ -23,7 +23,8 @@ vi.mock('../../static/map.js', () => ({
 }));
 vi.mock('../../static/status.js', () => ({ announce: vi.fn() }));
 
-const { ui, computeScopeActive, scopedBoard } = await import('../../static/ui.js');
+const { ui, computeScopeActive, scopedBoard, annotatePlatforms, platformScopedBoard } =
+  await import('../../static/ui.js');
 const { state } = await import('../../static/state.js');
 
 // crd.x/y are ×1e6. Distance: dlat=|Δy|/1e6*111000, dlon=|Δx|/1e6*111000*0.65.
@@ -153,5 +154,82 @@ describe('ui._scopedStationBoard', () => {
     state._stationLoc = { platform: '' };
     state._stationExtId = ''; // no extId → scopedBoard returns original
     expect(ui._scopedStationBoard('DEP')).toBe(bd);
+  });
+});
+
+describe('annotatePlatforms', () => {
+  it('tags each jny with _platformExtId and marks the board', () => {
+    const b = { jnyL: [{ jid: 'a' }, { jid: 'b' }, { jid: 'c' }], platforms: ['S1', null, 'S2'] };
+    annotatePlatforms(b);
+    expect(b._platformTagged).toBe(true);
+    expect(b.jnyL[0]._platformExtId).toBe('S1');
+    expect(b.jnyL[1]._platformExtId).toBeNull();
+    expect(b.jnyL[2]._platformExtId).toBe('S2');
+  });
+  it('is a no-op without a platforms array (ordinary stop)', () => {
+    const b = { jnyL: [{ jid: 'a' }] };
+    annotatePlatforms(b);
+    expect(b._platformTagged).toBeUndefined();
+    expect(b.jnyL[0]._platformExtId).toBeUndefined();
+  });
+  it('null-safe on a null board', () => {
+    expect(annotatePlatforms(null)).toBeNull();
+  });
+  it('tolerates a platforms array with no jnyL', () => {
+    const b = { platforms: ['S1'] };
+    annotatePlatforms(b);
+    expect(b._platformTagged).toBe(true);
+  });
+});
+
+describe('platformScopedBoard', () => {
+  const tagged = () => ({
+    _platformTagged: true,
+    jnyL: [
+      { jid: 'a', _platformExtId: 'S1' },
+      { jid: 'b', _platformExtId: 'S2' },
+      { jid: 'c', _platformExtId: null },
+    ],
+  });
+  it('keeps only the opened Steig plus fail-open null rows', () => {
+    const out = platformScopedBoard(tagged(), 'S1');
+    expect(out.jnyL.map((j) => j.jid)).toEqual(['a', 'c']); // S1 + null (both)
+  });
+  it('inverse Steig keeps the other tagged row plus null', () => {
+    const out = platformScopedBoard(tagged(), 'S2');
+    expect(out.jnyL.map((j) => j.jid)).toEqual(['b', 'c']);
+  });
+  it('is a no-op for an untagged board (ordinary stop, byte-identical)', () => {
+    const b = { jnyL: [{ jid: 'a' }] };
+    expect(platformScopedBoard(b, 'S1')).toBe(b);
+  });
+  it('is a no-op without a filter extId', () => {
+    const b = tagged();
+    expect(platformScopedBoard(b, '')).toBe(b);
+  });
+  it('null-safe on a null board', () => {
+    expect(platformScopedBoard(null, 'S1')).toBeNull();
+  });
+  it('tolerates a tagged board with no jnyL', () => {
+    const out = platformScopedBoard({ _platformTagged: true }, 'S1');
+    expect(out.jnyL).toEqual([]);
+  });
+});
+
+describe('ui._scopedStationBoard with platform tags', () => {
+  it('applies the Steig filter after geometric scope', () => {
+    state._stationDepData = {
+      _platformTagged: true,
+      common: { locL: [] },
+      jnyL: [
+        { jid: 'a', _platformExtId: '4466864' },
+        { jid: 'b', _platformExtId: '4407123' },
+        { jid: 'c', _platformExtId: null },
+      ],
+    };
+    state._stationLoc = { platform: '' };
+    state._stationExtId = '4466864';
+    const view = ui._scopedStationBoard('DEP');
+    expect(view.jnyL.map((j) => j.jid)).toEqual(['a', 'c']);
   });
 });

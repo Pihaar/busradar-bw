@@ -302,8 +302,40 @@ export function scopedBoard(board, scopeActive, filterExtId) {
   });
 }
 
-// Central paging-horizon setter: writes the per-board horizon AND records the
-// change in the debug ring, so a "board resets to default" report shows which
+// Attach the server's per-row Steig tags (a `platforms` array aligned to jnyL)
+// onto each jny as `_platformExtId`, so reconcile/dedup/line-filter carry the
+// tag WITH the row (a fragile parallel array would desync when reconcileBoard
+// rebuilds jnyL). Marks the board `_platformTagged` so platformScopedBoard
+// knows to filter it. No-op for a board without `platforms` (ordinary stop) —
+// the initial REST board is untagged; the first SSE push carries the tags.
+export function annotatePlatforms(board) {
+  if (!board || !Array.isArray(board.platforms)) return board;
+  var jnyL = board.jnyL || [];
+  for (var i = 0; i < jnyL.length; i++) {
+    jnyL[i]._platformExtId = board.platforms[i] == null ? null : board.platforms[i];
+  }
+  board._platformTagged = true;
+  return board;
+}
+
+// Filter the board to a single Steig using the server's per-row platformExtId
+// tags (set only for multi-Steig "Drehscheibe" stops, where the HAFAS board is
+// byte-identical for both Steige and locX-based scopedBoard can't separate
+// them). Fail-open: a row tagged null/undefined (Steig not yet resolved) is
+// kept on BOTH Steige — never hide a real departure. No-op for boards the
+// server did not tag (`_platformTagged` falsy) so ordinary stops stay
+// byte-identical.
+export function platformScopedBoard(board, filterExtId) {
+  if (!board || !board._platformTagged || !filterExtId) return board;
+  var jnyL = board.jnyL || [];
+  return Object.assign({}, board, {
+    jnyL: jnyL.filter(function (j) {
+      var p = j._platformExtId;
+      return p == null || p === filterExtId;
+    }),
+  });
+}
+
 // cause moved it. Single write path — every horizon mutation goes through here.
 // The live value stays numeric (the dump serialises a non-finite horizon as a
 // string sentinel at read time, not here).
@@ -1669,6 +1701,7 @@ export var ui = {
         // Null-safe guard: discard a late result if the panel closed or the
         // selected stop changed (mirrors the existing capturedLid pattern).
         if (!state.selectedStop || state.selectedStop.lid !== capturedLid) return;
+        annotatePlatforms(data);
         if (isArr) {
           state._stationArrData = data;
           state._stationArrFetchedAt = Date.now();
@@ -1752,11 +1785,15 @@ export var ui = {
   _scopedStationBoard: function (type) {
     var board = type === 'ARR' ? state._stationArrData : state._stationDepData;
     var hasPlatform = !!(state._stationLoc && state._stationLoc.platform);
-    return scopedBoard(
+    var scoped = scopedBoard(
       board,
       computeScopeActive(board, hasPlatform, state._stationExtId),
       state._stationExtId,
     );
+    // Steig-tag filter (Drehscheibe stops): applied after the geometric scope,
+    // fail-open, no-op for untagged boards. state._stationExtId is the opened
+    // Steig marker's extId.
+    return platformScopedBoard(scoped, state._stationExtId);
   },
 
   // Render the platform-scoped board sliced to the current paging horizon
@@ -2303,6 +2340,7 @@ export var ui = {
       state._lastDepSig = sig;
     }
     var keptBefore = (cache.jnyL || []).length;
+    annotatePlatforms(data);
     var merged = reconcileBoard(cache, data, nowMin);
     // Record the reconcile in the debug ring: a drop (keptAfter < keptBefore with
     // no matching departure) is the signature of the day-offset deletion bug.
@@ -2317,6 +2355,10 @@ export var ui = {
     });
     if (isArr) state._stationArrData = merged;
     else state._stationDepData = merged;
+    // The merged board inherits cache's fields; propagate the Steig-tag flag
+    // from the push so it turns on once the first tagged push arrives (the
+    // initial REST board is untagged).
+    if (data._platformTagged) merged._platformTagged = true;
     ui._renderBoard(boardType, loc, state._stationExtId);
   },
 

@@ -317,6 +317,19 @@ describe('ui.applyPushedStationboard', () => {
     expect(renderSpy).not.toHaveBeenCalled();
   });
 
+  it('propagates the Steig-tag flag from a tagged push', () => {
+    vi.spyOn(ui, 'renderDepartures').mockImplementation(() => {});
+    vi.spyOn(ui, 'addLoadMoreButton').mockImplementation(() => {});
+    const data = {
+      jnyL: [{ jid: 'A', prodX: 0, dirTxt: 'X', stbStop: { dTimeS: '120000' } }],
+      common: { prodL: [], locL: [] },
+      platforms: ['4466864'],
+    };
+    ui.applyPushedStationboard(loc, data, 'DEP');
+    expect(state._stationDepData._platformTagged).toBe(true);
+    expect(state._stationDepData.jnyL[0]._platformExtId).toBe('4466864');
+  });
+
   it('reconciles an ARR push', () => {
     state._activeTab = 'arrivals';
     const renderSpy = vi.spyOn(ui, 'renderArrivals').mockImplementation(() => {});

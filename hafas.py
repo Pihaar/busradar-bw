@@ -58,6 +58,40 @@ JID_PATTERN = re.compile(r"\A[0-9|#A-Za-z@:_\-. ]+\Z")
 LID_PATTERN = re.compile(r"\AA=[0-9]+@[A-Za-z0-9_#|=.\-,:/(): @äöüÄÖÜß×]*\Z")
 
 
+def extract_platform(gid_l: list[str]) -> str:
+    """Extract the platform/Steig designator from a HAFAS location's gidL.
+
+    The Steig sits in the A×-prefixed GID as the 5th colon-separated field
+    (e.g. 'A×de:08226:4025:1:A' → 'A'). Scans A× GIDs until one yields a
+    non-empty platform; returns '' when none do.
+
+    Consolidates three previously duplicated copies (stops_builder
+    _discover_platforms + _parse_stop, proxy _flatten_vehicles). Note:
+    the two stops_builder copies only inspected the FIRST A× GID and gave
+    up; this shared helper adopts the proxy behaviour of scanning further
+    A× GIDs until one carries a platform. That is strictly more complete
+    (it never loses a platform, and only ever gains one in the rare case
+    where the first A× GID lacks the 5th field but a later one has it).
+    """
+    for gid in gid_l:
+        if gid.startswith("A×"):
+            parts = gid.split(":")
+            if len(parts) >= 5 and parts[4]:
+                return parts[4]
+    return ""
+
+
+def lid_is_safe(lid: str) -> bool:
+    """LID_PATTERN charset gate PLUS defense-in-depth against a smuggled
+    second `L=` field. A HAFAS extId like '6003411@L=9999' would build
+    'A=1@L=6003411@L=9999@' and, passing the permissive charset pattern,
+    query a FOREIGN station under the opened stop's name. Real lids carry at
+    most one `@L=` field, so reject anything with more. The count is
+    case-insensitive so a lowercase `@l=` can't slip a second field past the
+    guard if HAFAS parses field names case-insensitively."""
+    return bool(LID_PATTERN.match(lid)) and lid.lower().count("@l=") <= 1
+
+
 log = logging.getLogger("busradar")
 
 

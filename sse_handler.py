@@ -41,6 +41,7 @@ from pydantic import (
 )
 
 import fanout
+import steig
 from audit import _audit
 from caches import (
     _JOURNEY_CACHE_TTL,
@@ -59,7 +60,7 @@ from caches import (
 )
 from hafas import (
     JID_PATTERN,
-    LID_PATTERN,
+    lid_is_safe,
 )
 from tick import ClientActivity
 
@@ -491,7 +492,7 @@ class SelectPayload(BaseModel):
             return None
         if isinstance(v, fanout.JourneySelection) and not JID_PATTERN.match(v.jid):
             raise ValueError("invalid jid")
-        if isinstance(v, fanout.StationSelection) and not LID_PATTERN.match(v.lid):
+        if isinstance(v, fanout.StationSelection) and not lid_is_safe(v.lid):
             raise ValueError("invalid lid")
         return v
 
@@ -514,11 +515,50 @@ async def _fetch_for_selection(
         result = await _fetch_stationboard_for_subscriber(app, sel.lid, sel.board_type, sel.dur)
         if "error" in result:
             return ("error", {"reason": "upstream", "selection": "stationboard"})
-        return (
-            "stationboard",
-            {"lid": sel.lid, "boardType": sel.board_type, "stationboard": result},
-        )
+        payload: dict[str, Any] = {
+            "lid": sel.lid,
+            "boardType": sel.board_type,
+            "stationboard": result,
+        }
+        _tag_stationboard(app, sel, result, payload)
+        return ("stationboard", payload)
     return (None, None)
+
+
+# Background Steig-backfill tasks; kept referenced so they aren't GC'd
+# mid-flight, discarded on completion.
+_backfill_tasks: set[asyncio.Task[None]] = set()
+
+
+def _schedule_steig_backfill(app: FastAPI, unresolved: list[str], service_date: str) -> None:
+    async def _fetch(jid: str) -> dict[str, Any]:
+        return await _fetch_journey_for_subscriber(app, jid)
+
+    task = asyncio.create_task(steig.backfill(unresolved, service_date, _fetch))
+    _backfill_tasks.add(task)
+    task.add_done_callback(_backfill_tasks.discard)
+
+
+def _tag_stationboard(
+    app: FastAPI, sel: fanout.StationSelection, result: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Enrich a DEP board of a multi-Steig stop with a per-row `platforms`
+    array (Steig extId or null, aligned to jnyL). Only DEP boards of a
+    configured Steig family are touched; ARR boards and ordinary stops are
+    left byte-identical (no `platforms` key -> client no-op). Unknown jids
+    trigger a non-blocking background backfill; those rows stay untagged
+    (client shows them on both Steige) until the next tick's re-push carries
+    the resolved tags — no bespoke delta event needed."""
+    if sel.board_type != "DEP":
+        return
+    ext_id = steig.extid_from_lid(sel.lid)
+    if ext_id is None or steig.family_for(ext_id) is None:
+        return
+    service_date = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%Y%m%d")
+    platforms, unresolved = steig.tag_board(result, ext_id, service_date)
+    payload["platforms"] = platforms
+    if unresolved:
+        _schedule_steig_backfill(app, unresolved, service_date)
 
 
 _FOLLOW_RING_M = 3000  # ring radius for the REPORT_ONLY off-ring follow lookup

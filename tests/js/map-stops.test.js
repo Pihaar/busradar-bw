@@ -108,14 +108,32 @@ describe('stopsLayer.addStopMarker', () => {
     stopsLayer.addStopMarker({ lid: 'x1', name: 'Rathaus', lat: 49.34, lon: 8.66, platform: '2' });
     expect(L.circleMarker).toHaveBeenCalledOnce();
     const m = L.circleMarker.mock.results[0].value;
-    expect(m.bindTooltip.mock.calls[0][0]).toBe('Rathaus (Steig 2)');
+    // Tooltip is a DOM node (textContent), not a string — XSS-safe.
+    const tip = m.bindTooltip.mock.calls[0][0];
+    expect(tip).toBeInstanceOf(HTMLElement);
+    expect(tip.textContent).toBe('Rathaus (Steig 2)');
     expect(state.allStops.has('x1')).toBe(true);
   });
 
   it('binds a plain tooltip without platform suffix', () => {
     stopsLayer.addStopMarker({ lid: 'x2', name: 'Bahnhof', lat: 49.34, lon: 8.66 });
     const m = L.circleMarker.mock.results[0].value;
-    expect(m.bindTooltip.mock.calls[0][0]).toBe('Bahnhof');
+    const tip = m.bindTooltip.mock.calls[0][0];
+    expect(tip).toBeInstanceOf(HTMLElement);
+    expect(tip.textContent).toBe('Bahnhof');
+  });
+
+  it('renders a malicious HAFAS stop name as text, not HTML (XSS-safe tooltip)', () => {
+    stopsLayer.addStopMarker({
+      lid: 'x3',
+      name: '<img src=x onerror=alert(1)>',
+      lat: 49.3,
+      lon: 8.6,
+    });
+    const m = L.circleMarker.mock.results[0].value;
+    const tip = m.bindTooltip.mock.calls[0][0];
+    expect(tip.querySelector('img')).toBeNull(); // no HTML parsed
+    expect(tip.textContent).toBe('<img src=x onerror=alert(1)>');
   });
 
   it('does not add a duplicate marker for an already-tracked stop', () => {

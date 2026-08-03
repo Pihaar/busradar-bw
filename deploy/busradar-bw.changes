@@ -1,5 +1,33 @@
 -------------------------------------------------------------------
-Sun Aug  2 16:56:46 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+Sun Aug  2 21:36:01 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Stationboard: show platform-accurate ("Steig") departures at
+  multi-platform "Drehscheibe" stops such as Walldorf-Drehscheibe,
+  where the HAFAS station board is byte-identical for both Steige and
+  cannot be separated by board data alone. The Steig of each individual
+  departure is resolved per departure from its JourneyDetails (matched
+  by scheduled time), so a line that passes the stop twice in one trip
+  or runs differently at night is placed correctly — no generalisation
+  from one course to the whole line. The server tags each board row and
+  the client filters the opened Steig marker to its own departures;
+  unresolved rows fail open (shown on both Steige, never hidden). Which
+  stops are treated this way is a central config (steig.py) — a new
+  multi-Steig stop is one entry, verified against HAFAS. Resolution is
+  a bounded background JourneyDetails backfill (own concurrency limit,
+  singleflight, ephemeral 6h cache) that never blocks the board push;
+  the next ~10s tick carries the resolved tags. /api/health gains a
+  per-family resolution rate as an early warning if the upstream Steig
+  field ever breaks.
+- Security hardening carried in the same change: the map stop tooltip
+  is now a text node instead of a string (closes a stored-XSS path
+  through untrusted HAFAS stop names in Leaflet's innerHTML tooltip),
+  and location-ID validation rejects a smuggled second "@L=" field
+  (case-insensitive) that could otherwise query a foreign station under
+  the opened stop's name.
+- Internal: the triplicate A×-GID platform parser (stops builder ×2,
+  vehicle flattening) is consolidated into one hafas.extract_platform
+  helper, so a HAFAS GID-format change is a single fix instead of three.
+
 
 - Stationboard: fix the departure/arrival board so a selected platform
   shows its own departures from the initial view. At multi-platform

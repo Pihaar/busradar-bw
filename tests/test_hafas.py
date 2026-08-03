@@ -16,7 +16,64 @@ from hafas import (
     _build_hafas_envelope,
     _CircuitBreaker,
     _hafas_call_via_app,
+    extract_platform,
+    lid_is_safe,
 )
+
+
+class TestLidIsSafe:
+    def test_simple_valid_lid(self):
+        assert lid_is_safe("A=1@L=44278341@") is True
+
+    def test_fully_qualified_single_l_field(self):
+        assert lid_is_safe("A=1@O=Walldorf@X=8@Y=49@U=80@L=4407123@i=A×de:1:2:3:B@") is True
+
+    def test_rejects_smuggled_second_uppercase_l(self):
+        assert lid_is_safe("A=1@L=6003411@L=9999@") is False
+
+    def test_rejects_smuggled_lowercase_l(self):
+        # Case-insensitive count closes the @l= bypass.
+        assert lid_is_safe("A=1@L=6003411@l=9999@") is False
+
+    def test_rejects_bad_charset(self):
+        assert lid_is_safe("A=1@L=1@\n") is False
+
+
+class TestExtractPlatform:
+    """Characterisation + behaviour tests for the consolidated GID→Steig
+    parser (formerly duplicated in stops_builder ×2 and proxy)."""
+
+    def test_first_ax_gid_with_platform(self):
+        # Common case: A× GID's 5th colon field is the Steig.
+        assert extract_platform(["A×de:08226:4025:1:A", "b×BRN_301961"]) == "A"
+
+    def test_steig_b(self):
+        assert extract_platform(["b×BRN_301951", "A×de:08226:4025:1:B"]) == "B"
+
+    def test_no_ax_gid_returns_empty(self):
+        assert extract_platform(["b×BRN_301951"]) == ""
+
+    def test_empty_gid_list(self):
+        assert extract_platform([]) == ""
+
+    def test_ax_gid_too_few_parts(self):
+        # <5 colon fields → no platform.
+        assert extract_platform(["A×de:08226:4025"]) == ""
+
+    def test_ax_gid_empty_fifth_field(self):
+        # 5th field present but empty → treated as no platform.
+        assert extract_platform(["A×de:08226:4025:1:"]) == ""
+
+    def test_scans_past_first_ax_without_platform(self):
+        # DIVERGENCE from the old stops_builder copies, which only ever
+        # looked at the FIRST A× GID and gave up. The shared helper scans
+        # further A× GIDs until one carries a platform — strictly more
+        # complete, never loses a platform.
+        gid_l = ["A×de:08226:4025", "A×de:08226:4025:1:B"]
+        assert extract_platform(gid_l) == "B"
+
+    def test_non_ax_gids_ignored(self):
+        assert extract_platform(["x×foo", "b×bar", "A×de:1:2:3:C"]) == "C"
 
 
 class TestBuildEnvelope:

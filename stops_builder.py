@@ -21,6 +21,8 @@ from typing import Any, TypeVar, cast
 
 import httpx
 
+from hafas import extract_platform
+
 _T = TypeVar("_T")
 
 HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
@@ -137,13 +139,7 @@ async def _discover_platforms(client: httpx.AsyncClient, lid: str) -> list[dict[
             if not has_physical:
                 continue
 
-            platform = ""
-            for gid in gid_l:
-                if gid.startswith("A×"):
-                    parts = gid.split(":")
-                    if len(parts) >= 5 and parts[4]:
-                        platform = parts[4]
-                    break
+            platform = extract_platform(gid_l)
 
             platforms.append(
                 {
@@ -173,13 +169,7 @@ def _parse_stop(loc: dict[str, Any]) -> dict[str, Any] | None:
     has_physical = any(g.startswith("b×") for g in gid_l)
     if not has_physical:
         return None
-    platform = ""
-    for gid in gid_l:
-        if gid.startswith("A×"):
-            parts = gid.split(":")
-            if len(parts) >= 5 and parts[4]:
-                platform = parts[4]
-            break
+    platform = extract_platform(gid_l)
     return {
         "name": loc.get("name", "?"),
         "lid": loc.get("lid", ""),

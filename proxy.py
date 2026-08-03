@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 import fanout
+import steig
 
 # Re-export submodule symbols so tests can keep using `from proxy import X`.
 from audit import (  # noqa: F401
@@ -79,6 +80,8 @@ from hafas import (  # noqa: F401
     _CircuitBreaker,
     _hafas_call_via_app,
     breaker,
+    extract_platform,
+    lid_is_safe,
 )
 from sse_handler import (  # noqa: F401
     ALLOWED_ORIGINS,
@@ -465,13 +468,7 @@ def _flatten_vehicles(res: dict[str, Any]) -> list[dict[str, Any]]:
         for s in stop_l:
             loc_idx = s.get("locX", -1)
             loc = loc_l[loc_idx] if 0 <= loc_idx < len(loc_l) else {}
-            platform = ""
-            for gid in loc.get("gidL", []):
-                if gid.startswith("A×"):
-                    parts = gid.split(":")
-                    if len(parts) >= 5 and parts[4]:
-                        platform = parts[4]
-                        break
+            platform = extract_platform(loc.get("gidL", []))
             next_stops.append(
                 {
                     "name": loc.get("name", "?"),
@@ -639,7 +636,7 @@ class StationBoardRequest(BaseModel):
     @field_validator("lid")
     @classmethod
     def validate_lid(cls, v: str) -> str:
-        if not LID_PATTERN.match(v):
+        if not lid_is_safe(v):
             raise ValueError("Invalid location ID format")
         return v
 
@@ -700,6 +697,10 @@ async def health(request: Request) -> dict[str, Any]:
         # "live data slow because something is wrong".
         "stops_rebuilding": bool(getattr(request.app.state, "stops_rebuilding", False)),
         "stops_count": (getattr(request.app.state, "stops_data", None) or {}).get("count", 0),
+        # Per-Steig-family resolution stats: a family stuck at resolved==0 while
+        # total grows, or a climbing last_resolved_age, warns that the HAFAS
+        # JourneyDetails Steig field silently broke.
+        "steig": steig.health_snapshot(),
     }
     if _TICK_ENABLED:
         tick_age = (mono_now - ts) if ts else None

@@ -585,7 +585,11 @@ export var stopsLayer = {
 
   addStopMarker: function (stop) {
     if (state.allStops.has(stop.lid)) return;
-    var label =
+    // Tooltip as a DOM node with textContent, NOT a string: Leaflet renders a
+    // string tooltip via innerHTML, which would interpret HTML in the untrusted
+    // HAFAS stop name / platform label (stored-XSS surface). A text node can't.
+    var labelEl = document.createElement('span');
+    labelEl.textContent =
       stop.name + (stop.platform ? ' (' + t('platform_prefix') + ' ' + stop.platform + ')' : '');
     var m = L.circleMarker([stop.lat, stop.lon], {
       radius: 6,
@@ -594,7 +598,7 @@ export var stopsLayer = {
       interactive: true,
       className: 'stop-marker',
     });
-    m.bindTooltip(label, { className: 'stop-tooltip', direction: 'top', offset: [0, -6] });
+    m.bindTooltip(labelEl, { className: 'stop-tooltip', direction: 'top', offset: [0, -6] });
     m.on('click', function () {
       state._userInteractionSeq++;
       ui.showStationBoard(stop);
