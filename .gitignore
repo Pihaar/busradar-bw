@@ -17,6 +17,7 @@ nohup.out
 # Screenshots & test artifacts
 *.png
 !static/icons/*.png
+!static/og-image.png
 !static/favicon.svg
 
 # Dev tools

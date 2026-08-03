@@ -1,4 +1,18 @@
 -------------------------------------------------------------------
+Mon Aug  3 11:26:25 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Social sharing: add Open Graph + Twitter Card meta tags and a 1200x630
+  preview image (static/og-image.png, a screenshot of the live map around
+  Sandhausen), so a shared link renders a preview card in WhatsApp,
+  Facebook, X and the like instead of a bare URL. The preview language is
+  German (canonical, matching the title/description and the BW audience)
+  with an og:locale:alternate en_US hint; social crawlers read the raw
+  HTML without JS and do not negotiate language, so a single canonical
+  preview locale is the robust choice. The image ships as a normal static
+  asset (served at /og-image.png); no inline script changed, so the CSP
+  hash is unaffected.
+
+-------------------------------------------------------------------
 Mon Aug  3 10:36:30 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Stationboard: at a multi-Steig "Drehscheibe" stop, show a hint when

@@ -328,6 +328,30 @@ class TestServiceWorker:
         # Specifically: no double-substitution like style.css?v=X?v=X
         assert a.count("style.css?v=") == 1
 
+    @pytest.mark.asyncio
+    async def test_index_html_has_open_graph_tags(self, client):
+        """The served index.html carries Open Graph + Twitter Card meta tags so a
+        shared link (WhatsApp/Facebook/X) renders a preview card. Absolute
+        og:image URL + explicit 1200x630 dimensions are required by the crawlers."""
+        body = (await client.get("/")).text
+        assert '<meta property="og:type" content="website">' in body
+        assert '<meta property="og:title" content="Busradar BW">' in body
+        assert '<meta property="og:locale" content="de_DE">' in body
+        assert '<meta property="og:locale:alternate" content="en_US">' in body
+        assert (
+            '<meta property="og:image" content="https://busradar.pihaar.de/og-image.png">' in body
+        )
+        assert '<meta property="og:image:width" content="1200">' in body
+        assert '<meta property="og:image:height" content="630">' in body
+        assert '<meta name="twitter:card" content="summary_large_image">' in body
+
+    @pytest.mark.asyncio
+    async def test_og_image_is_served(self, client):
+        """The og:image the meta tags point at is a real, served static asset."""
+        resp = await client.get("/og-image.png")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+
 
 class TestTemplatedAsset:
     """The TemplatedAsset class extracted in v1.0.28 carries the
