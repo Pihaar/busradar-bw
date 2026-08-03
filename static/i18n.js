@@ -150,6 +150,10 @@
   de.max_timeframe_hint = 'Keine weiteren Fahrten in den nächsten 24 Stunden';
   en.max_timeframe_hint = 'No further journeys in the next 24 hours';
 
+  de.platform_unknown_hint = 'Steig nicht bestimmbar – es werden Abfahrten beider Steige angezeigt';
+  en.platform_unknown_hint =
+    'Platform could not be determined – departures of both platforms are shown';
+
   // === FILTER ===
   de.filter_all = 'Alle';
   en.filter_all = 'All';

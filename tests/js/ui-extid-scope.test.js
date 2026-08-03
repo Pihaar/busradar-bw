@@ -23,8 +23,14 @@ vi.mock('../../static/map.js', () => ({
 }));
 vi.mock('../../static/status.js', () => ({ announce: vi.fn() }));
 
-const { ui, computeScopeActive, scopedBoard, annotatePlatforms, platformScopedBoard } =
-  await import('../../static/ui.js');
+const {
+  ui,
+  computeScopeActive,
+  scopedBoard,
+  annotatePlatforms,
+  platformScopedBoard,
+  platformHintActive,
+} = await import('../../static/ui.js');
 const { state } = await import('../../static/state.js');
 
 // crd.x/y are ×1e6. Distance: dlat=|Δy|/1e6*111000, dlon=|Δx|/1e6*111000*0.65.
@@ -231,5 +237,39 @@ describe('ui._scopedStationBoard with platform tags', () => {
     state._stationExtId = '4466864';
     const view = ui._scopedStationBoard('DEP');
     expect(view.jnyL.map((j) => j.jid)).toEqual(['a', 'c']);
+  });
+});
+
+describe('platformHintActive', () => {
+  const tagged = (rows) => ({ _platformTagged: true, jnyL: rows });
+  it('returns false for a null board', () => {
+    expect(platformHintActive(null, 'S1')).toBe(false);
+  });
+  it('returns false for an untagged (ordinary) board', () => {
+    expect(platformHintActive({ jnyL: [{ _platformExtId: null }] }, 'S1')).toBe(false);
+  });
+  it('returns false without a filter extId', () => {
+    expect(platformHintActive(tagged([{ _platformExtId: null }]), '')).toBe(false);
+  });
+  it('returns false for an empty board (genuinely empty Steig, not unknown)', () => {
+    expect(platformHintActive(tagged([]), 'S1')).toBe(false);
+  });
+  it('returns false when jnyL is missing (|| [] fallback)', () => {
+    expect(platformHintActive({ _platformTagged: true }, 'S1')).toBe(false);
+  });
+  it('returns true when every shown row is unresolved (all null → fail-open)', () => {
+    expect(
+      platformHintActive(tagged([{ _platformExtId: null }, { _platformExtId: null }]), 'S1'),
+    ).toBe(true);
+  });
+  it('returns false when at least one row resolved to the opened Steig', () => {
+    expect(
+      platformHintActive(tagged([{ _platformExtId: 'S1' }, { _platformExtId: null }]), 'S1'),
+    ).toBe(false);
+  });
+  it('returns true when only a foreign Steig resolved (none for the opened one)', () => {
+    // Post-scope this row would be filtered out; isolated here to prove the hint
+    // fires when no row is positively assigned to the opened Steig.
+    expect(platformHintActive(tagged([{ _platformExtId: 'S2' }]), 'S1')).toBe(true);
   });
 });

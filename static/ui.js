@@ -336,6 +336,25 @@ export function platformScopedBoard(board, filterExtId) {
   });
 }
 
+// True when a Steig-tagged board is open but NOT actually filtered to the opened
+// Steig: the board carries platform tags (_platformTagged) yet no shown row is
+// positively assigned to this Steig (every row fails open with _platformExtId
+// null → shown on both Steige). Then the list mixes both Steige and the client
+// surfaces a hint so the user knows the departures are not Steig-filtered, rather
+// than trusting a silently no-op filter. Expects the SCOPED board (post
+// platformScopedBoard), which keeps only null-tagged + own-Steig rows — so "no
+// row === filterExtId" means every shown row is unresolved. No-op (false) for an
+// untagged/ordinary board, without a filter extId, and for an empty board (a
+// genuinely empty Steig is "no departures", not "unknown").
+export function platformHintActive(board, filterExtId) {
+  if (!board || !board._platformTagged || !filterExtId) return false;
+  var jnyL = board.jnyL || [];
+  if (jnyL.length === 0) return false;
+  return !jnyL.some(function (j) {
+    return j._platformExtId === filterExtId;
+  });
+}
+
 // cause moved it. Single write path — every horizon mutation goes through here.
 // The live value stays numeric (the dump serialises a non-finite horizon as a
 // string sentinel at read time, not here).
@@ -1831,6 +1850,25 @@ export var ui = {
       ui.buildLineFilter(view);
     }
     ui.addLoadMoreButton(isArr ? 'arrival-list' : 'departure-list', loc, stopExtId, type);
+    // Steig-Drehscheibe: the board is platform-tagged but no shown row resolved
+    // to the opened Steig, so every row falls open to both Steige — surface a
+    // hint that the list is NOT Steig-filtered (instead of a silent no-op
+    // filter). Prepended AFTER addLoadMoreButton so its .empty-state class can't
+    // suppress the 24h/50-cap hints, yet it renders above the departures.
+    if (platformHintActive(view, state._stationExtId)) {
+      var hintList = document.getElementById(isArr ? 'arrival-list' : 'departure-list');
+      // Idempotent across re-renders: renderDepartures/renderArrivals normally
+      // clear the list (replaceChildren), but the cascade-keep path returns early
+      // WITHOUT clearing (a mid-fetch empty push keeps the shown rows). Drop any
+      // prior hint before prepending so repeated ticks don't stack duplicates.
+      var priorHint = hintList.querySelector('.platform-unknown-hint');
+      if (priorHint) priorHint.remove();
+      var phLi = document.createElement('li');
+      phLi.className = 'empty-state platform-unknown-hint';
+      phLi.style.fontSize = '11px';
+      phLi.textContent = t('platform_unknown_hint');
+      hintList.insertBefore(phLi, hintList.firstChild);
+    }
   },
 
   loadDepartures: function (loc, stopExtId, isInitial) {

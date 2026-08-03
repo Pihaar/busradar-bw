@@ -285,3 +285,102 @@ describe('renderArrivals / renderDepartures empty-state edges', () => {
     );
   });
 });
+
+describe('Steig-unknown hint (Drehscheibe fail-open filter)', () => {
+  // A platform-tagged (Drehscheibe) board. locL is empty so computeScopeActive
+  // stays false and _scopedStationBoard reduces to platformScopedBoard, isolating
+  // the Steig-tag path. dTimeS 12:00 sits inside the horizon; no server clock so
+  // there is no rebase.
+  const taggedBoard = (platforms) => ({
+    _platformTagged: true,
+    common: { prodL: [{ nameS: '721' }], locL: [] },
+    jnyL: platforms.map((p, i) => ({
+      jid: 'j' + i,
+      prodX: 0,
+      dirTxt: 'D' + i,
+      _platformExtId: p,
+      stbStop: { dTimeS: '1200' + String(i).padStart(2, '0') },
+    })),
+  });
+  const ownLoc = { name: 'Walldorf-Drehscheibe', platform: '' };
+
+  it('DEP shows the hint when no shown row resolved to the opened Steig', () => {
+    state._stationDepData = taggedBoard([null, null]); // all fail-open
+    state._stationLoc = ownLoc;
+    state._stationExtId = '4466864';
+    state._stationDepHorizon = 900;
+
+    ui._renderBoard('DEP', ownLoc, '4466864');
+
+    const hint = ui.departureList.querySelector('.platform-unknown-hint');
+    expect(hint).not.toBeNull();
+    expect(hint.textContent).toContain('Steig nicht bestimmbar');
+    // Prepended above the departures.
+    expect(ui.departureList.firstChild).toBe(hint);
+    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2); // both shown
+  });
+
+  it('DEP omits the hint once a row resolved to the opened Steig', () => {
+    state._stationDepData = taggedBoard(['4466864', null]);
+    state._stationLoc = ownLoc;
+    state._stationExtId = '4466864';
+    state._stationDepHorizon = 900;
+
+    ui._renderBoard('DEP', ownLoc, '4466864');
+
+    expect(ui.departureList.querySelector('.platform-unknown-hint')).toBeNull();
+  });
+
+  it('ARR shows the hint on the arrival list (isArr branch)', () => {
+    const b = taggedBoard([null, null]);
+    b.jnyL.forEach((j) => {
+      j.stbStop = { aTimeS: j.stbStop.dTimeS };
+    });
+    state._stationArrData = b;
+    state._stationLoc = ownLoc;
+    state._stationExtId = '4407123';
+    state._stationArrHorizon = 900;
+    state._activeTab = 'arrivals';
+
+    ui._renderBoard('ARR', ownLoc, '4407123');
+
+    const arrList = document.getElementById('arrival-list');
+    expect(arrList.querySelector('.platform-unknown-hint')).not.toBeNull();
+  });
+
+  it('ordinary (untagged) board never shows the hint', () => {
+    state._stationDepData = {
+      common: { prodL: [{ nameS: '721' }], locL: [] },
+      jnyL: [{ jid: 'x', prodX: 0, dirTxt: 'HD', stbStop: { dTimeS: '120000' } }],
+    };
+    state._stationLoc = ownLoc;
+    state._stationExtId = 'OWN';
+    state._stationDepHorizon = 900;
+
+    ui._renderBoard('DEP', ownLoc, 'OWN');
+
+    expect(ui.departureList.querySelector('.platform-unknown-hint')).toBeNull();
+  });
+
+  it('does not stack duplicate hints across re-renders (cascade-keep path)', () => {
+    state._stationDepData = taggedBoard([null, null]);
+    state._stationLoc = ownLoc;
+    state._stationExtId = '4466864';
+    state._stationDepHorizon = 900;
+
+    // First render: both rows inside the horizon → 2 departure-items + one hint.
+    ui._renderBoard('DEP', ownLoc, '4466864');
+    expect(ui.departureList.querySelectorAll('.departure-item').length).toBe(2);
+    expect(ui.departureList.querySelectorAll('.platform-unknown-hint').length).toBe(1);
+
+    // Mid-fetch re-render with a collapsed horizon → the SLICE is empty so
+    // renderDepartures takes the cascade-keep early return (fetching + rows still
+    // present) and does NOT clear the list, while the unsliced `view` still holds
+    // the unresolved rows → the hint is re-evaluated. Without the dedup guard the
+    // prepend would stack a second hint. No server clock → no horizon rebase.
+    state._stationDepFetching = true;
+    state._stationDepHorizon = 0;
+    ui._renderBoard('DEP', ownLoc, '4466864');
+    expect(ui.departureList.querySelectorAll('.platform-unknown-hint').length).toBe(1);
+  });
+});
