@@ -38,40 +38,47 @@ def _board(rows):
 
 class TestTagStationboard:
     def test_arr_board_not_tagged(self, reset_steig):
-        payload: dict = {}
+        board = _board([("j1", "134500")])
+        payload: dict = {"stationboard": board}
         sel = SimpleNamespace(lid=f"A=1@L={_A}@", board_type="ARR")
-        sse_handler._tag_stationboard(None, sel, _board([("j1", "134500")]), payload)
-        assert "platforms" not in payload
+        sse_handler._tag_stationboard(None, sel, board, payload)
+        assert "platforms" not in payload["stationboard"]
 
     def test_lid_without_extid_not_tagged(self, reset_steig):
-        payload: dict = {}
+        board = _board([("j1", "134500")])
+        payload: dict = {"stationboard": board}
         sel = SimpleNamespace(lid="A=1@O=foo@", board_type="DEP")
-        sse_handler._tag_stationboard(None, sel, _board([("j1", "134500")]), payload)
-        assert "platforms" not in payload
+        sse_handler._tag_stationboard(None, sel, board, payload)
+        assert "platforms" not in payload["stationboard"]
 
     def test_non_family_stop_not_tagged(self, reset_steig):
-        payload: dict = {}
+        board = _board([("j1", "134500")])
+        payload: dict = {"stationboard": board}
         sel = SimpleNamespace(lid="A=1@L=9999999@", board_type="DEP")
-        sse_handler._tag_stationboard(None, sel, _board([("j1", "134500")]), payload)
-        assert "platforms" not in payload
+        sse_handler._tag_stationboard(None, sel, board, payload)
+        assert "platforms" not in payload["stationboard"]
 
     def test_family_cache_hit_tags_without_backfill(self, reset_steig, monkeypatch):
         scheduled = []
         monkeypatch.setattr(sse_handler, "_schedule_steig_backfill", lambda *a: scheduled.append(a))
         steig._steig_cache[("j1", _sd())] = (1000.0, {"134500": _A})
-        payload: dict = {}
+        board = _board([("j1", "134500")])
+        payload: dict = {"stationboard": board}
         sel = SimpleNamespace(lid=f"A=1@L={_A}@", board_type="DEP")
-        sse_handler._tag_stationboard(None, sel, _board([("j1", "134500")]), payload)
-        assert payload["platforms"] == [_A]
+        sse_handler._tag_stationboard(None, sel, board, payload)
+        assert payload["stationboard"]["platforms"] == [_A]
+        # cached board itself is not mutated (shallow copy in the payload)
+        assert "platforms" not in board
         assert scheduled == []  # nothing unresolved -> no backfill
 
     def test_family_cache_miss_schedules_backfill(self, reset_steig, monkeypatch):
         scheduled = []
         monkeypatch.setattr(sse_handler, "_schedule_steig_backfill", lambda *a: scheduled.append(a))
-        payload: dict = {}
+        board = _board([("j1", "134500")])
+        payload: dict = {"stationboard": board}
         sel = SimpleNamespace(lid=f"A=1@L={_A}@", board_type="DEP")
-        sse_handler._tag_stationboard(None, sel, _board([("j1", "134500")]), payload)
-        assert payload["platforms"] == [None]  # fail-open until backfill lands
+        sse_handler._tag_stationboard(None, sel, board, payload)
+        assert payload["stationboard"]["platforms"] == [None]  # fail-open until backfill lands
         assert scheduled == [(None, ["j1"], _sd())]
 
 

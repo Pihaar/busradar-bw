@@ -1,4 +1,17 @@
 -------------------------------------------------------------------
+Mon Aug  3 08:26:35 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Stationboard: fix the Steig tags never reaching the client. The
+  server attached the per-row platform array at the SSE payload level
+  while the client reads it from the board object (data.stationboard),
+  so the board always fell open to showing both Steige. The tags now
+  ride inside the board object (shallow copy, the shared board cache is
+  not mutated), so the opened Steig marker is filtered to its own
+  departures as intended. Packaging fix: the new steig.py module is now
+  installed by the RPM (%files + install list) — it was missing, which
+  crashed the service on first boot of the previous build.
+
+-------------------------------------------------------------------
 Sun Aug  2 21:36:01 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Stationboard: show platform-accurate ("Steig") departures at

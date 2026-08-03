@@ -59,7 +59,7 @@ esbuild static/style.css --minify --outfile=build/static/style.css
 
 %install
 install -d %{buildroot}/opt/busradar
-install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py hafas.py sse_handler.py %{buildroot}/opt/busradar/
+install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py hafas.py sse_handler.py steig.py %{buildroot}/opt/busradar/
 cp -a build/static %{buildroot}/opt/busradar/
 printf '%%s\n' '%{version}-%{release}' > %{buildroot}/opt/busradar/VERSION
 install -D -m 644 deploy/busradar.service %{buildroot}%{_unitdir}/busradar.service
@@ -92,6 +92,7 @@ install -D -m 644 deploy/busradar-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/busr
 /opt/busradar/caches.py
 /opt/busradar/hafas.py
 /opt/busradar/sse_handler.py
+/opt/busradar/steig.py
 /opt/busradar/static
 /opt/busradar/VERSION
 %{_unitdir}/busradar.service

@@ -556,7 +556,11 @@ def _tag_stationboard(
         return
     service_date = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%Y%m%d")
     platforms, unresolved = steig.tag_board(result, ext_id, service_date)
-    payload["platforms"] = platforms
+    # Attach the tags INSIDE the board object (shallow copy — never mutate the
+    # shared 10s-cached `result`), because the client passes `data.stationboard`
+    # (not the whole payload) to applyPushedStationboard, which reads
+    # board.platforms via annotatePlatforms.
+    payload["stationboard"] = {**result, "platforms": platforms}
     if unresolved:
         _schedule_steig_backfill(app, unresolved, service_date)
 
