@@ -716,6 +716,43 @@ class TestSearchEndpoint:
         assert resp.json()["count"] == 0
 
     @pytest.mark.asyncio
+    async def test_id_search_exact(self, client):
+        """A pure-digit query returns the stop with that exact extId."""
+        resp = await client.get("/api/search?q=6003411")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["results"][0]["extId"] == "6003411"
+        assert data["results"][0]["name"] == "Sandhausen Altes Rathaus"
+
+    @pytest.mark.asyncio
+    async def test_id_search_exact_surfaces_despite_coord_sibling(self, client):
+        """Exact ID 6004112 surfaces even though 6004111 shares its name+coord
+        (the ID path skips the coordinate dedupe)."""
+        resp = await client.get("/api/search?q=6004112")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["results"][0]["extId"] == "6004112"
+
+    @pytest.mark.asyncio
+    async def test_id_search_prefix_and_exact_first(self, client):
+        """Prefix 60034 matches both Sandhausen stops; an exact match (if any)
+        would sort ahead of prefix-only matches."""
+        resp = await client.get("/api/search?q=60034")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert {r["extId"] for r in data["results"]} == {"6003411", "6003466"}
+
+    @pytest.mark.asyncio
+    async def test_id_search_falls_back_to_name_when_no_extid(self, client):
+        """A digit query matching no extId falls through to the name search
+        (empty here, since no stop name contains digits)."""
+        resp = await client.get("/api/search?q=99999")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    @pytest.mark.asyncio
     async def test_no_match_returns_empty(self, client):
         resp = await client.get("/api/search?q=Xyznonexistent")
         assert resp.status_code == 200

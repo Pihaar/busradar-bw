@@ -548,6 +548,25 @@ async def search_stops(
     stops_data = getattr(request.app.state, "stops_data", None) or {}
     all_stops = stops_data.get("stops", [])
 
+    # Stop-ID search: a pure-digit query (>=2 ASCII digits) is treated as an
+    # extId lookup — exact matches first, then prefix matches, with NO coordinate
+    # dedupe so an exact ID always surfaces even when a same-named sibling shares
+    # its coordinate. Falls through to the name search when no extId matches (a
+    # digit string that isn't an extId), since bus-stop names are never digits.
+    q_stripped = q.strip()
+    if re.fullmatch(r"[0-9]{2,}", q_stripped):
+        exact = []
+        prefix = []
+        for s in all_stops:
+            ext = str(s.get("extId", ""))
+            if ext == q_stripped:
+                exact.append(s)
+            elif ext.startswith(q_stripped):
+                prefix.append(s)
+        id_results = exact + prefix
+        if id_results:
+            return {"results": id_results[:50], "count": min(len(id_results), 50)}
+
     results = []
     seen_coords = set()
     for s in all_stops:
