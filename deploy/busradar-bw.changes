@@ -1,4 +1,18 @@
 -------------------------------------------------------------------
+Mon Aug  3 08:53:54 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Stationboard: make the Steig filter engage immediately on open instead
+  of after ~30 s. Two causes are fixed: the initial board is fetched over
+  the REST endpoint, which was not tagged (only the SSE push was), so the
+  first render always fell open to both Steige; and the tags were only
+  resolved lazily on the first tick after open. The REST /api/stationboard
+  now runs the same platform-tagging as the SSE push (shared helper), and
+  a small background warmer keeps the Steig cache warm for the configured
+  families (at startup and every 10 min, gated on the stops-rebuild flag),
+  so an opened multi-Steig board is already platform-filtered from a warm
+  cache. Unresolved rows still fail open (shown on both Steige).
+
+-------------------------------------------------------------------
 Mon Aug  3 08:26:35 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Stationboard: fix the Steig tags never reaching the client. The

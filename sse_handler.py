@@ -515,13 +515,14 @@ async def _fetch_for_selection(
         result = await _fetch_stationboard_for_subscriber(app, sel.lid, sel.board_type, sel.dur)
         if "error" in result:
             return ("error", {"reason": "upstream", "selection": "stationboard"})
-        payload: dict[str, Any] = {
-            "lid": sel.lid,
-            "boardType": sel.board_type,
-            "stationboard": result,
-        }
-        _tag_stationboard(app, sel, result, payload)
-        return ("stationboard", payload)
+        return (
+            "stationboard",
+            {
+                "lid": sel.lid,
+                "boardType": sel.board_type,
+                "stationboard": tag_board_result(app, sel.lid, sel.board_type, result),
+            },
+        )
     return (None, None)
 
 
@@ -539,30 +540,66 @@ def _schedule_steig_backfill(app: FastAPI, unresolved: list[str], service_date: 
     task.add_done_callback(_backfill_tasks.discard)
 
 
-def _tag_stationboard(
-    app: FastAPI, sel: fanout.StationSelection, result: dict[str, Any], payload: dict[str, Any]
-) -> None:
-    """Enrich a DEP board of a multi-Steig stop with a per-row `platforms`
-    array (Steig extId or null, aligned to jnyL). Only DEP boards of a
-    configured Steig family are touched; ARR boards and ordinary stops are
-    left byte-identical (no `platforms` key -> client no-op). Unknown jids
-    trigger a non-blocking background backfill; those rows stay untagged
-    (client shows them on both Steige) until the next tick's re-push carries
-    the resolved tags — no bespoke delta event needed."""
-    if sel.board_type != "DEP":
-        return
-    ext_id = steig.extid_from_lid(sel.lid)
+def tag_board_result(
+    app: FastAPI, lid: str, board_type: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the board enriched with a per-row `platforms` array (Steig extId
+    or null, aligned to jnyL) when it is a DEP board of a configured Steig
+    family; otherwise the board unchanged. Shared by the SSE push AND the REST
+    /api/stationboard initial-load path, so the FIRST render is already
+    Steig-filtered (no ~tick delay) whenever the cache is warm. Tags ride in a
+    shallow copy — the shared 10s board cache is never mutated. Unresolved jids
+    schedule a non-blocking background backfill; those rows fail open (shown on
+    both Steige) until a warm cycle / next push resolves them."""
+    if board_type != "DEP":
+        return result
+    ext_id = steig.extid_from_lid(lid)
     if ext_id is None or steig.family_for(ext_id) is None:
-        return
+        return result
     service_date = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%Y%m%d")
     platforms, unresolved = steig.tag_board(result, ext_id, service_date)
-    # Attach the tags INSIDE the board object (shallow copy — never mutate the
-    # shared 10s-cached `result`), because the client passes `data.stationboard`
-    # (not the whole payload) to applyPushedStationboard, which reads
-    # board.platforms via annotatePlatforms.
-    payload["stationboard"] = {**result, "platforms": platforms}
     if unresolved:
         _schedule_steig_backfill(app, unresolved, service_date)
+    return {**result, "platforms": platforms}
+
+
+_STEIG_WARM_INTERVAL_S = 600.0  # keep the Steig cache warm well within the 6h TTL
+
+
+async def _warm_steig_families(app: FastAPI) -> None:
+    """Resolve each configured Steig family's current DEP-board journeys into
+    the Steig cache, so an opened board is tagged immediately (from a warm
+    cache) instead of failing open until backfill. One board fetch + a bounded
+    JD backfill per family; almost all JDs are cache hits after the first cycle.
+    dur=1440 matches the client's initial REST fetch window."""
+    service_date = datetime.now(ZoneInfo("Europe/Berlin")).strftime("%Y%m%d")
+
+    async def _fetch(jid: str) -> dict[str, Any]:
+        return await _fetch_journey_for_subscriber(app, jid)
+
+    for fam in steig.families():
+        ext_id = next(iter(fam))
+        board = await _fetch_stationboard_for_subscriber(app, f"A=1@L={ext_id}@", "DEP", 1440)
+        if "error" in board:
+            continue
+        jids = [
+            j["jid"] for j in board.get("jnyL", []) if isinstance(j.get("jid"), str) and j["jid"]
+        ]
+        if jids:
+            await steig.backfill(jids, service_date, _fetch)
+
+
+async def steig_warm_loop(app: FastAPI) -> None:
+    """Warm the Steig cache at startup and every _STEIG_WARM_INTERVAL_S so the
+    filter engages on the first board open instead of after a cold backfill."""
+    while True:
+        try:
+            await _warm_steig_families(app)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[steig] warm cycle failed")
+        await asyncio.sleep(_STEIG_WARM_INTERVAL_S)
 
 
 _FOLLOW_RING_M = 3000  # ring radius for the REPORT_ONLY off-ring follow lookup

@@ -115,6 +115,9 @@ class TestFamilyFor:
     def test_unknown_extid_returns_none(self):
         assert family_for("9999999") is None
 
+    def test_families_accessor_returns_config(self):
+        assert steig.families() == (frozenset({"4466864", "4407123"}),)
+
     def test_module_loaded_walldorf_family(self):
         assert (frozenset({"4466864", "4407123"}),) == steig._FAMILIES_IN_EFFECT
         assert len(steig._FAMILY_INDEX) == 2

@@ -111,6 +111,13 @@ def family_for(ext_id: str) -> frozenset[str] | None:
     return _FAMILY_INDEX.get(ext_id)
 
 
+def families() -> tuple[frozenset[str], ...]:
+    """The configured Steig families in effect. Used by the cache warmer to
+    proactively resolve each family's journeys so an opened board is tagged
+    immediately (from a warm cache) instead of failing open until backfill."""
+    return _FAMILIES_IN_EFFECT
+
+
 # --- Per-departure Steig resolution runtime ---------------------------------
 #
 # The board is re-pushed to each subscriber on every SSE tick (~10s). Tagging

@@ -115,6 +115,8 @@ from sse_handler import (  # noqa: F401
     handle_select,
     handle_sse_stream,
     handle_viewport,
+    steig_warm_loop,
+    tag_board_result,
 )
 from tick import (
     _SSE_PUSH_ENABLED,
@@ -258,6 +260,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             background_tasks.append(asyncio.create_task(_build_stops_on_startup(app)))
 
     background_tasks.append(asyncio.create_task(schedule_daily_rebuild_wrapper(app)))
+
+    # Keep the Steig cache warm so a multi-Steig board (Walldorf-Drehscheibe) is
+    # platform-filtered immediately on open instead of after a cold backfill.
+    # Gated on the same flag as the stops rebuild so tests/e2e stay HAFAS-free.
+    if not skip_rebuild:
+        background_tasks.append(asyncio.create_task(steig_warm_loop(app)))
 
     if _TICK_ENABLED:
         background_tasks.append(
@@ -656,28 +664,32 @@ async def get_stationboard(
     cache_key = (body.lid, body.type.value, body.dur)
     cached = _stationboard_cache.get(cache_key)
     if cached and (now - cached[0]) < _STATIONBOARD_CACHE_TTL:
-        return cached[1]
+        res = cached[1]
+    else:
+        hafas_req = {
+            "stbLoc": {"lid": body.lid},
+            "type": body.type.value,
+            "dur": body.dur,
+            "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
+        }
 
-    hafas_req = {
-        "stbLoc": {"lid": body.lid},
-        "type": body.type.value,
-        "dur": body.dur,
-        "jnyFltrL": [{"type": "PROD", "mode": "INC", "value": "32"}],
-    }
+        res = await _hafas_call_via_app(request.app, "StationBoard", hafas_req)
 
-    res = await _hafas_call_via_app(request.app, "StationBoard", hafas_req)
+        if "error" in res:
+            return JSONResponse(status_code=502, content={"error": "upstream"})
 
-    if "error" in res:
-        return JSONResponse(status_code=502, content={"error": "upstream"})
+        async with _stationboard_cache_lock:
+            _stationboard_cache[cache_key] = (time.time(), res)
+            if len(_stationboard_cache) > 500:
+                oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
+                for k in oldest:
+                    _stationboard_cache.pop(k, None)
 
-    async with _stationboard_cache_lock:
-        _stationboard_cache[cache_key] = (time.time(), res)
-        if len(_stationboard_cache) > 500:
-            oldest = sorted(_stationboard_cache, key=lambda k: _stationboard_cache[k][0])[:250]
-            for k in oldest:
-                _stationboard_cache.pop(k, None)
-
-    return res
+    # Tag Steig-family DEP boards so the client's FIRST (REST) render is already
+    # platform-filtered when the cache is warm — no waiting for an SSE tick.
+    # Applied on both the cache-hit and fresh paths; a shallow copy, the cached
+    # `res` stays untagged. Ordinary stops are returned unchanged.
+    return tag_board_result(request.app, body.lid, body.type.value, res)
 
 
 @app.get("/api/health")
