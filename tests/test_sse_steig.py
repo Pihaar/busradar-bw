@@ -94,5 +94,9 @@ class TestScheduleBackfill:
         sd = "20260101"
         sse_handler._schedule_steig_backfill(object(), ["j1"], sd)
         await asyncio.gather(*list(sse_handler._backfill_tasks))
+        # The done-callback (_backfill_tasks.discard) is scheduled via call_soon,
+        # so it runs on the next loop iteration, not synchronously when gather
+        # returns — yield once so the ref is actually cleared before asserting.
+        await asyncio.sleep(0)
         assert steig._steig_cache[("j1", sd)][1] == {"134500": _A}
         assert not sse_handler._backfill_tasks  # done-callback cleared the ref
