@@ -340,14 +340,14 @@ describe('settings', () => {
       expect(settings._loadAndValidate()).toEqual({});
     });
 
-    it('validates refreshInterval', () => {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ refreshInterval: 20000 }));
-      expect(settings._loadAndValidate().refreshInterval).toBe(20000);
-    });
-
-    it('rejects invalid refreshInterval', () => {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ refreshInterval: 5000 }));
-      expect(settings._loadAndValidate().refreshInterval).toBeUndefined();
+    it('drops a legacy refreshInterval key without throwing (setting removed)', () => {
+      localStorage.setItem(
+        SETTINGS_KEY,
+        JSON.stringify({ refreshInterval: 20000, theme: 'light' }),
+      );
+      var v = settings._loadAndValidate();
+      expect(v.refreshInterval).toBeUndefined(); // legacy key ignored
+      expect(v.theme).toBe('light'); // other settings still parsed
     });
 
     it('validates theme', () => {
@@ -395,7 +395,6 @@ describe('settings', () => {
     beforeEach(() => {
       vi.useFakeTimers();
       settings.current = {
-        refreshInterval: 10000,
         theme: 'dark',
         interpolation: true,
         posMode: 'CALC',
@@ -413,7 +412,7 @@ describe('settings', () => {
       vi.advanceTimersByTime(300);
       var stored = JSON.parse(localStorage.getItem(SETTINGS_KEY));
       expect(stored.theme).toBe('dark');
-      expect(stored.refreshInterval).toBe(10000);
+      expect(stored.refreshInterval).toBeUndefined();
     });
 
     it('_flushSave writes immediately', () => {
@@ -477,7 +476,6 @@ describe('settings', () => {
   describe('_updateHint', () => {
     beforeEach(() => {
       settings.current = {
-        refreshInterval: 10000,
         theme: 'dark',
         interpolation: true,
         posMode: 'CALC',
@@ -511,7 +509,6 @@ describe('settings', () => {
   describe('_applyThemeAttr', () => {
     beforeEach(() => {
       settings.current = {
-        refreshInterval: 10000,
         theme: 'dark',
         interpolation: true,
         posMode: 'CALC',
@@ -559,7 +556,6 @@ describe('settings', () => {
   describe('_applyPosModeConstraint', () => {
     beforeEach(() => {
       settings.current = {
-        refreshInterval: 10000,
         theme: 'dark',
         interpolation: true,
         posMode: 'CALC',
@@ -573,48 +569,6 @@ describe('settings', () => {
         '<button class="settings-opt" data-value="off"></button>' +
         '</div>' +
         '<div id="hint-animation-disabled" hidden></div>';
-    });
-
-    it('disables the refresh group and its buttons when REPORT_ONLY', () => {
-      // b121 true-arm + b122 disable-arm: refresh group present, disable=true.
-      document.body.innerHTML +=
-        '<div id="setting-refresh">' +
-        '<button class="settings-opt" data-value="10000"></button>' +
-        '<button class="settings-opt" data-value="30000"></button>' +
-        '</div>';
-      settings._userRefreshInterval = 10000;
-      settings.current.posMode = 'REPORT_ONLY';
-      settings._applyPosModeConstraint();
-      var refreshGroup = document.getElementById('setting-refresh');
-      expect(refreshGroup.getAttribute('aria-disabled')).toBe('true');
-      expect(refreshGroup.classList.contains('settings-options--disabled')).toBe(true);
-      var btns = refreshGroup.querySelectorAll('.settings-opt');
-      expect(btns[0].getAttribute('disabled')).toBe('');
-      expect(btns[0].getAttribute('tabindex')).toBe('-1');
-      expect(settings.current.refreshInterval).toBe(30000);
-      expect(state.currentInterval).toBe(30000);
-      // The 30s option is the active one under the forced interval.
-      expect(btns[1].classList.contains('settings-opt--active')).toBe(true);
-    });
-
-    it('re-enables the refresh group and restores the user interval when CALC', () => {
-      // b122 enable-arm (per button) + the else branch restoring _userRefreshInterval.
-      document.body.innerHTML +=
-        '<div id="setting-refresh">' +
-        '<button class="settings-opt" data-value="20000" disabled tabindex="-1"></button>' +
-        '<button class="settings-opt" data-value="30000"></button>' +
-        '</div>';
-      settings._userRefreshInterval = 20000;
-      settings.current.posMode = 'CALC';
-      settings._applyPosModeConstraint();
-      var refreshGroup = document.getElementById('setting-refresh');
-      expect(refreshGroup.getAttribute('aria-disabled')).toBe('false');
-      var btns = refreshGroup.querySelectorAll('.settings-opt');
-      expect(btns[0].hasAttribute('disabled')).toBe(false);
-      expect(btns[0].hasAttribute('tabindex')).toBe(false);
-      expect(settings.current.refreshInterval).toBe(20000);
-      expect(state.currentInterval).toBe(20000);
-      expect(btns[0].classList.contains('settings-opt--active')).toBe(true);
     });
 
     it('does not throw when the interpolation group and hint are absent', () => {
@@ -767,7 +721,6 @@ describe('settings', () => {
 
     it('initializes with defaults when nothing stored', () => {
       settings.init();
-      expect(settings.current.refreshInterval).toBe(10000);
       expect(settings.current.posMode).toBe('CALC');
       expect(settings.current.interpolation).toBe(true);
     });
@@ -783,7 +736,6 @@ describe('settings', () => {
       settings.init();
       expect(settings.current.theme).toBe('light');
       expect(settings.current.lang).toBe('en');
-      expect(settings.current.refreshInterval).toBe(10000);
     });
 
     it('sets data-theme attribute on documentElement', () => {
@@ -978,7 +930,6 @@ describe('settings', () => {
   describe('settings._flushSave error handling', () => {
     beforeEach(() => {
       settings.current = {
-        refreshInterval: 10000,
         theme: 'dark',
         interpolation: true,
         posMode: 'CALC',

@@ -519,16 +519,18 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         # Second POST: same bbox → must skip.
         await client.post("/api/stream/viewport", content=body, headers=headers)
         assert fired["count"] == 1
+        # No bbox and no posMode change → neither fire_tick nor poke.
+        assert sub.force_emit is False
 
     @pytest.mark.asyncio
     async def test_posmode_only_change_does_not_fire_tick(
         self, client, fresh_registry, monkeypatch
     ):
-        """Regression: PIV finding v1.2.1. A POST that flips posMode without
-        changing the quantized bbox must NOT wake all subscribers globally
-        (was: broadcast → 500× HAFAS fetch amplification). Skip anchor
-        resets via last_emitted_tick_push_seq=None on the toggler's own sub;
-        their next natural push emits within 10 s."""
+        """A POST that flips posMode without changing the quantized bbox must NOT
+        wake all subscribers globally (was: broadcast → 500× HAFAS fetch
+        amplification). Instead it per-sub pokes (sets force_emit) so the
+        toggler's own loop emits new-mode data on its next wake (~≤1s), and the
+        skip anchor resets via last_emitted_tick_push_seq=None."""
         sub = await fresh_registry.subscribe("127.0.0.1")
         fired = {"count": 0}
         original = fanout.fire_tick
@@ -550,7 +552,8 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
             headers=headers,
         )
         assert fired["count"] == 1
-        # Second POST: same bbox, only posMode changes → must NOT fire.
+        # Second POST: same bbox, only posMode changes → must NOT fire_tick,
+        # but MUST per-sub poke (force_emit set) for the immediate new-mode emit.
         await client.post(
             "/api/stream/viewport",
             content='{"swLat":49.0,"swLon":8.0,"neLat":49.6,"neLon":9.0,"posMode":"REPORT_ONLY"}',
@@ -558,8 +561,41 @@ class TestViewportSkipsFireTickWhenBboxUnchanged:
         )
         assert fired["count"] == 1
         assert sub.pos_mode == "REPORT_ONLY"
+        assert sub.force_emit is True  # per-sub poke fired
         # Anchor reset so the next push emits regardless of the tick-align gate.
         assert sub.last_emitted_tick_push_seq is None
+
+    @pytest.mark.asyncio
+    async def test_bbox_and_posmode_change_fires_tick_and_pokes(
+        self, client, fresh_registry, monkeypatch
+    ):
+        """When a single (debounce-coalesced) POST changes BOTH bbox and posMode,
+        the independent ifs fire fire_tick (bbox) AND poke (posMode); force_emit
+        guarantees the new-mode emit even if the global fire_tick bucket is empty."""
+        sub = await fresh_registry.subscribe("127.0.0.1")
+        # Prime pos_mode so the second POST is a genuine posMode change.
+        sub.pos_mode = "CALC"
+        fired = {"count": 0}
+        original = fanout.fire_tick
+
+        async def spy():
+            fired["count"] += 1
+            return await original()
+
+        monkeypatch.setattr(fanout, "fire_tick", spy)
+        headers = {
+            "Origin": "http://localhost:8000",
+            "Content-Type": "application/json",
+            "Cookie": f"__Host-busradar_sse={sub.connection_id}",
+        }
+        await client.post(
+            "/api/stream/viewport",
+            content='{"swLat":48.0,"swLon":7.0,"neLat":48.6,"neLon":8.0,"posMode":"REPORT_ONLY"}',
+            headers=headers,
+        )
+        assert fired["count"] == 1  # bbox changed → fire_tick
+        assert sub.force_emit is True  # posMode changed → poke
+        assert sub.pos_mode == "REPORT_ONLY"
 
     @pytest.mark.asyncio
     async def test_post_rate_check_ip_denies_empty(self):
@@ -1684,3 +1720,100 @@ class TestOffringFollowRealPos:
         assert calls == 1
         assert out_j[1]["journey"]["journey"]["pos"] == {"x": 8665000, "y": 49345000}
         assert out_k[1]["journey"]["journey"]["pos"] == {"x": 8666000, "y": 49346000}
+
+
+# === SEC-215: POST rate-limit reject logging ===
+
+
+class TestPostRejectLog:
+    """_maybe_log_post_reject + _rate_check_request logging (SEC-215)."""
+
+    @staticmethod
+    def _reset():
+        import sse_handler as sh
+
+        sh._post_reject_log_last.clear()
+        return sh
+
+    def test_logs_once_then_rate_limited(self, monkeypatch, caplog):
+        sh = self._reset()
+        monkeypatch.setattr(sh.time, "monotonic", lambda: 1000.0)
+        with caplog.at_level("WARNING", logger="busradar"):
+            sh._maybe_log_post_reject("sub", "1.2.3.4")
+            sh._maybe_log_post_reject("sub", "1.2.3.4")  # within window → suppressed
+        recs = [r for r in caplog.records if "post-rate-reject" in r.message]
+        assert len(recs) == 1
+        assert "scope=sub" in recs[0].message
+
+    def test_logs_again_after_window(self, monkeypatch, caplog):
+        sh = self._reset()
+        t = [1000.0]
+        monkeypatch.setattr(sh.time, "monotonic", lambda: t[0])
+        with caplog.at_level("WARNING", logger="busradar"):
+            sh._maybe_log_post_reject("ip", "5.6.7.8")
+            t[0] += sh._POST_REJECT_LOG_RATE + 1
+            sh._maybe_log_post_reject("ip", "5.6.7.8")
+        recs = [r for r in caplog.records if "post-rate-reject" in r.message]
+        assert len(recs) == 2
+
+    def test_empty_ip_uses_noip(self, monkeypatch, caplog):
+        sh = self._reset()
+        monkeypatch.setattr(sh.time, "monotonic", lambda: 2000.0)
+        with caplog.at_level("WARNING", logger="busradar"):
+            sh._maybe_log_post_reject("ip", "")
+        assert any("ip_hash=noip" in r.message for r in caplog.records)
+
+    def test_evicts_oldest_when_over_cap(self, monkeypatch):
+        import hashlib
+
+        sh = self._reset()
+        monkeypatch.setattr(sh, "_POST_REJECT_LOG_MAX_KEYS", 2)
+        monkeypatch.setattr(sh.time, "monotonic", lambda: 1000.0)
+        sh._maybe_log_post_reject("sub", "a")  # key1
+        sh._maybe_log_post_reject("sub", "b")  # key2 → dict at cap (2)
+        sh._maybe_log_post_reject("sub", "c")  # key3 → evict oldest (key1)
+        assert len(sh._post_reject_log_last) == 2
+        a_key = "sub:" + hashlib.sha256(b"a").hexdigest()[:8]
+        assert a_key not in sh._post_reject_log_last
+
+    def test_rate_check_logs_on_ip_fail(self, monkeypatch):
+        sh = self._reset()
+        monkeypatch.setattr(sh, "_client_ip", lambda r: "1.2.3.4")
+        monkeypatch.setattr(sh.fanout, "canonicalize_ip", lambda ip: ip)
+        monkeypatch.setattr(sh, "_post_rate_check_ip", lambda ip: False)
+        calls = []
+        monkeypatch.setattr(sh, "_maybe_log_post_reject", lambda scope, ip: calls.append(scope))
+        assert sh._rate_check_request(object(), sub=None) is False
+        assert calls == ["ip"]
+
+    def test_rate_check_logs_on_sub_fail(self, monkeypatch):
+        sh = self._reset()
+        monkeypatch.setattr(sh, "_client_ip", lambda r: "1.2.3.4")
+        monkeypatch.setattr(sh.fanout, "canonicalize_ip", lambda ip: ip)
+        monkeypatch.setattr(sh, "_post_rate_check_ip", lambda ip: True)
+        monkeypatch.setattr(sh, "_post_rate_check", lambda sub: False)
+        calls = []
+        monkeypatch.setattr(sh, "_maybe_log_post_reject", lambda scope, ip: calls.append(scope))
+        assert sh._rate_check_request(object(), sub=object()) is False
+        assert calls == ["sub"]
+
+    def test_rate_check_passes_no_log(self, monkeypatch):
+        sh = self._reset()
+        monkeypatch.setattr(sh, "_client_ip", lambda r: "1.2.3.4")
+        monkeypatch.setattr(sh.fanout, "canonicalize_ip", lambda ip: ip)
+        monkeypatch.setattr(sh, "_post_rate_check_ip", lambda ip: True)
+        monkeypatch.setattr(sh, "_post_rate_check", lambda sub: True)
+        calls = []
+        monkeypatch.setattr(sh, "_maybe_log_post_reject", lambda scope, ip: calls.append(scope))
+        assert sh._rate_check_request(object(), sub=object()) is True
+        assert calls == []
+
+    def test_rate_check_sub_none_skips_sub(self, monkeypatch):
+        sh = self._reset()
+        monkeypatch.setattr(sh, "_client_ip", lambda r: "1.2.3.4")
+        monkeypatch.setattr(sh.fanout, "canonicalize_ip", lambda ip: ip)
+        monkeypatch.setattr(sh, "_post_rate_check_ip", lambda ip: True)
+        calls = []
+        monkeypatch.setattr(sh, "_maybe_log_post_reject", lambda scope, ip: calls.append(scope))
+        assert sh._rate_check_request(object(), sub=None) is True
+        assert calls == []

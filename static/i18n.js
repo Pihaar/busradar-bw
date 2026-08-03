@@ -188,9 +188,6 @@
   de.settings_label = 'Einstellungen';
   en.settings_label = 'Settings';
 
-  de.setting_refresh = 'Aktualisierung';
-  en.setting_refresh = 'Refresh rate';
-
   de.setting_animation = 'Bus-Animation';
   en.setting_animation = 'Bus animation';
 
@@ -271,9 +268,6 @@
 
   de.version_banner_dismiss = 'Hinweis schließen';
   en.version_banner_dismiss = 'Dismiss notice';
-
-  de.announce_refresh = 'Aktualisierung: {n}s';
-  en.announce_refresh = 'Refresh rate: {n}s';
 
   de.announce_animation_on = 'Bus-Animation: An';
   en.announce_animation_on = 'Bus animation: On';

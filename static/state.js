@@ -43,7 +43,6 @@ export var state = {
   routeStopMarkers: [],
   routeCoords: null,
   consecutiveErrors: 0,
-  currentInterval: CONFIG.refreshInterval,
   lastUpdate: null,
   serverTimeMin: null,
   serverTimeStamp: null,
@@ -421,7 +420,6 @@ export function extractHafasMessages(common, msgL, stopL) {
 export var SETTINGS_KEY = 'busradar_settings_v1';
 export var settings = {
   defaults: {
-    refreshInterval: 10000,
     interpolation: true,
     theme: 'dark',
     posMode: 'CALC',
@@ -431,7 +429,6 @@ export var settings = {
   current: null,
   _saveTimer: null,
   _userInterpolation: true,
-  _userRefreshInterval: 10000,
   // Monotonic counter bumped by every showLocation toggle. The async
   // geolocation success/error callbacks capture their value at click time
   // and no-op if the counter has moved on — protects against on→off race
@@ -459,7 +456,6 @@ export var settings = {
       this.current.interpolation = false;
     }
     this._userInterpolation = this.current.interpolation;
-    this._userRefreshInterval = this.current.refreshInterval;
     this._applyThemeAttr();
     applyI18n(document.body);
   },
@@ -470,9 +466,6 @@ export var settings = {
       if (!raw) return {};
       var parsed = JSON.parse(raw);
       var validated = {};
-      if ([10000, 20000, 30000].indexOf(parsed.refreshInterval) >= 0) {
-        validated.refreshInterval = parsed.refreshInterval;
-      }
       if (parsed.theme === 'dark' || parsed.theme === 'light') {
         validated.theme = parsed.theme;
       }
@@ -501,7 +494,6 @@ export var settings = {
       try {
         var toSave = Object.assign({}, self.current, {
           interpolation: self._userInterpolation,
-          refreshInterval: self._userRefreshInterval,
         });
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(toSave));
       } catch (e) {}
@@ -515,7 +507,6 @@ export var settings = {
       try {
         var toSave = Object.assign({}, this.current, {
           interpolation: this._userInterpolation,
-          refreshInterval: this._userRefreshInterval,
         });
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(toSave));
       } catch (e) {}
@@ -595,30 +586,6 @@ export var settings = {
         }
         if (entry.data) entry.marker.setLatLng([entry.data.lat, entry.data.lon]);
       });
-    }
-    // GPS-Mode: force 30s refresh interval + readonly
-    var refreshGroup = document.getElementById('setting-refresh');
-    if (refreshGroup) {
-      refreshGroup.setAttribute('aria-disabled', String(disable));
-      refreshGroup.classList.toggle('settings-options--disabled', disable);
-      refreshGroup.querySelectorAll('.settings-opt').forEach(function (btn) {
-        if (disable) {
-          btn.setAttribute('disabled', '');
-          btn.setAttribute('tabindex', '-1');
-        } else {
-          btn.removeAttribute('disabled');
-          btn.removeAttribute('tabindex');
-        }
-      });
-    }
-    if (disable) {
-      this.current.refreshInterval = 30000;
-      state.currentInterval = 30000;
-      this._updateGroup('setting-refresh', '30000');
-    } else {
-      this.current.refreshInterval = this._userRefreshInterval;
-      state.currentInterval = this._userRefreshInterval;
-      this._updateGroup('setting-refresh', String(this._userRefreshInterval));
     }
   },
 };

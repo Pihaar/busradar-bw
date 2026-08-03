@@ -395,8 +395,41 @@ def _rate_check_request(request: Request, sub: fanout.Subscriber | None = None) 
     per-IP gate runs."""
     ip = fanout.canonicalize_ip(_client_ip(request))
     if not _post_rate_check_ip(ip):
+        _maybe_log_post_reject("ip", ip)
         return False
-    return sub is None or _post_rate_check(sub)
+    if sub is not None and not _post_rate_check(sub):
+        _maybe_log_post_reject("sub", ip)
+        return False
+    return True
+
+
+# SEC-215: surface a sustained POST rate-limit hit (probable scraping/DoS
+# probe) to the journal. Rate-limited to 1/min per scope+ip-hash so a spam
+# client can't turn the log line itself into a secondary flood-DoS, and the
+# key dict is FIFO-bounded so IP-rotation can't grow it unbounded. IP is
+# hashed (DPP-254), never logged raw. This is the SOFT per-request limiter;
+# the HARD connection-exhaustion vector is logged separately by
+# fanout._maybe_log_cap_reject.
+_post_reject_log_last: dict[str, float] = {}
+_POST_REJECT_LOG_RATE = 60.0  # seconds between logs per scope+ip-hash
+_POST_REJECT_LOG_MAX_KEYS = 4096
+
+
+def _maybe_log_post_reject(scope: str, ip: str) -> None:
+    import hashlib
+
+    now = time.monotonic()
+    ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:8] if ip else "noip"
+    key = f"{scope}:{ip_hash}"
+    last = _post_reject_log_last.get(key, 0.0)
+    if now - last < _POST_REJECT_LOG_RATE:
+        return
+    # Evict oldest before inserting a new key so IP/scope rotation through the
+    # deny path can't grow the dict past the cap (mirrors _post_rate_per_ip).
+    if len(_post_reject_log_last) >= _POST_REJECT_LOG_MAX_KEYS and key not in _post_reject_log_last:
+        _post_reject_log_last.pop(next(iter(_post_reject_log_last)), None)
+    _post_reject_log_last[key] = now
+    log.warning("[sse] post-rate-reject scope=%s ip_hash=%s", scope, ip_hash)
 
 
 async def _read_body_with_limit(request: Request, limit: int) -> bytes | None:
@@ -786,10 +819,22 @@ async def handle_sse_stream(request: Request, app_version: str) -> Response:
                             # B023: the lambda is consumed synchronously inside this
                             # iteration (before local_seq is reassigned below), so it
                             # captures the current value — no deferred-closure bug.
-                            fanout.tick_condition.wait_for(lambda: fanout.tick_seq > local_seq),  # noqa: B023
+                            # `or sub.force_emit` lets a per-sub posMode poke wake
+                            # this loop without a global tick_seq bump.
+                            fanout.tick_condition.wait_for(
+                                lambda: fanout.tick_seq > local_seq or sub.force_emit  # noqa: B023
+                            ),
                             timeout=keepalive,
                         )
-                    local_seq = fanout.tick_seq
+                        # Consume the per-sub wake UNDER the lock and BEFORE any
+                        # continue/await/yield below, so a REPORT_ONLY-gate skip or
+                        # an emit can't leave force_emit=True and hot-spin the loop,
+                        # and a poke landing here isn't lost. On a force_emit-only
+                        # wake tick_seq is unchanged, so this assignment is a no-op
+                        # and the next real tick still wakes us. TimeoutError skips
+                        # this (force_emit survives → next wait_for emits).
+                        local_seq = fanout.tick_seq
+                        sub.force_emit = False
                     # Keep calibrator in ACTIVE_CALIB_INTERVAL (5min) mode.
                     client_activity.touch()
                 except TimeoutError:
@@ -1010,15 +1055,21 @@ async def handle_viewport(request: Request) -> JSONResponse:
     # cache collapsing stops being effective.
     fanout.registry.maybe_warn_viewport_inflection()
 
-    # Only wake the loop if the user actually changed something we'd refetch
-    # for. fire_tick() is a global broadcast — without this guard, every
-    # redundant viewport POST (e.g. browser firing moveend at sub-quantize
-    # precision) would wake every subscriber on the box. A posMode-only
-    # change does NOT wake — the sub itself has already been re-anchored
-    # via last_emitted_tick_push_seq=None above; the next natural push (≤10s)
-    # will emit their new-mode data. Broadcasting on posMode toggle would
-    # amplify one user's UI action into 500 subscriber wake-ups + fetches
-    # (white-hat PIV finding).
+    # Wake the subscriber(s) that need fresh data. Two independent, throttled
+    # paths so one user's actions can't flood HAFAS:
+    #   - bbox change → global fire_tick (globally rate-limited): wakes every sub
+    #     to refetch its own viewport, shared via singleflight per quantized bbox.
+    #   - posMode change → per-sub poke: wakes ONLY this sub for an immediate
+    #     new-mode emit instead of waiting up to one push (≤10s). NOT a global
+    #     fire_tick — that would amplify one UI action to all subs (white-hat
+    #     finding). poke sets sub.force_emit + a per-sub-throttled, globally
+    #     rate-limited notify; if throttled, force_emit still makes the next push
+    #     emit. sub.pos_mode / sub.viewport / last_emitted_tick_push_seq=None are
+    #     already set above, so poke is pure signaling and the loop fetches new-mode.
+    # Independent ifs (not elif): if both changed, force_emit guarantees the emit
+    # even when the global fire_tick bucket is empty. A single wake consumes both.
+    if posmode_changed:
+        await fanout.poke(sub)
     if bbox_changed:
         await fanout.fire_tick()
     return JSONResponse(content={"ok": True})

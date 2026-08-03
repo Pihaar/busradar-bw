@@ -108,6 +108,7 @@ vi.mock('../../static/api.js', () => ({
 
 const mapMock = {
   mapModule: { init: vi.fn() },
+  markers: { clearVehicles: vi.fn() },
   stopsLayer: { init: vi.fn(), loadAll: vi.fn() },
   setUserLocationMarker: vi.fn(),
   startLocationWatch: vi.fn(),
@@ -149,11 +150,6 @@ function buildSettingsDom() {
       <div class="settings-options" id="setting-posmode">
         <button class="settings-opt settings-opt--active" data-value="CALC"></button>
         <button class="settings-opt" data-value="REPORT_ONLY"></button>
-      </div>
-      <div class="settings-options" id="setting-refresh">
-        <button class="settings-opt settings-opt--active" data-value="10000"></button>
-        <button class="settings-opt" data-value="20000"></button>
-        <button class="settings-opt" data-value="30000"></button>
       </div>
       <div class="settings-options" id="setting-interpolation">
         <button class="settings-opt settings-opt--active" data-value="on"></button>
@@ -294,33 +290,6 @@ describe('settings._bindUI — settings button toggle', () => {
   });
 });
 
-describe('settings._bindUI — refresh interval', () => {
-  beforeEach(() => {
-    settings.init();
-    settings._bindUI();
-  });
-
-  it('picks the interval, persists it and re-anchors the viewport', () => {
-    settings.current.posMode = 'CALC';
-    click(optOf('setting-refresh', '20000'));
-    expect(settings.current.refreshInterval).toBe(20000);
-    expect(settings._userRefreshInterval).toBe(20000);
-    expect(state.currentInterval).toBe(20000);
-    expect(refreshMock.notifyViewportChange).toHaveBeenCalled();
-    expect(refreshMock.announce).toHaveBeenCalled();
-    expect(optOf('setting-refresh', '20000').classList.contains('settings-opt--active')).toBe(true);
-  });
-
-  it('is inert in REPORT_ONLY mode (guard early-returns)', () => {
-    settings.current.posMode = 'REPORT_ONLY';
-    const before = settings.current.refreshInterval;
-    refreshMock.notifyViewportChange.mockClear();
-    click(optOf('setting-refresh', '20000'));
-    expect(settings.current.refreshInterval).toBe(before);
-    expect(refreshMock.notifyViewportChange).not.toHaveBeenCalled();
-  });
-});
-
 describe('settings._bindUI — interpolation toggle', () => {
   beforeEach(() => {
     settings.init();
@@ -404,6 +373,65 @@ describe('settings._bindUI — posmode toggle', () => {
     click(optOf('setting-posmode', 'REPORT_ONLY'));
     expect(settings.current.posMode).toBe('REPORT_ONLY');
     expect(refreshMock.announce).toHaveBeenCalled();
+  });
+
+  it('a real switch clears all vehicle markers', () => {
+    settings.current.posMode = 'CALC';
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(mapMock.markers.clearVehicles).toHaveBeenCalledOnce();
+  });
+
+  it('deselects a selected bus (closePanel) before clearing on a real switch', () => {
+    settings.current.posMode = 'CALC';
+    state.selectedJid = 'bus1';
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(uiMock.closePanel).toHaveBeenCalledOnce();
+    expect(mapMock.markers.clearVehicles).toHaveBeenCalledOnce();
+    expect(uiMock.closePanel.mock.invocationCallOrder[0]).toBeLessThan(
+      mapMock.markers.clearVehicles.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not close the panel when no bus is selected', () => {
+    settings.current.posMode = 'CALC';
+    state.selectedJid = null;
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(mapMock.markers.clearVehicles).toHaveBeenCalledOnce();
+    expect(uiMock.closePanel).not.toHaveBeenCalled();
+  });
+
+  it('keeps an open stationboard (stop selected, no jid): clears markers, no closePanel', () => {
+    settings.current.posMode = 'CALC';
+    state.selectedJid = null;
+    state.selectedStop = { lid: 'A=1@L=123@' };
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(mapMock.markers.clearVehicles).toHaveBeenCalledOnce();
+    expect(uiMock.closePanel).not.toHaveBeenCalled();
+  });
+
+  it('re-clicking the active mode does not clear/deselect but still re-anchors', () => {
+    settings.current.posMode = 'REPORT_ONLY';
+    state.selectedJid = 'bus1';
+    state.selectedStop = { lid: 'x' };
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(mapMock.markers.clearVehicles).not.toHaveBeenCalled();
+    expect(uiMock.closePanel).not.toHaveBeenCalled();
+    expect(refreshMock.notifyViewportChange).toHaveBeenCalled();
+  });
+
+  it('two successive real switches both clear (prev tracked correctly)', () => {
+    settings.current.posMode = 'CALC';
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    click(optOf('setting-posmode', 'CALC'));
+    expect(mapMock.markers.clearVehicles).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears before re-anchoring the viewport', () => {
+    settings.current.posMode = 'CALC';
+    click(optOf('setting-posmode', 'REPORT_ONLY'));
+    expect(mapMock.markers.clearVehicles.mock.invocationCallOrder[0]).toBeLessThan(
+      refreshMock.notifyViewportChange.mock.invocationCallOrder[0],
+    );
   });
 });
 

@@ -151,6 +151,41 @@ class TestEventGeneratorKeepalive:
         assert frames[-1] == ": keepalive\n\n"
 
 
+class TestEventGeneratorForceEmit:
+    """Per-sub posMode poke: force_emit wakes the loop (no tick_seq bump) and is
+    consumed on that wake so it can't hot-spin. (_drive bypasses the real
+    predicate, so it simulates the wake; it verifies the consume + emit that
+    follow a wake.)"""
+
+    @pytest.mark.asyncio
+    async def test_force_emit_wake_emits_and_resets_flag(self):
+        def setup(sub):
+            sub.viewport = (49.0, 8.0, 49.6, 9.0)
+            sub.force_emit = True
+
+        frames, sub = await _drive(
+            setup, [lambda: None], {"_fetch_vehicles_for_viewport": _ok_vehicles}
+        )
+        assert any(f.startswith("event: vehicles\n") for f in frames)
+        assert sub.force_emit is False  # consumed under the lock on the wake
+
+    @pytest.mark.asyncio
+    async def test_report_only_with_force_emit_emits_via_reset_anchor(self):
+        # Real posMode→REPORT_ONLY path: handle_viewport set last_emitted_tick_push_seq
+        # =None + force_emit; the REPORT_ONLY gate must emit despite a non-tick-aligned wake.
+        def setup(sub):
+            sub.viewport = (49.0, 8.0, 49.6, 9.0)
+            sub.pos_mode = "REPORT_ONLY"
+            sub.last_emitted_tick_push_seq = None
+            sub.force_emit = True
+
+        frames, sub = await _drive(
+            setup, [lambda: None], {"_fetch_vehicles_for_viewport": _ok_vehicles}
+        )
+        assert any(f.startswith("event: vehicles\n") for f in frames)
+        assert sub.force_emit is False
+
+
 class TestEventGeneratorTickVehicles:
     @pytest.mark.asyncio
     async def test_vehicles_emitted_on_tick(self):

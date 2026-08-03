@@ -692,6 +692,16 @@ export var markers = {
     return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
   },
 
+  // Marker-Interpolationsdauer = erwartete Push-Kadenz des aktiven posMode, damit
+  // die Animation ~bis zum nächsten SSE-Push läuft (glatt, kein Sprung). Kadenz ist
+  // server-fix (tick.py). Unbekannter/undefinierter posMode → CALC (sicherer
+  // Default); defensiv gegen ein noch nicht hydratisiertes settings.current.
+  _animDurationMs: function () {
+    return settings.current && settings.current.posMode === 'REPORT_ONLY'
+      ? CONFIG.markerAnimMsGps
+      : CONFIG.markerAnimMsCalc;
+  },
+
   animateMarker: function (entry, targetLatLng) {
     if (!settings.current.interpolation || state.map.getZoom() < CONFIG.zoomThresholdNoAnimation) {
       entry.marker.setLatLng(targetLatLng);
@@ -708,7 +718,7 @@ export var markers = {
     if (entry._animFrame) cancelAnimationFrame(entry._animFrame);
     var start = current;
     var startTime = performance.now();
-    var duration = state.currentInterval;
+    var duration = markers._animDurationMs();
 
     function step(now) {
       var prog = Math.min((now - startTime) / duration, 1);
@@ -901,6 +911,24 @@ export var markers = {
     // Expose so the status counter can show the actually-visible count
     // without re-filtering the array upstream.
     markers._lastVisibleCount = visibleCount;
+  },
+
+  // Remove ALL bus markers immediately (posMode switch): cancel each entry's
+  // in-flight interpolation RAF, drop its Leaflet marker, then empty the store.
+  // state.vehicles holds only bus markers (stops live in stopsLayer), so this is
+  // inherently scoped to buses. The next SSE push (server-poked on the posMode
+  // POST, so ~≤1s) repopulates only the buses valid for the new mode via
+  // updateAll's create branch. Callers deselect any selected bus first, so
+  // there is no highlight/follow state to preserve here.
+  clearVehicles: function () {
+    state.vehicles.forEach(function (entry) {
+      if (entry._animFrame) {
+        cancelAnimationFrame(entry._animFrame);
+        entry._animFrame = null;
+      }
+      if (entry.marker) entry.marker.remove();
+    });
+    state.vehicles.clear();
   },
 
   highlightSelected: function (jid) {

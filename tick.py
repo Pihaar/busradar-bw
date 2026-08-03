@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 log = logging.getLogger("busradar")
 
 # --- Constants ---
+# CLIENT COUPLING: static/config.js mirrors these two as marker-animation
+# durations — markerAnimMsCalc = SSE_PUSH_PERIOD*1000, markerAnimMsGps =
+# TICK_PERIOD*1000 (see map.js _animDurationMs). The client animates a marker
+# ~until the next push, so if either cadence changes here, keep config.js in sync.
 TICK_PERIOD = 30.0
 # SSE push cadence. The HAFAS GPS-cadence is 30 s (TICK_PERIOD above), but
 # HAFAS with trainPosMode=CALC returns a freshly-computed interpolated

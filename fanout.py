@@ -156,6 +156,16 @@ class Subscriber:
     # skip pattern. None means "next push always emits" — used both on initial
     # subscribe and after any posMode toggle so the user sees new-mode data.
     last_emitted_tick_push_seq: int | None = None
+    # Per-subscriber immediate-emit flag, set by handle_viewport via poke() on a
+    # posMode toggle so this sub's SSE loop emits on its next wake instead of
+    # waiting up to one push (≤10s). Set AND cleared ONLY under tick_condition.
+    # Level-triggered (durable bool): a poke that lands while the loop is mid-
+    # fetch isn't lost — the next wait_for predicate re-check sees it.
+    force_emit: bool = False
+    # monotonic timestamp of this sub's last poke that actually notified; the
+    # POKE_MIN_INTERVAL throttle keys off it so one client can't monopolise the
+    # global poke bucket.
+    last_poke_at: float = 0.0
 
 
 # === Tick fanout primitives ===
@@ -194,6 +204,20 @@ _fire_tick_tokens: float = FIRE_TICK_BURST
 _fire_tick_last_refill: float = 0.0  # time.monotonic() when tokens last topped up
 _fire_tick_shed_count: int = 0  # instrumentation: sum of denials
 _fire_tick_shed_log_cooldown: float = 0.0  # last-warning timestamp
+
+# poke() global rate-limit — mirrors fire_tick's bucket. poke() re-uses the same
+# expensive notify_all(over all loops), so it needs the same aggregate cap that
+# fire_tick has, or one client's posMode toggling would re-introduce the
+# amplification fire_tick was capped for. Continuous-refill token bucket; when
+# empty, poke no-ops the notify (force_emit stays set → next push emits).
+POKE_RATE = 5.0  # tokens per second (global aggregate)
+POKE_BURST = 5.0  # burst capacity
+# Per-subscriber min-interval between notifying pokes, so a single client (up to
+# the per-sub POST 429 of ~5/s) can't drain the whole global bucket and starve
+# other users' pokes. force_emit is still set when throttled → next push emits.
+POKE_MIN_INTERVAL = 1.0  # seconds
+_poke_tokens: float = POKE_BURST
+_poke_last_refill: float = 0.0
 
 
 async def fire_tick() -> int:
@@ -252,6 +276,42 @@ async def fire_push_tick(tick_aligned: bool = False) -> int:
             tick_push_seq += 1
         tick_condition.notify_all()
         return tick_seq
+
+
+async def poke(sub: Subscriber) -> None:
+    """Per-subscriber immediate wake for a posMode toggle. Signaling ONLY —
+    sub.pos_mode / sub.viewport / last_emitted_tick_push_seq are already updated
+    by the caller BEFORE this call; poke never carries data. Sets sub.force_emit
+    and notify_all()s the shared condition UNDER the lock, so the woken loop can
+    never miss it. Coalesces (already-set → return, consumes no token). The
+    notify is gated by a per-sub min-interval AND the global poke bucket; when
+    either is exhausted, force_emit stays set and the next sse_push_loop tick
+    (≤10s) delivers it (graceful degrade, no data loss). asyncio.Condition has no
+    targeted notify, so notify_all wakes all loops — only THIS sub passes its
+    predicate (force_emit), the rest re-block. All checks are sync (no await
+    under the lock), so fire_tick and the consuming loop aren't blocked."""
+    global _poke_tokens, _poke_last_refill
+    async with tick_condition:
+        if sub.force_emit:
+            return
+        sub.force_emit = True
+        now = time.monotonic()
+        # Per-sub throttle: force_emit is set above (so the next push still
+        # emits), but we skip the notify if this sub notified too recently.
+        if now - sub.last_poke_at < POKE_MIN_INTERVAL:
+            return
+        # Global bucket: continuous refill up to POKE_BURST (mirrors fire_tick).
+        if _poke_last_refill == 0.0:
+            _poke_last_refill = now
+        elapsed = now - _poke_last_refill
+        if elapsed > 0:
+            _poke_tokens = min(POKE_BURST, _poke_tokens + elapsed * POKE_RATE)
+            _poke_last_refill = now
+        if _poke_tokens < 1.0:
+            return
+        _poke_tokens -= 1.0
+        sub.last_poke_at = now
+        tick_condition.notify_all()
 
 
 # === IPv6 canonicalisation ===

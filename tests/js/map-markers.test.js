@@ -153,11 +153,29 @@ describe('markers.calcInitialBearing', () => {
   });
 });
 
+describe('markers._animDurationMs', () => {
+  it('uses the CALC push cadence for interpolated mode', () => {
+    settings.current = { posMode: 'CALC' };
+    expect(markers._animDurationMs()).toBe(CONFIG.markerAnimMsCalc);
+  });
+  it('uses the GPS push cadence for REPORT_ONLY', () => {
+    settings.current = { posMode: 'REPORT_ONLY' };
+    expect(markers._animDurationMs()).toBe(CONFIG.markerAnimMsGps);
+  });
+  it('falls back to CALC cadence for an unknown/legacy posMode string', () => {
+    settings.current = { posMode: 'SOMETHING_ELSE' };
+    expect(markers._animDurationMs()).toBe(CONFIG.markerAnimMsCalc);
+  });
+  it('falls back to CALC cadence when settings.current is not yet hydrated', () => {
+    settings.current = null;
+    expect(markers._animDurationMs()).toBe(CONFIG.markerAnimMsCalc);
+  });
+});
+
 describe('markers.animateMarker', () => {
   beforeEach(() => {
-    settings.current = { interpolation: true, lang: 'de' };
+    settings.current = { interpolation: true, lang: 'de', posMode: 'CALC' };
     state.map = { getZoom: () => 15 };
-    state.currentInterval = 1000;
   });
 
   it('jumps directly (setLatLng) when interpolation is off', () => {
@@ -200,7 +218,7 @@ describe('markers.animateMarker', () => {
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
 
     // Drive one intermediate frame (prog = 0.5) → interpolated midpoint, reschedules.
-    now = 1500;
+    now = 1000 + CONFIG.markerAnimMsCalc / 2;
     rafCb(now);
     let mid = entry.marker.setLatLng.mock.calls.at(-1)[0];
     expect(mid[0]).toBeCloseTo(49.35, 6);
@@ -208,7 +226,7 @@ describe('markers.animateMarker', () => {
     expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
 
     // Final frame (prog clamps to 1) → target reached, no further reschedule.
-    now = 3000;
+    now = 1000 + CONFIG.markerAnimMsCalc + 1000;
     rafCb(now);
     let end = entry.marker.setLatLng.mock.calls.at(-1)[0];
     expect(end[0]).toBeCloseTo(49.4, 6);
@@ -370,5 +388,55 @@ describe('markers.updateAll — position-unchanged and selection branches', () =
     markers.updateAll([{ jid: 'nomap', lat: 49.9, lon: 9.9, line: '725', delay: 0 }]);
     expect(L.marker).toHaveBeenCalledOnce();
     expect(state.vehicles.has('nomap')).toBe(true);
+  });
+});
+
+describe('markers.clearVehicles', () => {
+  beforeEach(() => {
+    state.vehicles = new Map();
+    globalThis.cancelAnimationFrame = vi.fn();
+  });
+
+  it('removes every marker and empties the store', () => {
+    var m1 = makeMarkerMock();
+    var m2 = makeMarkerMock();
+    state.vehicles.set('a', { marker: m1, data: {}, missedCycles: 0 });
+    state.vehicles.set('b', { marker: m2, data: {}, missedCycles: 0 });
+    markers.clearVehicles();
+    expect(m1.remove).toHaveBeenCalledOnce();
+    expect(m2.remove).toHaveBeenCalledOnce();
+    expect(state.vehicles.size).toBe(0);
+  });
+
+  it('cancels an in-flight animation frame with its stored id and nulls it', () => {
+    var m = makeMarkerMock();
+    var entry = { marker: m, data: {}, missedCycles: 0, _animFrame: 42 };
+    state.vehicles.set('a', entry);
+    markers.clearVehicles();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
+    expect(entry._animFrame).toBeNull(); // reset so a reused RAF id can't be re-cancelled
+    expect(state.vehicles.size).toBe(0);
+  });
+
+  it('does not cancel a frame when none is in flight', () => {
+    state.vehicles.set('a', { marker: makeMarkerMock(), data: {}, missedCycles: 0 });
+    markers.clearVehicles();
+    expect(cancelAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it('tolerates an entry without a marker and still removes the rest', () => {
+    var m = makeMarkerMock();
+    state.vehicles.set('nomarker', { data: {}, missedCycles: 0, _animFrame: 7 });
+    state.vehicles.set('ok', { marker: m, data: {}, missedCycles: 0 });
+    expect(() => markers.clearVehicles()).not.toThrow();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(7); // markerless entry's RAF still cancelled
+    expect(m.remove).toHaveBeenCalledOnce();
+    expect(state.vehicles.size).toBe(0);
+  });
+
+  it('is a no-op on an empty store', () => {
+    expect(() => markers.clearVehicles()).not.toThrow();
+    expect(state.vehicles.size).toBe(0);
+    expect(cancelAnimationFrame).not.toHaveBeenCalled();
   });
 });

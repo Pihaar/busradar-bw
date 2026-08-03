@@ -8,6 +8,7 @@ import { state, settings, t, parseCoord, parseZoom } from './state.js';
 import { urlState } from './api.js';
 import {
   mapModule,
+  markers,
   stopsLayer,
   setUserLocationMarker,
   startLocationWatch,
@@ -37,22 +38,6 @@ settings._bindUI = function () {
     if (willOpen) self._updateHint();
   });
 
-  document.querySelectorAll('#setting-refresh .settings-opt').forEach(function (opt) {
-    opt.addEventListener('click', function () {
-      if (self.current.posMode === 'REPORT_ONLY') return;
-      self.current.refreshInterval = parseInt(opt.dataset.value, 10);
-      self._userRefreshInterval = self.current.refreshInterval;
-      self._save();
-      state.currentInterval = self.current.refreshInterval;
-      // The SSE stream pushes data at the HAFAS-tick cadence; there is no
-      // setTimeout poll loop to nudge. Refresh-interval setting is kept
-      // only for the 1s status ticker / status text formatting.
-      notifyViewportChange();
-      self._updateGroup('setting-refresh', opt.dataset.value);
-      announce(t('announce_refresh', { n: self.current.refreshInterval / 1000 }));
-    });
-  });
-
   document.querySelectorAll('#setting-interpolation .settings-opt').forEach(function (opt) {
     opt.addEventListener('click', function () {
       if (self.current.posMode === 'REPORT_ONLY') return;
@@ -76,9 +61,20 @@ settings._bindUI = function () {
 
   document.querySelectorAll('#setting-posmode .settings-opt').forEach(function (opt) {
     opt.addEventListener('click', function () {
+      var prev = self.current.posMode;
       self.current.posMode = opt.dataset.value;
       self._save();
       self._updateGroup('setting-posmode', opt.dataset.value);
+      if (opt.dataset.value !== prev) {
+        // Real mode switch: deselect any selected bus (no highlight/follow state
+        // left to preserve), then drop ALL bus markers so lingering grey/no-live
+        // buses vanish at once instead of aging out over ~2 grace cycles. The
+        // notifyViewportChange() POST below wakes the server to re-emit only the
+        // new-mode buses (~≤1s). Clear runs BEFORE _applyPosModeConstraint so its
+        // snap loop iterates an already-empty store.
+        if (state.selectedJid) ui.closePanel();
+        markers.clearVehicles();
+      }
       self._applyPosModeConstraint();
       if (opt.dataset.value === 'CALC') {
         announce(t('announce_posmode_calc'));
@@ -104,7 +100,6 @@ settings._bindUI = function () {
     });
   });
 
-  this._updateGroup('setting-refresh', String(this.current.refreshInterval));
   this._updateGroup('setting-interpolation', this.current.interpolation ? 'on' : 'off');
   this._updateGroup('setting-posmode', this.current.posMode);
   this._updateGroup('setting-theme', this.current.theme);
@@ -174,7 +169,6 @@ settings._bindUI = function () {
       try {
         var toSave = Object.assign({}, self.current, {
           interpolation: self._userInterpolation,
-          refreshInterval: self._userRefreshInterval,
         });
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(toSave));
       } catch (e) {}

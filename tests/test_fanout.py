@@ -43,6 +43,8 @@ def reset_module_state():
     # test_fire_tick_bumps_seq is otherwise order-dependent on the bucket.
     fanout._fire_tick_tokens = fanout.FIRE_TICK_BURST
     fanout._fire_tick_last_refill = 0.0
+    fanout._poke_tokens = fanout.POKE_BURST
+    fanout._poke_last_refill = 0.0
 
 
 async def _fresh_condition():
@@ -54,6 +56,8 @@ async def _fresh_condition():
     fanout.tick_push_seq = 0
     fanout._fire_tick_tokens = fanout.FIRE_TICK_BURST
     fanout._fire_tick_last_refill = 0.0
+    fanout._poke_tokens = fanout.POKE_BURST
+    fanout._poke_last_refill = 0.0
 
 
 # === canonicalize_ip ===
@@ -247,6 +251,116 @@ class TestTickFanout:
         await fire_tick()
         await asyncio.wait_for(task, timeout=1.0)
         assert received_seqs == [local_at_start + 1]
+
+
+# === Per-subscriber poke (posMode toggle) ===
+
+
+class TestPoke:
+    @pytest.mark.asyncio
+    async def test_sets_force_emit_notifies_consumes_token_no_seq_bump(
+        self, reset_module_state, monkeypatch
+    ):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        before_tick, before_push = fanout.tick_seq, fanout.tick_push_seq
+        tokens_before = fanout._poke_tokens
+
+        woke: list[bool] = []
+
+        async def waiter():
+            async with fanout.tick_condition:
+                await fanout.tick_condition.wait_for(lambda: sub.force_emit)
+                woke.append(True)
+
+        task = asyncio.create_task(waiter())
+        await asyncio.sleep(0)  # let the waiter block on the condition
+        await fanout.poke(sub)
+        await asyncio.wait_for(task, timeout=1)
+
+        assert sub.force_emit is True
+        assert woke == [True]  # notify_all woke the waiter
+        assert fanout._poke_tokens == tokens_before - 1.0
+        assert sub.last_poke_at == 1000.0
+        # poke bumps NO seq counters (REPORT_ONLY anchor unaffected)
+        assert fanout.tick_seq == before_tick
+        assert fanout.tick_push_seq == before_push
+
+    @pytest.mark.asyncio
+    async def test_coalesces_when_force_emit_already_set(self, reset_module_state, monkeypatch):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        sub.force_emit = True  # a prior poke's flag not yet consumed
+        tokens_before = fanout._poke_tokens
+        await fanout.poke(sub)
+        assert sub.force_emit is True
+        assert fanout._poke_tokens == tokens_before  # coalesced → no token spent
+        assert sub.last_poke_at == 0.0  # never updated
+
+    @pytest.mark.asyncio
+    async def test_throttled_within_min_interval_sets_flag_but_no_notify(
+        self, reset_module_state, monkeypatch
+    ):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        sub.last_poke_at = 1000.0 - (fanout.POKE_MIN_INTERVAL / 2)  # too recent
+        tokens_before = fanout._poke_tokens
+        await fanout.poke(sub)
+        assert sub.force_emit is True  # flag set → next push still emits
+        assert fanout._poke_tokens == tokens_before  # no notify → no token spent
+
+    @pytest.mark.asyncio
+    async def test_token_exhausted_sets_flag_but_no_notify(self, reset_module_state, monkeypatch):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        fanout._poke_tokens = 0.0
+        fanout._poke_last_refill = 1000.0  # elapsed 0 → no refill
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        await fanout.poke(sub)
+        assert sub.force_emit is True
+        assert fanout._poke_tokens == 0.0  # nothing to spend
+        assert sub.last_poke_at == 0.0  # notify path not reached
+
+    @pytest.mark.asyncio
+    async def test_bucket_refills_over_time(self, reset_module_state, monkeypatch):
+        await _fresh_condition()
+        now = [1000.0]
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: now[0])
+        fanout._poke_tokens = 0.0
+        fanout._poke_last_refill = 1000.0
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        # First poke: bucket empty → flag set, no notify.
+        await fanout.poke(sub)
+        assert fanout._poke_tokens == 0.0
+        # Advance 1 s → refill POKE_RATE tokens; simulate the loop having consumed
+        # the flag so the coalesce guard doesn't short-circuit the second poke.
+        sub.force_emit = False
+        now[0] += 1.0
+        await fanout.poke(sub)
+        assert sub.force_emit is True
+        assert fanout._poke_tokens == min(fanout.POKE_BURST, fanout.POKE_RATE) - 1.0
+        assert sub.last_poke_at == 1001.0
+
+    @pytest.mark.asyncio
+    async def test_only_target_sub_gets_force_emit(self, reset_module_state, monkeypatch):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        a = Subscriber(connection_id="a", ip="1.1.1.1")
+        b = Subscriber(connection_id="b", ip="2.2.2.2")
+        await fanout.poke(a)
+        assert a.force_emit is True
+        assert b.force_emit is False  # sibling subscriber untouched
+
+    @pytest.mark.asyncio
+    async def test_poke_with_no_waiters_does_not_crash(self, reset_module_state, monkeypatch):
+        await _fresh_condition()
+        monkeypatch.setattr(fanout.time, "monotonic", lambda: 1000.0)
+        sub = Subscriber(connection_id="x", ip="1.2.3.4")
+        await fanout.poke(sub)  # notify_all with no waiters is a safe no-op
+        assert sub.force_emit is True
 
 
 # === Slow consumer ===
