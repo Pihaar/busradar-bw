@@ -26,9 +26,12 @@ python3 -m uvicorn proxy:app --host 0.0.0.0 --port 8000
 - Bus-Interpolation (flüssige Bewegung zwischen Tick-Updates)
 - Tick-aware Cache (synchronisiert auf HAFAS-Update-Tick, vermeidet stale data)
 - Richtungspfeile auf Bus-Markern
-- Haltestellensuche (BW-weit, 11.000+ Stops)
+- Haltestellensuche (BW-weit, 11.000+ Stops; reine Ziffern-Eingabe = direkte Stop-ID/extId-Suche)
 - Liniensuche BW-weit (findet Busse auch außerhalb des Viewports)
 - Abfahrts-/Ankünftetafel pro Haltestelle mit Bussteig-Zuordnung
+- Steig-genaue Abfahrten an Multi-Steig-"Drehscheibe"-Stops (pro Abfahrt aus den
+  JourneyDetails aufgelöst, keine Verallgemeinerung; Hinweis, wenn ein Steig nicht
+  bestimmbar ist, dann Fail-open auf beide Steige)
 - Getrennte Linienfilter pro Tab (Abfahrten/Ankünfte unabhängig)
 - Fahrtverlauf mit grau/türkis Route-Split (gefahren/kommend)
 - "Bus folgen" (Karte folgt Bus automatisch)
@@ -66,7 +69,10 @@ fließen als kleine POSTs zurück; der State lebt server-seitig auf der Subscrib
 
 ```
 busradar-bw/
-├── proxy.py                 # FastAPI Backend-Proxy mit SSE-Stream (~900 LOC)
+├── proxy.py                 # FastAPI Backend-Proxy + Routen/Endpunkte (~900 LOC)
+├── sse_handler.py           # SSE-Stream, Fanout-Push, Board-/Journey-Tagging (größtes Backend-Modul)
+├── hafas.py                 # HAFAS-Request-Layer (mgate.exe-Envelopes, extract_platform, lid-Validierung)
+├── steig.py                 # Steig-/Drehscheibe-Config (config-as-code) + per-Abfahrt-Auflösung (#222)
 ├── fanout.py                # Subscriber-Registry + Tick-Fanout (Condition + selection_seq)
 ├── tick.py                  # Tick-Tracker (HAFAS-Update-Detection)
 ├── stops_builder.py         # BW-weiter Stops-Cache-Builder
@@ -97,6 +103,10 @@ busradar-bw/
 └── README.md
 ```
 
+Die `static/*.js` oben sind die Entwicklungsstruktur (einzelne ES-Module). Beim RPM-Build
+werden sie via esbuild zu einer minifizierten `init.js` gebündelt und nur diese ausgeliefert;
+`i18n.js`/`sw.js`/`style.css` werden minifiziert übernommen.
+
 ## API-Endpunkte (Proxy)
 
 | Endpoint | Methode | Beschreibung |
@@ -107,9 +117,9 @@ busradar-bw/
 | `/api/journey` | POST | Fahrtdetails + Polyline (Click-Time, parallel zum SSE-Push) |
 | `/api/stationboard` | POST | Abfahrten/Ankünfte (Click-Time, ARR über tab-switch) |
 | `/api/stops` | GET | Haltestellen im Radius (aus Cache) |
-| `/api/search` | GET | HAFAS-Haltestellensuche (q, lat, lon) |
+| `/api/search` | GET | Haltestellensuche im lokalen Stops-Cache (Name-Match; reine Ziffern-Query = Stop-ID/extId-Lookup) (q, lat, lon) |
 | `/api/line_search` | GET | BW-weite Liniensuche (q) |
-| `/api/health` | GET | Server-Status + Tick-Calibrator |
+| `/api/health` | GET | Server-Status, Tick-Calibrator, Steig-Auflösungsstatistik, `stops_rebuilding` |
 
 ## Sicherheit
 
