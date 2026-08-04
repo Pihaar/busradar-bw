@@ -554,6 +554,13 @@ export var stopsLayer = {
       }
     });
     this.loadFromCache();
+    // zoomend fires only on a zoom CHANGE, so a page loaded already below
+    // minZoom would keep the cached stops (added to the on-map layer by
+    // loadFromCache) visible. Sync the layer to the initial zoom once here,
+    // mirroring the zoomend rule.
+    if (state.map.getZoom() < this.minZoom) {
+      state.map.removeLayer(state.stopLayer);
+    }
   },
 
   loadFromCache: function () {

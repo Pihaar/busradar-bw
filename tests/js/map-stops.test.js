@@ -260,6 +260,30 @@ describe('stopsLayer.init', () => {
     zoomend();
     expect(state.map.removeLayer).toHaveBeenCalledWith(state.stopLayer);
   });
+
+  it('hides the layer when the page starts already below minZoom (regression)', () => {
+    // zoomend only fires on a zoom CHANGE, so a page loaded below minZoom must
+    // still hide the cached dots at init — not just after the first manual zoom.
+    state.map = makeMapMock(10); // below minZoom (14)
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({ ts: Date.now(), stops: [{ lid: 'a', name: 'A', lat: 49, lon: 8 }] }),
+    );
+    stopsLayer.init();
+    expect(state.map.removeLayer).toHaveBeenCalledWith(state.stopLayer);
+  });
+
+  it('keeps the layer visible when the page starts at or above minZoom', () => {
+    // default map zoom is 15 (beforeEach) → above minZoom, layer must stay
+    stopsLayer.init();
+    expect(state.map.removeLayer).not.toHaveBeenCalled();
+  });
+
+  it('keeps the layer visible when the initial zoom equals minZoom (boundary)', () => {
+    state.map = makeMapMock(14); // == minZoom → shown (mirrors zoomend's >= rule)
+    stopsLayer.init();
+    expect(state.map.removeLayer).not.toHaveBeenCalled();
+  });
 });
 
 describe('stopsLayer.loadAll', () => {
