@@ -49,7 +49,7 @@ vi.mock('../../static/ui.js', () => ({
   ui: { selectJourney: vi.fn(), showStationBoard: vi.fn(), closePanel: vi.fn() },
 }));
 
-const { markers } = await import('../../static/map.js');
+const { markers, withCartoKey } = await import('../../static/map.js');
 const { state, settings } = await import('../../static/state.js');
 const { ui } = await import('../../static/ui.js');
 const { CONFIG } = await import('../../static/config.js');
@@ -438,5 +438,44 @@ describe('markers.clearVehicles', () => {
     expect(() => markers.clearVehicles()).not.toThrow();
     expect(state.vehicles.size).toBe(0);
     expect(cancelAnimationFrame).not.toHaveBeenCalled();
+  });
+});
+
+describe('withCartoKey', () => {
+  afterEach(() => {
+    document.querySelectorAll('meta[name="carto-key"]').forEach(function (m) {
+      m.remove();
+    });
+  });
+
+  function setMeta(content) {
+    var m = document.createElement('meta');
+    m.setAttribute('name', 'carto-key');
+    m.setAttribute('content', content);
+    document.head.appendChild(m);
+  }
+
+  it('returns the url unchanged when no carto-key meta is present', () => {
+    expect(withCartoKey('https://x/{z}.png')).toBe('https://x/{z}.png');
+  });
+
+  it('returns the url unchanged when the key is empty', () => {
+    setMeta('');
+    expect(withCartoKey('https://x/{z}.png')).toBe('https://x/{z}.png');
+  });
+
+  it('appends ?key= when the url has no query string', () => {
+    setMeta('cb1_KEY');
+    expect(withCartoKey('https://x/{z}.png')).toBe('https://x/{z}.png?key=cb1_KEY');
+  });
+
+  it('appends &key= when the url already has a query string', () => {
+    setMeta('cb1_KEY');
+    expect(withCartoKey('https://x/{z}.png?a=1')).toBe('https://x/{z}.png?a=1&key=cb1_KEY');
+  });
+
+  it('url-encodes the key value', () => {
+    setMeta('a b/c');
+    expect(withCartoKey('https://x')).toBe('https://x?key=a%20b%2Fc');
   });
 });

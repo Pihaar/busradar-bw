@@ -335,6 +335,17 @@ class TestHafasCall:
             assert await stops_builder._hafas_call(client, "LocGeoPos", {}) is None
         assert any("HAFAS call failed" in r.message for r in caplog.records)
 
+    @pytest.mark.asyncio
+    async def test_no_source_configured_returns_none(self, monkeypatch):
+        # No HAFAS source configured → fail closed before any outbound call.
+        import busradar_config
+
+        monkeypatch.setenv("BUSRADAR_HAFAS_SOURCES", "[]")
+        busradar_config.reset()
+        client = AsyncMock()
+        assert await stops_builder._hafas_call(client, "LocGeoPos", {}) is None
+        client.post.assert_not_called()
+
 
 class TestFetchStopsInRadius:
     @pytest.mark.asyncio

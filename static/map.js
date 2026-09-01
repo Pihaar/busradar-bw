@@ -4,6 +4,17 @@ import { api, trackedFetch } from './api.js';
 import { ui } from './ui.js';
 import * as refresh from './refresh.js';
 
+// CARTO Basemaps now needs an API key (raster watermark otherwise). The key is
+// injected server-side into <meta name="carto-key"> (empty when unconfigured)
+// and appended to the CARTO tile URLs here at runtime. Empty key → URL is left
+// unchanged (watermark, but tiles still load; the OSM fallback also stays).
+export function withCartoKey(url) {
+  var meta = document.querySelector('meta[name="carto-key"]');
+  var key = meta && meta.content ? meta.content.trim() : '';
+  if (!key) return url;
+  return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'key=' + encodeURIComponent(key);
+}
+
 // === MAP MODULE ===
 export var mapModule = {
   init: function (initCenter, initZoom) {
@@ -67,9 +78,9 @@ export var mapModule = {
         state.map.removeLayer(state.darkTileLayer);
       if (state.lightTileLayer && state.map.hasLayer(state.lightTileLayer))
         state.map.removeLayer(state.lightTileLayer);
-      state.darkTileLayer = new RetryTileLayer(CONFIG.tileUrl, opts);
+      state.darkTileLayer = new RetryTileLayer(withCartoKey(CONFIG.tileUrl), opts);
       state.lightTileLayer = new RetryTileLayer(
-        'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        withCartoKey('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'),
         opts,
       );
       state.darkTileLayer.on('tileerror', onTileError);

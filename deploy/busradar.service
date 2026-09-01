@@ -14,6 +14,10 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=/opt/busradar
 Environment=BUSRADAR_STATE_DIR=/var/lib/busradar
+# Secrets + HAFAS connection data (CARTO key, BUSRADAR_HAFAS_SOURCES). Not in
+# git/RPM — created manually on the host (0640 root:busradar). Leading '-' makes
+# it optional so a host without the file still starts (degraded: no vehicles).
+EnvironmentFile=-/etc/busradar/busradar.env
 ExecStart=/usr/bin/uvicorn proxy:app --uds /run/busradar/uvicorn.sock --workers 1 --proxy-headers --forwarded-allow-ips=*
 RuntimeDirectory=busradar
 RuntimeDirectoryMode=0750

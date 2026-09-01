@@ -102,7 +102,7 @@ disallow_any_generics = false
 
 [tool.coverage.run]
 branch = true
-source = ["proxy", "sse_handler", "fanout", "tick", "caches", "hafas", "stops_builder", "audit"]
+source = ["proxy", "sse_handler", "fanout", "tick", "caches", "hafas", "stops_builder", "audit", "busradar_config"]
 
 [tool.coverage.report]
 show_missing = true

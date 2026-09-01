@@ -1,4 +1,21 @@
 -------------------------------------------------------------------
+Mon Sep  1 09:50:00 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
+
+- Secrets/config moved out of code, git and the package into an untracked
+  env file at /etc/busradar/busradar.env (systemd EnvironmentFile, optional).
+  It carries the CARTO Basemaps API key (BUSRADAR_CARTO_KEY) and the HAFAS
+  connection data (BUSRADAR_HAFAS_SOURCES, a JSON array of one or more
+  sources). New module busradar_config.py loads them lazily and fail-closed:
+  a missing/invalid config degrades (no vehicles, map via OSM fallback)
+  instead of crashing; source endpoints are validated as https (SSRF/SEC-375).
+  The former hardcoded HAFAS endpoint/AID/client in hafas.py and
+  stops_builder.py are gone; a placeholder template ships as
+  /opt/busradar/busradar.env.example. CARTO now requires an API key for
+  raster basemaps — the key is injected server-side into a <meta> tag and
+  appended to the tile URLs at runtime (no inline script → CSP hash
+  unaffected). /api/health gains hafas_configured + hafas_sources.
+
+-------------------------------------------------------------------
 Mon Aug  3 11:26:25 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Social sharing: add Open Graph + Twitter Card meta tags and a 1200x630

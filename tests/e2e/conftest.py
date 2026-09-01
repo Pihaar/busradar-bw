@@ -28,6 +28,16 @@ def server():
         cache is fresh enough.
     """
     test_origin = "http://127.0.0.1:8111"
+    # These are live-data integration tests: the app server fetches real HAFAS
+    # data. The connection data is no longer hardcoded — it comes from
+    # BUSRADAR_HAFAS_SOURCES (env), which flows into the subprocess below via
+    # os.environ. Without it the server has no source and the data-dependent
+    # assertions fail spuriously, so skip the whole E2E session instead.
+    if not os.environ.get("BUSRADAR_HAFAS_SOURCES"):
+        pytest.skip(
+            "E2E tests need live HAFAS data — set BUSRADAR_HAFAS_SOURCES "
+            "(and BUSRADAR_CARTO_KEY) in the environment to run them."
+        )
     env = {
         **os.environ,
         "BUSRADAR_COOKIE_SECURE": "0",

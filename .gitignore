@@ -29,3 +29,8 @@ Unbenannt.png
 validate.sh
 tick_logger.py
 .coverage.prepush
+
+# Runtime secrets / HAFAS connection data — never commit the real env file.
+# The placeholder template lives at deploy/busradar.env.example (tracked).
+busradar.env
+.env

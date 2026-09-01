@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+import busradar_config
 import hafas
 from hafas import (
     CIRCUIT_BREAKER_COOLDOWN,
@@ -83,6 +85,45 @@ class TestBuildEnvelope:
         assert env["client"]["id"] == hafas.CLIENT_ID
         assert env["ver"] == hafas.VER
         assert env["svcReqL"] == [{"meth": "JourneyGeoPos", "req": {"ring": {}}}]
+
+
+class TestConfigDriven:
+    """The HAFAS connection values are now sourced from busradar_config (env),
+    exposed lazily via hafas.__getattr__. These cover the config-driven paths."""
+
+    def test_getattr_unknown_attr_raises(self):
+        with pytest.raises(AttributeError):
+            _ = hafas.NOT_A_REAL_ATTR
+
+    def test_getattr_empty_when_no_source(self, monkeypatch):
+        monkeypatch.setenv("BUSRADAR_HAFAS_SOURCES", "[]")
+        busradar_config.reset()
+        assert hafas.AUTH_AID == ""
+        assert hafas.HAFAS_ENDPOINT == ""
+
+    def test_getattr_non_dict_client_yields_empty(self, monkeypatch):
+        src = {"id": "bw", "endpoint": "https://h.example/m", "aid": "A", "client": "oops"}
+        monkeypatch.setenv("BUSRADAR_HAFAS_SOURCES", json.dumps([src]))
+        busradar_config.reset()
+        # client is a string, not a dict → the traversal bottoms out at "".
+        assert hafas.CLIENT_ID == ""
+
+    def test_build_envelope_no_source_defaults(self, monkeypatch):
+        monkeypatch.setenv("BUSRADAR_HAFAS_SOURCES", "[]")
+        busradar_config.reset()
+        env = _build_hafas_envelope("M", {"x": 1})
+        assert env["auth"]["aid"] == ""
+        assert env["client"] == {"type": "AND", "id": "", "v": "", "name": ""}
+        assert env["ext"] == "" and env["ver"] == ""
+
+    @pytest.mark.asyncio
+    async def test_hafas_call_not_configured(self, monkeypatch):
+        monkeypatch.setenv("BUSRADAR_HAFAS_SOURCES", "[]")
+        busradar_config.reset()
+        hafas.breaker.failures = 0
+        hafas.breaker.last_failure_time = 0.0
+        res = await _hafas_call_via_app(MagicMock(), "JourneyGeoPos", {"ring": {}})
+        assert res == {"error": "not_configured", "detail": "No HAFAS source configured"}
 
 
 class TestPatterns:

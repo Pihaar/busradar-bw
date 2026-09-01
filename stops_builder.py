@@ -21,17 +21,10 @@ from typing import Any, TypeVar, cast
 
 import httpx
 
-from hafas import extract_platform
+import busradar_config
+from hafas import _build_hafas_envelope, extract_platform
 
 _T = TypeVar("_T")
-
-HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
-AUTH_AID = "YOUR_AID"
-CLIENT_ID = "DB-REGIO"
-CLIENT_VERSION = "3000000"
-CLIENT_NAME = "DB Busradar BW"
-EXT = "DB.REGIO.1"
-VER = "1.39"
 
 CACHE_FILE = (
     Path(os.environ.get("BUSRADAR_STATE_DIR", str(Path(__file__).parent))) / "stops_cache.json"
@@ -50,23 +43,15 @@ GRID_STEP_KM = 5
 LOG = logging.getLogger("stops_builder")
 
 
-def _build_envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "auth": {"type": "AID", "aid": AUTH_AID},
-        "client": {"type": "AND", "id": CLIENT_ID, "v": CLIENT_VERSION, "name": CLIENT_NAME},
-        "ext": EXT,
-        "ver": VER,
-        "lang": "de",
-        "svcReqL": [{"meth": method, "req": req}],
-    }
-
-
 async def _hafas_call(
     client: httpx.AsyncClient, method: str, req: dict[str, Any]
 ) -> dict[str, Any] | None:
-    payload = _build_envelope(method, req)
+    src = busradar_config.primary_source()
+    if src is None or not busradar_config.is_valid_endpoint(src.get("endpoint")):
+        return None
+    payload = _build_hafas_envelope(method, req)
     try:
-        resp = await client.post(HAFAS_ENDPOINT, json=payload)
+        resp = await client.post(src["endpoint"], json=payload)
         resp.raise_for_status()
         data = resp.json()
         if data.get("err") != "OK":

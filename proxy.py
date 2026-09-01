@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+import busradar_config
 import fanout
 import steig
 
@@ -728,6 +729,12 @@ async def health(request: Request) -> dict[str, Any]:
         # "live data slow because something is wrong".
         "stops_rebuilding": bool(getattr(request.app.state, "stops_rebuilding", False)),
         "stops_count": (getattr(request.app.state, "stops_data", None) or {}).get("count", 0),
+        # Whether any HAFAS source is configured (env / EnvironmentFile). False
+        # means vehicle data is disabled (fail-closed) — lets operators tell a
+        # missing /etc/busradar/busradar.env apart from an upstream outage. Only
+        # the count is exposed, never the AID/endpoint.
+        "hafas_configured": bool(busradar_config.primary_source()),
+        "hafas_sources": len(busradar_config.hafas_sources()),
         # Per-Steig-family resolution stats: a family stuck at resolved==0 while
         # total grows, or a climbing last_resolved_age, warns that the HAFAS
         # JourneyDetails Steig field silently broke.
@@ -819,6 +826,7 @@ class TemplatedAsset:
         fallback_body: str,
         extra_headers: dict[str, str] | None = None,
         cache_control: str = "no-cache, no-store, must-revalidate",
+        extra_subs: dict[str, str] | None = None,
     ):
         self.path = path
         self.media_type = media_type
@@ -830,7 +838,10 @@ class TemplatedAsset:
         except OSError as e:
             log.error("[startup] failed to read %s: %s", path, e)
             self.template = ""
-        self.rendered = _render_template_version(self.template, version)
+        subs = {_SW_PLACEHOLDER: version or "unknown"}
+        if extra_subs:
+            subs.update(extra_subs)
+        self.rendered = _render_template(self.template, subs)
         if self.template and not self.rendered:
             log.warning("[startup] %s template loaded but render produced empty body", path.name)
 
@@ -851,18 +862,29 @@ class TemplatedAsset:
         return Response(self.rendered, media_type=self.media_type, headers=headers)
 
 
-def _render_template_version(template: str, version: str) -> str:
-    """Substitute `__APP_VERSION__` in a template string. Falls back to
-    "unknown" when version is missing so a misconfigured deploy still
-    yields parseable output (the cache simply won't rotate)."""
+def _render_template(template: str, subs: dict[str, str]) -> str:
+    """Substitute one or more `__PLACEHOLDER__` tokens in a template string.
+    If the version token would resolve to the literal placeholder (a
+    misconfigured VERSION file), refuse and return "" so no invalid body is
+    served. A missing value substitutes as empty."""
     if not template:
         return ""
-    if version == _SW_PLACEHOLDER:
+    if subs.get(_SW_PLACEHOLDER) == _SW_PLACEHOLDER:
         # Defensive: a VERSION file that literally contains the placeholder
         # would no-op the substitution and serve invalid output.
         log.error("[startup] _VERSION equals the placeholder; refusing to render")
         return ""
-    return template.replace(_SW_PLACEHOLDER, version or "unknown")
+    out = template
+    for token, value in subs.items():
+        out = out.replace(token, value if value is not None else "")
+    return out
+
+
+def _render_template_version(template: str, version: str) -> str:
+    """Back-compat single-token renderer (version only). Falls back to
+    "unknown" when version is missing so a misconfigured deploy still
+    yields parseable output (the cache simply won't rotate)."""
+    return _render_template(template, {_SW_PLACEHOLDER: version or "unknown"})
 
 
 # Historical name kept as an alias — the existing test surface imports
@@ -891,6 +913,11 @@ _index_asset = TemplatedAsset(
     # navigation. sw.js keeps the no-store default so a stale worker can
     # never be bf-cached.
     cache_control="no-cache, must-revalidate",
+    # The CARTO Basemaps key is injected into a <meta> tag (not an inline
+    # script → CSP hash unaffected) and read by the client at runtime to
+    # build the tile URLs. Sourced from the env at startup; "" when unset
+    # (map falls back / shows the watermark but still works).
+    extra_subs={"__CARTO_KEY__": busradar_config.carto_key()},
 )
 
 if _VERSION == "unknown":

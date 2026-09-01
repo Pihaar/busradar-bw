@@ -59,8 +59,13 @@ esbuild static/style.css --minify --outfile=build/static/style.css
 
 %install
 install -d %{buildroot}/opt/busradar
-install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py hafas.py sse_handler.py steig.py %{buildroot}/opt/busradar/
+install -m 644 proxy.py tick.py fanout.py stops_builder.py audit.py caches.py hafas.py sse_handler.py steig.py busradar_config.py %{buildroot}/opt/busradar/
 cp -a build/static %{buildroot}/opt/busradar/
+# Config template (placeholders only). Ops copies it to
+# /etc/busradar/busradar.env (0640 root:busradar) and fills in the real CARTO
+# key + HAFAS sources. The real env file is NEVER packaged or in git.
+install -m 644 deploy/busradar.env.example %{buildroot}/opt/busradar/busradar.env.example
+install -d %{buildroot}/etc/busradar
 printf '%%s\n' '%{version}-%{release}' > %{buildroot}/opt/busradar/VERSION
 install -D -m 644 deploy/busradar.service %{buildroot}%{_unitdir}/busradar.service
 install -D -m 644 %{SOURCE1} %{buildroot}%{_sysusersdir}/busradar.conf
@@ -93,8 +98,13 @@ install -D -m 644 deploy/busradar-tmpfiles.conf %{buildroot}%{_tmpfilesdir}/busr
 /opt/busradar/hafas.py
 /opt/busradar/sse_handler.py
 /opt/busradar/steig.py
+/opt/busradar/busradar_config.py
 /opt/busradar/static
 /opt/busradar/VERSION
+/opt/busradar/busradar.env.example
+# Config dir for the untracked env file (ops creates busradar.env inside,
+# 0640 root:busradar). Owned by the package; group-readable by the service user.
+%dir %attr(0750,root,busradar) /etc/busradar
 %{_unitdir}/busradar.service
 %{_sysusersdir}/busradar.conf
 %{_tmpfilesdir}/busradar.conf

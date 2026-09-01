@@ -1,12 +1,13 @@
 """
 Busradar BW — HAFAS upstream client.
 
-Owns the HAFAS endpoint constants, envelope builder, circuit breaker,
-and the single async entry point `_hafas_call_via_app` that every other
-module funnels through. Also exports the validated JID/LID patterns.
+Owns the HAFAS envelope builder, circuit breaker, and the single async entry
+point `_hafas_call_via_app` that every other module funnels through. The HAFAS
+connection values themselves come from busradar_config (env), not from this
+module. Also exports the validated JID/LID patterns.
 
-Direction: this module has no app-internal imports — caches, sse_handler,
-and proxy all depend on it.
+Direction: this module's only app-internal import is busradar_config (a leaf
+config module with no app imports); caches, sse_handler, and proxy depend on it.
 """
 
 from __future__ import annotations
@@ -19,13 +20,36 @@ from typing import Any, cast
 import httpx
 from fastapi import FastAPI
 
-HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
-AUTH_AID = "YOUR_AID"
-CLIENT_ID = "DB-REGIO"
-CLIENT_VERSION = "3000000"
-CLIENT_NAME = "DB Busradar BW"
-EXT = "DB.REGIO.1"
-VER = "1.39"
+import busradar_config
+
+# HAFAS connection values (endpoint, AID, client, ext, ver) are NOT hardcoded
+# here — they come from busradar_config (env / systemd EnvironmentFile) so a
+# checkout/package ships without them. The former module-level names remain
+# available as lazy attributes via __getattr__ for backward compatibility with
+# importers (proxy re-exports them; tests read hafas.AUTH_AID).
+_CONFIG_ATTRS: dict[str, tuple[str, ...]] = {
+    "HAFAS_ENDPOINT": ("endpoint",),
+    "AUTH_AID": ("aid",),
+    "CLIENT_ID": ("client", "id"),
+    "CLIENT_VERSION": ("client", "v"),
+    "CLIENT_NAME": ("client", "name"),
+    "EXT": ("ext",),
+    "VER": ("ver",),
+}
+
+
+def __getattr__(name: str) -> Any:
+    # PEP 562 lazy module attributes: resolve HAFAS connection values from the
+    # primary configured source at access time (never at import), returning ""
+    # when unconfigured. Only the keys in _CONFIG_ATTRS are handled.
+    path = _CONFIG_ATTRS.get(name)
+    if path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    node: Any = busradar_config.primary_source() or {}
+    for key in path:
+        node = node.get(key, {}) if isinstance(node, dict) else {}
+    return node if isinstance(node, str) else ""
+
 
 UPSTREAM_TIMEOUT = 10.0
 MAX_CONSECUTIVE_FAILURES = 3
@@ -96,11 +120,18 @@ log = logging.getLogger("busradar")
 
 
 def _build_hafas_envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
+    src = busradar_config.primary_source() or {}
+    client = src.get("client", {}) if isinstance(src.get("client"), dict) else {}
     return {
-        "auth": {"type": "AID", "aid": AUTH_AID},
-        "client": {"type": "AND", "id": CLIENT_ID, "v": CLIENT_VERSION, "name": CLIENT_NAME},
-        "ext": EXT,
-        "ver": VER,
+        "auth": {"type": "AID", "aid": src.get("aid", "")},
+        "client": {
+            "type": client.get("type", "AND"),
+            "id": client.get("id", ""),
+            "v": client.get("v", ""),
+            "name": client.get("name", ""),
+        },
+        "ext": src.get("ext", ""),
+        "ver": src.get("ver", ""),
         "lang": "de",
         "svcReqL": [{"meth": method, "req": req}],
     }
@@ -148,9 +179,17 @@ async def _hafas_call_via_app(app: FastAPI, method: str, req: dict[str, Any]) ->
     if breaker.is_open:
         return {"error": "upstream_unavailable", "detail": "Service temporarily unavailable"}
 
+    src = busradar_config.primary_source()
+    if src is None or not busradar_config.is_valid_endpoint(src.get("endpoint")):
+        # Fail closed: no valid HAFAS source configured (missing env /
+        # EnvironmentFile, or a non-https endpoint rejected at config parse).
+        # Callers treat this like an upstream miss and render no vehicles.
+        return {"error": "not_configured", "detail": "No HAFAS source configured"}
+    endpoint = src["endpoint"]
+
     payload = _build_hafas_envelope(method, req)
     try:
-        resp = await app.state.client.post(HAFAS_ENDPOINT, json=payload)
+        resp = await app.state.client.post(endpoint, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
