@@ -36,8 +36,7 @@ from typing import Any, cast
 
 import httpx
 
-HAFAS_ENDPOINT = "https://db-regio.hafas.de/bin/mgate.exe"
-AUTH_AID = "YOUR_AID"
+import busradar_config
 
 # Sandhausen center, 20km radius — covers line 725 (Ortsbus Sandhausen)
 RING_CENTER = {"x": 8_660_000, "y": 49_342_000}
@@ -58,12 +57,29 @@ logging.basicConfig(
 log = logging.getLogger("line_logger")
 
 
+def _hafas_endpoint() -> str:
+    """The configured HAFAS endpoint (busradar_config / env), validated as https.
+    Raises when nothing is configured — this is a standalone tool run manually
+    or by its own service, so failing loud is the right behaviour."""
+    src = busradar_config.primary_source()
+    if src is None or not busradar_config.is_valid_endpoint(src.get("endpoint")):
+        raise RuntimeError("no HAFAS source configured — set BUSRADAR_HAFAS_SOURCES")
+    return src["endpoint"]
+
+
 def envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
+    src = busradar_config.primary_source() or {}
+    client = src.get("client", {}) if isinstance(src.get("client"), dict) else {}
     return {
-        "auth": {"type": "AID", "aid": AUTH_AID},
-        "client": {"type": "AND", "id": "DB-REGIO", "v": "3000000", "name": "DB Busradar BW"},
-        "ext": "DB.REGIO.1",
-        "ver": "1.39",
+        "auth": {"type": "AID", "aid": src.get("aid", "")},
+        "client": {
+            "type": client.get("type", "AND"),
+            "id": client.get("id", ""),
+            "v": client.get("v", ""),
+            "name": client.get("name", ""),
+        },
+        "ext": src.get("ext", ""),
+        "ver": src.get("ver", ""),
         "lang": "de",
         "svcReqL": [{"meth": method, "req": req}],
     }
@@ -100,7 +116,7 @@ async def fetch_active_vehicles(client: httpx.AsyncClient) -> list[dict[str, Any
             "trainPosMode": "REPORT_ONLY",
         },
     )
-    resp = await client.post(HAFAS_ENDPOINT, json=payload, timeout=10.0)
+    resp = await client.post(_hafas_endpoint(), json=payload, timeout=10.0)
     resp.raise_for_status()
     data = resp.json()
     if data.get("err") != "OK":
@@ -130,7 +146,7 @@ async def fetch_journey_details(client: httpx.AsyncClient, jid: str) -> dict[str
     """Fetch full journey with stop list."""
     payload = envelope("JourneyDetails", {"jid": jid, "getPolyline": False})
     try:
-        resp = await client.post(HAFAS_ENDPOINT, json=payload, timeout=10.0)
+        resp = await client.post(_hafas_endpoint(), json=payload, timeout=10.0)
         resp.raise_for_status()
         data = resp.json()
         if data.get("err") != "OK":
