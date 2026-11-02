@@ -151,6 +151,17 @@ describe('reconcileBoard — window + set-difference', () => {
     expect(merged.jnyL.map((j) => j.jid).sort()).toEqual(['A', 'NOTIME']);
   });
 
+  it('orders entries with a scheduled time before entries without one', () => {
+    // A no-Soll cache entry survives as a tail entry; the comparator must sort it
+    // after every entry that has an effective time (null vs. number arm).
+    const merged = reconcileBoard(
+      cache([dep('C', 900), { jid: 'NOTIME', prodX: 0, dirTxt: 'x', stbStop: {} }]),
+      push([dep('A', 730)]),
+      720,
+    );
+    expect(merged.jnyL.map((j) => j.jid)).toEqual(['A', 'C', 'NOTIME']);
+  });
+
   it('remaps an adopted push entry into the cache index space (find + append)', () => {
     // Push locL/prodL differ in order from cache; adopted entry must point at the
     // cache indices. E1 exists in cache (find), E2 is new (append).
