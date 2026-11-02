@@ -8,6 +8,14 @@ import pytest
 
 
 @pytest.fixture(scope="session")
+def browser_context_args(browser_context_args):
+    """Pin the browser locale: the app derives its UI language from
+    navigator.language, while Playwright defaults to en-US. The suite asserts
+    German UI strings, so the locale must not depend on the host."""
+    return {**browser_context_args, "locale": "de-DE"}
+
+
+@pytest.fixture(scope="session")
 def server():
     """Start uvicorn server for E2E tests.
 
