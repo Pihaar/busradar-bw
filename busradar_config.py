@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, TypeGuard
 from urllib.parse import urlparse
 
 log = logging.getLogger("busradar")
@@ -46,7 +46,7 @@ def _sanitize_carto_key(raw: str) -> str:
     return _CARTO_KEY_RE.sub("", raw or "")
 
 
-def is_valid_endpoint(url: Any) -> bool:
+def is_valid_endpoint(url: Any) -> TypeGuard[str]:
     """The endpoint is used for an outbound POST, so validate it at this trust
     boundary (config parse) AND assert it at each outbound sink: require a
     well-formed https:// URL. Defence-in-depth against a misconfigured source

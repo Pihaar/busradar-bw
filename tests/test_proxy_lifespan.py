@@ -11,7 +11,7 @@ needs a fixed clock.
 from __future__ import annotations
 
 import asyncio
-import datetime as _dt
+import datetime as dt
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -439,12 +439,12 @@ class TestScheduleDailyRebuild:
 
         monkeypatch.setattr(stops_builder, "build_stops_cache", build_fn)
 
-        class FakeDateTime(_dt.datetime):
+        class FakeDateTime(dt.datetime):
             @classmethod
             def now(cls, tz=None):  # noqa: ARG003  # match datetime.now signature
                 return cls(2026, 7, 29, now_hour, 0, 0)
 
-        monkeypatch.setattr(_dt, "datetime", FakeDateTime)
+        monkeypatch.setattr(dt, "datetime", FakeDateTime)
 
         sleeps = {"n": 0}
 

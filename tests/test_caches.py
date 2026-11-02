@@ -57,17 +57,17 @@ class TestCacheDailyReset:
     def _patch_dt(self, monkeypatch, now_dt):
         # _is_expired does `from datetime import datetime`, so patch the class
         # on the stdlib datetime module. Keep fromtimestamp real.
-        import datetime as dt_mod
+        import datetime as dt
 
         fake = type(
             "FakeDT",
             (),
             {
                 "now": staticmethod(lambda: now_dt),
-                "fromtimestamp": staticmethod(dt_mod.datetime.fromtimestamp),
+                "fromtimestamp": staticmethod(dt.datetime.fromtimestamp),
             },
         )
-        monkeypatch.setattr(dt_mod, "datetime", fake)
+        monkeypatch.setattr(dt, "datetime", fake)
 
     @pytest.mark.asyncio
     async def test_not_expired_before_reset_hour(self, monkeypatch):

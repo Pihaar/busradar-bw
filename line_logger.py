@@ -62,9 +62,12 @@ def _hafas_endpoint() -> str:
     Raises when nothing is configured — this is a standalone tool run manually
     or by its own service, so failing loud is the right behaviour."""
     src = busradar_config.primary_source()
-    if src is None or not busradar_config.is_valid_endpoint(src.get("endpoint")):
+    if src is None:
         raise RuntimeError("no HAFAS source configured — set BUSRADAR_HAFAS_SOURCES")
-    return src["endpoint"]
+    endpoint = src.get("endpoint")
+    if not busradar_config.is_valid_endpoint(endpoint):
+        raise RuntimeError("no HAFAS source configured — set BUSRADAR_HAFAS_SOURCES")
+    return endpoint
 
 
 def envelope(method: str, req: dict[str, Any]) -> dict[str, Any]:
