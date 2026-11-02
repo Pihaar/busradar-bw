@@ -60,7 +60,7 @@ if ds="$(find_tool detect-secrets)"; then
   if [[ -f .secrets.baseline ]]; then
     echo "pre-commit: detect-secrets scan (baseline diff)"
     if ! "${ds}" scan --baseline .secrets.baseline \
-         --exclude-files 'node_modules|coverage|\.playwright-mcp|\.git|\.pytest_cache|\.ruff_cache' \
+         --exclude-files 'node_modules|coverage|\.playwright-mcp|\.git|\.pytest_cache|\.ruff_cache|\.venv' \
          >/dev/null 2>&1; then
       echo "  detect-secrets found a NEW secret not in .secrets.baseline" >&2
       echo "  review, then: detect-secrets scan --baseline .secrets.baseline ... > .secrets.baseline" >&2

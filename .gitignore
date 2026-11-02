@@ -21,6 +21,7 @@ nohup.out
 !static/favicon.svg
 
 # Dev tools
+.venv/
 package-lock.json
 busradar_api.py
 androguard.log

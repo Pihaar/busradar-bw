@@ -34,19 +34,27 @@ fi
 
 # --- Python: 100% coverage gate (pytest --cov; fail_under=100 from pyproject) ---
 # COVERAGE_FILE is dedicated so this run cannot clobber a parallel manual
-# `pytest --cov` .coverage SQLite file. python3.12 is the hard dev floor (this
-# box's python3 is 3.12; prod runs 3.13). e2e is excluded — it runs in a uvicorn
+# `pytest --cov` .coverage SQLite file. Prefer the project venv (it carries
+# pytest-cov); fall back to the dev-floor interpreter on hosts where the deps
+# are installed system/user-wide. e2e is excluded — it runs in a uvicorn
 # subprocess and contributes ~0 coverage, so excluding it does not lower the gate.
 # --cov-branch is not passed: branch=true is already set in pyproject.
-if py="$(find_tool python3.12)"; then
-  if "${py}" -c 'import pytest_cov' >/dev/null 2>&1; then
-    echo "pre-push: pytest --cov (100% gate)"
-    COVERAGE_FILE=.coverage.prepush "${py}" -m pytest tests/ --ignore=tests/e2e --cov -q || status=1
-  else
-    echo "pre-push: pytest-cov not found — skipping Python coverage gate (pip install --user pytest-cov)"
+py=""
+for candidate in "${repo_root}/.venv/bin/python" \
+                 "$(find_tool python3.12 || true)" \
+                 "$(find_tool python3.13 || true)" \
+                 "$(find_tool python3 || true)"; do
+  [[ -n "${candidate}" ]] || continue
+  if "${candidate}" -c 'import pytest_cov' >/dev/null 2>&1; then
+    py="${candidate}"
+    break
   fi
+done
+if [[ -n "${py}" ]]; then
+  echo "pre-push: pytest --cov (100% gate)"
+  COVERAGE_FILE=.coverage.prepush "${py}" -m pytest tests/ --ignore=tests/e2e --cov -q || status=1
 else
-  echo "pre-push: python3.12 not found — skipping Python coverage gate"
+  echo "pre-push: no Python interpreter with pytest-cov found — skipping Python coverage gate"
 fi
 
 if [[ "${status}" -ne 0 ]]; then

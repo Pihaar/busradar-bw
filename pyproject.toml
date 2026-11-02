@@ -3,7 +3,7 @@
 [tool.ruff]
 target-version = "py312"   # dev floor (prod runs 3.13); keeps syntax rules in range
 line-length = 100
-extend-exclude = ["node_modules", "coverage", ".playwright-mcp"]
+extend-exclude = ["node_modules", "coverage", ".playwright-mcp", ".venv"]
 
 [tool.ruff.lint]
 # Sharpest baseline: enable the whole rule set, then drop the families that do
@@ -66,7 +66,7 @@ quote-style = "double"
 
 [tool.bandit]
 # Python SAST. Tests carry their own patterns; scan only shipped code.
-exclude_dirs = ["tests", "node_modules", "coverage", ".playwright-mcp"]
+exclude_dirs = ["tests", "node_modules", "coverage", ".playwright-mcp", ".venv"]
 # Project-wide accepted patterns (each a deliberate, non-security choice here):
 #   B311 — random() is only used for backoff/jitter, never for crypto
 #   B110 — try/except/pass is an intentional defensive-swallow pattern

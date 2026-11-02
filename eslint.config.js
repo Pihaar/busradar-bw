@@ -13,6 +13,7 @@ export default [
       'coverage/**',
       'static/vendor/**',
       '.playwright-mcp/**',
+      '.venv/**',
     ],
   },
 
