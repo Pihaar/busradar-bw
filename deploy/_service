@@ -3,6 +3,8 @@
     <param name="url">https://github.com/Pihaar/busradar-bw.git</param>
     <param name="scm">git</param>
     <param name="versionformat">@PARENT_TAG@</param>
+    <param name="versionrewrite-pattern">v(.*)</param>
+    <param name="versionrewrite-replacement">\1</param>
     <param name="revision">main</param>
     <param name="filename">busradar-bw</param>
   </service>
@@ -10,4 +12,5 @@
     <param name="compression">gz</param>
     <param name="file">*.tar</param>
   </service>
+  <service name="set_version" mode="trylocal"/>
 </services>

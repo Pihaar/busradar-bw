@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Thu Nov  5 11:54:13 UTC 2026 - Pihaar <pihaar@users.noreply.github.com>
+
+- Map: shared stop links (#stop=...&tab=...) now center the map on the
+  resolved stop. The share hash carries no coordinates, so the stop is
+  looked up in the server-wide stops cache via /api/search and centered;
+  the station board opens immediately instead of waiting for the first
+  vehicles tick. Bus share links were already centered.
+
+-------------------------------------------------------------------
 Mon Sep  1 09:50:00 UTC 2026 - Patrick Haar <Pihaar@users.noreply.github.com>
 
 - Secrets/config moved out of code, git and the package into an untracked
