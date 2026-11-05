@@ -1309,26 +1309,6 @@ function _handleVehiclesPayload(data) {
           ui._updateFollowButton();
           ui._updateFollowUrl();
         }
-      } else if (pr.stop) {
-        let stopEntry = null;
-        state.allStops.forEach(function (s) {
-          if (s.data.extId === pr.stop) stopEntry = s.data;
-        });
-        // SEC-100: extId MUST be digits-only before LID concat
-        if (!stopEntry && /^\d+$/.test(pr.stop)) {
-          stopEntry = {
-            name: '',
-            lid: 'A=1@L=' + pr.stop + '@',
-            lat: 0,
-            lon: 0,
-            extId: pr.stop,
-            platform: '',
-          };
-        }
-        if (stopEntry) {
-          ui.showStationBoard(stopEntry, true);
-          if (pr.tab === 'arr') ui.switchTab('arrivals');
-        }
       }
     } finally {
       state._restoreInProgress = false;

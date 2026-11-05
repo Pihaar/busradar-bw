@@ -264,6 +264,7 @@ function init() {
   var params = urlState.parse();
   var initCenter = CONFIG.fallbackCenter;
   var initZoom = CONFIG.defaultZoom;
+  var urlViewportValid = false;
   if (params.lat && params.lon && params.z) {
     var initLat = parseCoord(params.lat, -90, 90);
     var initLon = parseCoord(params.lon, -180, 180);
@@ -271,6 +272,7 @@ function init() {
     if (initLat !== null && initLon !== null && initZ !== null) {
       initCenter = [initLat, initLon];
       initZoom = initZ;
+      urlViewportValid = true;
     }
   }
   mapModule.init(initCenter, initZoom);
@@ -287,9 +289,15 @@ function init() {
   var center = state.map.getCenter();
   stopsLayer.loadAll(center.lat, center.lng, 5000);
 
-  state._pendingRestore = params.jid || params.stop ? params : null;
+  state._pendingRestore = params.jid ? params : null;
   state._restoreInProgress = !!state._pendingRestore;
   startStream();
+
+  // Stops do not need the vehicles stream: resolve them now so the map centers
+  // on the shared stop instead of staying at the fallback viewport.
+  if (params.stop) {
+    ui.showStopFromUrl(params.stop, params.tab, urlViewportValid ? initZoom : undefined);
+  }
 
   state.map.on('moveend', function () {
     if (state._restoreInProgress || state._navigating) return;
@@ -335,32 +343,16 @@ function init() {
         ui.focusJourneyById(params.jid, {}, true);
       }
     } else if (params.stop) {
+      var pz;
       if (params.lat && params.lon && params.z) {
         var sLat = parseCoord(params.lat, -90, 90);
         var sLon = parseCoord(params.lon, -180, 180);
         var sZ = parseZoom(params.z);
         if (sLat !== null && sLon !== null && sZ !== null) {
-          state.map.setView([sLat, sLon], sZ);
+          pz = sZ;
         }
       }
-      var stopEntry = null;
-      state.allStops.forEach(function (s) {
-        if (s.data.extId === params.stop) stopEntry = s.data;
-      });
-      if (!stopEntry && /^\d+$/.test(params.stop)) {
-        stopEntry = {
-          name: '',
-          lid: 'A=1@L=' + params.stop + '@',
-          lat: 0,
-          lon: 0,
-          extId: params.stop,
-          platform: '',
-        };
-      }
-      if (stopEntry) {
-        ui.showStationBoard(stopEntry, true);
-        if (params.tab === 'arr') ui.switchTab('arrivals');
-      }
+      ui.showStopFromUrl(params.stop, params.tab, pz);
     } else {
       ui.closePanel();
       if (params.lat && params.lon && params.z) {

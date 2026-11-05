@@ -86,6 +86,7 @@ const uiMock = {
   selectJourney: vi.fn(),
   focusJourneyById: vi.fn(),
   showStationBoard: vi.fn(),
+  showStopFromUrl: vi.fn(),
   switchTab: vi.fn(),
 };
 const searchMock = { init: vi.fn() };
@@ -859,9 +860,21 @@ describe('init() — map/stream wiring', () => {
     expect(s._pendingRestore).toEqual({ jid: 'J1' });
   });
 
-  it('marks a restore in progress when the URL carries a stop', async () => {
-    const { state: s } = await freshInit({ stop: '6003411' });
-    expect(s._restoreInProgress).toBe(true);
+  it('restores a stop immediately without waiting for vehicles', async () => {
+    const { state: s } = await freshInit({ stop: '6003411', tab: 'arr' });
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', 'arr', undefined);
+    expect(s._pendingRestore).toBeNull();
+    expect(s._restoreInProgress).toBe(false);
+  });
+
+  it('passes the URL zoom to a stop restore when the viewport is valid', async () => {
+    await freshInit({ stop: '6003411', lat: '49.5', lon: '8.5', z: '16' });
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', undefined, 16);
+  });
+
+  it('ignores an invalid URL viewport for a stop restore', async () => {
+    await freshInit({ stop: '6003411', lat: '999', lon: '8.5', z: '16' });
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', undefined, undefined);
   });
 
   it('no restore when the URL is bare', async () => {
@@ -990,39 +1003,30 @@ describe('init() — popstate handler', () => {
     expect(uiMock.focusJourneyById).toHaveBeenCalledWith('J404', {}, true);
   });
 
-  it('stop by extId shows the station board and applies the viewport', () => {
-    s.allStops.set('s1', { data: { extId: '6003411', name: 'X' } });
+  it('stop by extId delegates to showStopFromUrl with the URL zoom', () => {
     popstate(ev({ stop: '6003411', lat: '49.5', lon: '8.5', z: '15' }));
-    expect(s.map.setView).toHaveBeenCalledWith([49.5, 8.5], 15);
-    expect(uiMock.showStationBoard).toHaveBeenCalledWith({ extId: '6003411', name: 'X' }, true);
-  });
-
-  it('stop with tab=arr also switches to the arrivals tab', () => {
-    s.allStops.set('s1', { data: { extId: '6003411', name: 'X' } });
-    popstate(ev({ stop: '6003411', tab: 'arr' }));
-    expect(uiMock.switchTab).toHaveBeenCalledWith('arrivals');
-  });
-
-  it('numeric stop id not in allStops synthesizes a minimal stop entry', () => {
-    // A present-but-non-matching stop drives the forEach `if` false-arm too.
-    s.allStops.set('other', { data: { extId: '9999999', name: 'Other' } });
-    popstate(ev({ stop: '12345' }));
-    expect(uiMock.showStationBoard).toHaveBeenCalledTimes(1);
-    const arg = uiMock.showStationBoard.mock.calls[0][0];
-    expect(arg.extId).toBe('12345');
-    expect(arg.lid).toBe('A=1@L=12345@');
-  });
-
-  it('non-numeric unknown stop id resolves to nothing (no board shown)', () => {
-    popstate(ev({ stop: 'abc' }));
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', undefined, 15);
     expect(uiMock.showStationBoard).not.toHaveBeenCalled();
   });
 
-  it('stop with an out-of-range viewport skips setView but still shows the board', () => {
-    s.allStops.set('s1', { data: { extId: '6003411', name: 'X' } });
+  it('stop with tab=arr passes the tab through', () => {
+    popstate(ev({ stop: '6003411', tab: 'arr' }));
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', 'arr', undefined);
+  });
+
+  it('stop without a viewport passes no zoom', () => {
+    popstate(ev({ stop: '12345' }));
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('12345', undefined, undefined);
+  });
+
+  it('non-numeric stop id is delegated to the helper', () => {
+    popstate(ev({ stop: 'abc' }));
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('abc', undefined, undefined);
+  });
+
+  it('stop with an out-of-range viewport passes no zoom', () => {
     popstate(ev({ stop: '6003411', lat: '999', lon: '8.5', z: '15' }));
-    expect(s.map.setView).not.toHaveBeenCalled();
-    expect(uiMock.showStationBoard).toHaveBeenCalled();
+    expect(uiMock.showStopFromUrl).toHaveBeenCalledWith('6003411', undefined, undefined);
   });
 
   it('bare state closes the panel and applies a valid viewport', () => {

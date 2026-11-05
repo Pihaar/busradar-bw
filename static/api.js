@@ -186,6 +186,15 @@ export var api = {
     });
   },
 
+  // Resolve a stop from the server-wide stops cache (not just the viewport
+  // cache). Used by shared #stop= links, which carry no coordinates.
+  searchStops: function (q) {
+    return trackedFetch(CONFIG.apiBase + '/search?q=' + encodeURIComponent(q)).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  },
+
   getJourney: function (jid, opts) {
     var userInitiated = opts && opts.userInitiated;
     if (userInitiated) {

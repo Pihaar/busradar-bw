@@ -38,6 +38,28 @@ describe('api.getStops', () => {
   });
 });
 
+describe('api.searchStops', () => {
+  var originalFetch;
+  beforeEach(() => {
+    originalFetch = window.fetch;
+    window.fetch = vi.fn();
+  });
+  afterEach(() => {
+    window.fetch = originalFetch;
+  });
+
+  it('queries /search with the URL-encoded extId', async () => {
+    window.fetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: [] }) });
+    await api.searchStops('4466857');
+    expect(window.fetch.mock.calls[0][0]).toContain('/search?q=4466857');
+  });
+
+  it('throws on non-ok response', async () => {
+    window.fetch.mockResolvedValue({ ok: false, status: 500 });
+    await expect(api.searchStops('4466857')).rejects.toThrow('HTTP 500');
+  });
+});
+
 describe('api.getJourney', () => {
   var originalFetch;
   beforeEach(() => {

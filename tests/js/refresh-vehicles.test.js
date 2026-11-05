@@ -3,8 +3,8 @@
  * the recorded `vehicles` SSE listener on a stub EventSource.
  *
  * Covers: server-time parsing + monotonic guard, appVersion-on-frame, follow-bus
- * pan branches (in-ring / off-ring / vanished), _pendingRestore (journey + stop +
- * synthetic-lid + arr tab), the not-started→started transition, the delay-badge
+ * pan branches (in-ring / off-ring / vanished), _pendingRestore (journey), the
+ * not-started→started transition, the delay-badge
  * update, the panel-update catch, and the empty-payload announce.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -265,43 +265,12 @@ describe('_handleVehiclesPayload — _pendingRestore', () => {
     expect(state.followBus).toBe(false);
   });
 
-  it('restores a stop selection found in allStops', () => {
-    state.allStops.set('k', { data: { extId: '6003411', lid: 'A=1@L=6003411@', name: 'Sh' } });
-    state._pendingRestore = { stop: '6003411' };
-    feed({ vehicles: [] });
-    expect(uiMock.showStationBoard).toHaveBeenCalledOnce();
-    expect(uiMock.showStationBoard.mock.calls[0][0].extId).toBe('6003411');
-  });
-
-  it('restores a stop via a synthetic LID when not in allStops (digits-only extId)', () => {
-    state._pendingRestore = { stop: '9999', tab: 'arr' };
-    feed({ vehicles: [] });
-    expect(uiMock.showStationBoard).toHaveBeenCalledOnce();
-    const arg = uiMock.showStationBoard.mock.calls[0][0];
-    expect(arg.lid).toBe('A=1@L=9999@');
-    expect(uiMock.switchTab).toHaveBeenCalledWith('arrivals');
-  });
-
-  it('does NOT build a synthetic stop for a non-digit extId (SEC-100 guard)', () => {
-    state._pendingRestore = { stop: 'abc; DROP' };
-    feed({ vehicles: [] });
-    expect(uiMock.showStationBoard).not.toHaveBeenCalled();
-  });
-
-  it('a pending restore with neither jid nor stop does nothing (else-if false)', () => {
-    state._pendingRestore = { follow: '1' }; // no jid, no stop
+  it('a pending restore without a jid does nothing', () => {
+    state._pendingRestore = { follow: '1' }; // no jid
     feed({ vehicles: [] });
     expect(uiMock.focusJourneyById).not.toHaveBeenCalled();
     expect(uiMock.showStationBoard).not.toHaveBeenCalled();
     expect(state._restoreInProgress).toBe(false);
-  });
-
-  it('a stop restore ignores an allStops entry whose extId does not match', () => {
-    state.allStops.set('k', { data: { extId: 'OTHER', lid: 'x' } });
-    state._pendingRestore = { stop: '5555' }; // no allStops match; digits → synthetic lid
-    feed({ vehicles: [] });
-    const arg = uiMock.showStationBoard.mock.calls[0][0];
-    expect(arg.lid).toBe('A=1@L=5555@');
   });
 
   it('skips the restore when the interaction seq changed mid-flight', () => {

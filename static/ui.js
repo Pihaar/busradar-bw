@@ -1603,6 +1603,62 @@ export var ui = {
     });
   },
 
+  // Restore a stop from a shared link. The share hash carries only the extId,
+  // so the stop may lie outside the viewport-loaded stops cache. Resolve it
+  // from the server-wide cache, then show the board and center the map.
+  // `zoom` is the URL's zoom when the link carries a viewport; otherwise the
+  // stop is shown close-in.
+  showStopFromUrl: function (extId, tab, zoom) {
+    if (!extId) return Promise.resolve();
+    var seq = state._userInteractionSeq;
+    var z = zoom || 16;
+    var apply = function (stop) {
+      if (state._userInteractionSeq !== seq) return;
+      this.showStationBoard(stop, true);
+      if (stop.lat && stop.lon) {
+        state.map.setView([stop.lat, stop.lon], z);
+        stopsLayer.loadAll(stop.lat, stop.lon, 5000);
+      }
+      if (tab === 'arr') this.switchTab('arrivals');
+    }.bind(this);
+
+    var found = null;
+    state.allStops.forEach(function (s) {
+      if (s.data.extId === extId) found = s.data;
+    });
+    if (found) {
+      apply(found);
+      return Promise.resolve();
+    }
+    // SEC-100: only a digits-only extId may become a synthetic LID.
+    if (!/^\d+$/.test(extId)) return Promise.resolve();
+
+    var synthetic = {
+      name: '',
+      lid: 'A=1@L=' + extId + '@',
+      lat: 0,
+      lon: 0,
+      extId: extId,
+      platform: '',
+    };
+    return api
+      .searchStops(extId)
+      .then(function (data) {
+        var results = (data && data.results) || [];
+        var match = null;
+        for (var i = 0; i < results.length; i++) {
+          if (String(results[i].extId) === extId) {
+            match = results[i];
+            break;
+          }
+        }
+        apply(match || synthetic);
+      })
+      .catch(function () {
+        apply(synthetic);
+      });
+  },
+
   showStationBoard: function (loc, skipHistory) {
     if (state._cancelMapClick) state._cancelMapClick();
     state._navigating = true;
